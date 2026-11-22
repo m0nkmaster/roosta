@@ -24,7 +24,7 @@ All applied directly and committed:
   confusing agents.
 - **Delete** a skill that's dead, superseded, or never should have existed.
 
-For skill-authoring conventions, read `.agents/skills/write-a-skill/SKILL.md` if
+For skill-authoring conventions, read the resolved `write-a-skill` file if
 present before creating or restructuring.
 
 ## House structure for a new skill

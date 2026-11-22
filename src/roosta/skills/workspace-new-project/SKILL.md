@@ -5,7 +5,7 @@ description: Scaffolds a new project under projects/ - a kebab-case folder with 
 
 # New project
 
-Every project is a folder under `projects/` with a `README.md` entry point. The canonical rules are in the Projects section of `.roosta/operating-model.md`.
+Every project is a folder under `projects/` with a `README.md` entry point. The canonical rules are in the Projects section of the installed operating model.
 
 ## 1. Pick a slug
 

@@ -1,16 +1,15 @@
-"""Workspace settings: how Roosta is run, the skills lock, and choosing a workspace folder."""
+"""Workspace settings: how Roosta is run, and choosing a workspace folder."""
 
 from __future__ import annotations
 
 import io
-import json
 import os
 import sys
 from collections.abc import Callable
 from contextlib import redirect_stdout
 from pathlib import Path
 
-from roosta import cli, paths, skills
+from roosta import cli
 
 
 def workspace_managed_by() -> str:
@@ -20,14 +19,6 @@ def workspace_managed_by() -> str:
             sys.platform.startswith("linux") and os.environ.get("INVOCATION_ID")):
         return "service"
     return "terminal"
-
-
-def skills_lock() -> dict:
-    try:
-        data = json.loads((paths.ROOSTA_DIR / skills.LOCK_NAME).read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return {}
-    return data if isinstance(data, dict) else {}
 
 
 def workspace_target(body: dict) -> tuple[Path | None, str]:

@@ -1,6 +1,7 @@
 """OpenCode through Ollama integration for scheduled dashboard tasks."""
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -9,7 +10,7 @@ from pathlib import Path
 
 from roosta.cursor_agent import agent_path
 
-from roosta import connectors, paths
+from roosta import connectors, paths, skills
 
 DASHBOARD_ROOT = Path(__file__).resolve().parent
 OLLAMA = shutil.which("ollama") or "/usr/local/bin/ollama"
@@ -51,40 +52,29 @@ def ensure_opencode_config(
     skill: str | None = None,
 ) -> Path:
     """Seed the safety policy and explicit skill paths into runtime config."""
-    destination = SAFE_CONFIG_DIR / "opencode.json"
     config = json.loads(SAFE_CONFIG.read_text(encoding="utf-8"))
     for rule in connectors.shell_denials(paths.CONNECTORS_FILE):
         config["permission"]["bash"].setdefault(f"{rule} *", "deny")
-    valid_skill = skill if skill and re.fullmatch(r"[a-z0-9-]+", skill) else None
-    candidates = []
-    if valid_skill:
-        if workspace:
-            root = Path(workspace).expanduser().resolve()
-            candidates.extend(
-                root / directory / valid_skill
-                for directory in (".agents/skills", ".claude/skills")
-            )
-        candidates.extend(
-            Path.home() / directory / valid_skill
-            for directory in (".agents/skills", ".claude/skills")
-        )
-        candidates.append(paths.CORE_SKILLS_DIR / valid_skill)
-    # SECURITY-REVIEW: workspace is trusted local task configuration. Resolve it
-    # before exposing only existing skill directories to the child process.
-    skill_paths = [str(path) for path in dict.fromkeys(candidates) if path.is_dir()]
-    config["skills"] = {"paths": skill_paths}
+    files = skills.find_skill_files(skill or "", workspace or paths.WORKSPACE,
+                                   paths.WORKSPACE, paths.CORE_SKILLS_DIR)
+    config["skills"] = {"paths": [str(path.parent) for path in files[:1]]}
+    directory = SAFE_CONFIG_DIR
+    if files:
+        # Parallel workers may have different skill roots, even for the same name.
+        directory /= hashlib.sha256(str(files[0]).encode()).hexdigest()[:24]
+    destination = directory / "opencode.json"
     source = json.dumps(config, indent=2) + "\n"
     try:
         if destination.read_text(encoding="utf-8") == source:
-            return SAFE_CONFIG_DIR
+            return directory
     except OSError:
         pass
-    SAFE_CONFIG_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
-    temporary = SAFE_CONFIG_DIR / f"opencode.{os.getpid()}.tmp"
+    directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+    temporary = directory / f"opencode.{os.getpid()}.tmp"
     temporary.write_text(source, encoding="utf-8")
     temporary.chmod(0o600)
     temporary.replace(destination)
-    return SAFE_CONFIG_DIR
+    return directory
 
 
 def opencode_ollama_env(

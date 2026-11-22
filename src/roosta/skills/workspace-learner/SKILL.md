@@ -43,6 +43,8 @@ read once and classified once.
   anecdote.
 - Make the smallest change that prevents recurrence or fills the knowledge gap.
 - A failed or partial source scan never advances that source's checkpoint.
+- For a correction to an installed skill, add the workspace-specific rule to
+  `.roosta/skill-extensions/<name>.md`. This is the only exception below.
 - Do not touch editor or tool config (`.obsidian/`, `.cursor/`, `.roosta/`).
 - Commit only files changed by this pass. Never use `git add -A`.
 - A denied tool call applies to that one call, never to the tool as a whole.
@@ -110,7 +112,7 @@ gardener, not a second canonical knowledge base. `Watermark` dates the pass;
 `id`, so a new slug for a thread the user already has becomes a duplicate. If the thread
 has a card, return that card's `id` with the sharper context you found (see
 **Updating an existing card** in
-[`../assistant/references/board-contract.md`](../assistant/references/board-contract.md)).
+the installed assistant skill’s `references/board-contract.md`).
 If it has none, record the action in `Queued for the user` and let the owning sensor raise it.
 
 Keep `details.items` as `[]` unless a non-chat finding of this pass genuinely

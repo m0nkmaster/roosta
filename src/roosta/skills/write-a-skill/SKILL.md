@@ -5,7 +5,9 @@ description: Create or revise an agent skill in this workspace - a folder under 
 
 # Writing a skill
 
-A skill is a folder under `.agents/skills/<name>/` that teaches an agent one job. Claude Code, Codex, Cursor and pi all discover it there (`.claude/skills` points to the same folder).
+For an installed skill, write workspace-specific additions in `.roosta/skill-extensions/<name>.md`. Use a full fork only when the user explicitly wants to maintain a replacement. Never edit the package.
+
+A custom skill is a folder under `.agents/skills/<name>/` that teaches an agent one job. Claude Code, Codex, Cursor and pi all discover it there (`.claude/skills` points to the same folder).
 
 ## 1. Decide it deserves to exist
 

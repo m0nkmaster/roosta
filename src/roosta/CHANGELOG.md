@@ -2,6 +2,11 @@
 
 Record each release newest first. Bump minor for features and visible behaviour, patch for fixes and polish.
 
+## 0.17.0 - 2026-11-22
+
+- Workers and chats use the installed core skills and operating model. Workspace extensions follow core improvements on every upgrade.
+- Preserve legacy edits as reviewable forks. Settings and `roosta skills status` show pinned skills, available core updates and recovery copies.
+
 ## 0.16.0 - 2026-11-22
 
 - Choose Workspace collections and Constellation stars through ordered Markdown links in WORKSPACE.md and collection overviews.

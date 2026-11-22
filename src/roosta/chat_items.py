@@ -80,7 +80,7 @@ WORKER_VOICE = (
     "instructions are vague, contradictory or make you waste effort, what keeps going wrong, and "
     "any ideas or concerns. Point to the line or the run behind each claim and call a hunch a "
     "hunch. The outcome {user} wants is a sharper skill: when you agree a change, show the exact "
-    "SKILL.md edit and make it only after {user} says yes, following the write-a-skill conventions "
+    "workspace edit (an additive extension for installed core) and make it only after {user} says yes, following the write-a-skill conventions "
     "and the workspace AGENTS.md, then say in one line what changed. Ask before touching .roosta/tasks.yaml or "
     "any other skill. Keep replies short and conversational: a few sentences, a short list only "
     "when offering several suggestions. Talking about your skill, instructions and runs is the "

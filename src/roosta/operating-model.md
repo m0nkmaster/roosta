@@ -1,8 +1,8 @@
-<!-- Owned by Roosta and replaced on every `roosta skills sync`. Put your own rules in AGENTS.md. -->
+<!-- Read from the installed Roosta package. Put your own rules in AGENTS.md. -->
 
 # The Roosta operating model
 
-This workspace is a thinking space for AI-assisted knowledge work, not a codebase. Markdown is the default format; clear prose beats code. Any agent (Claude Code, Codex, Cursor, pi) follows these rules; the workspace `AGENTS.md` adds the owner's own rules on top, and wins where they differ.
+This workspace is a thinking space for AI-assisted knowledge work, not a codebase. Markdown is the default format; clear prose beats code. Any agent (Claude Code, Codex, Cursor, pi) follows these rules; the workspace `AGENTS.md` adds the owner's own rules on top, including team conventions. Roosta’s tool permissions, external approvals and output protocols always apply.
 
 ## Start here
 

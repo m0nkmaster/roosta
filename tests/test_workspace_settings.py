@@ -55,7 +55,7 @@ def test_get_reports_workspace_address_and_managers(env, client, monkeypatch):
     assert data['workspace'] == str(env.workspace) and data['port'] == 7667 and data['host'] == '127.0.0.1'
     assert data['remembered'] == '' and data['saved_port'] is None and data['saved_host'] == ''
     assert data['managed_by'] == 'terminal' and data['service']['supported'] is False
-    assert data['skills'] == {'modified': [], 'roosta': ''}
+    assert 'actor' in data['skills']['core'] and data['skills']['forks'] == {}
     monkeypatch.setenv('ASSISTANT_DESKTOP', '1')
     assert client.get('/api/settings/workspace').json()['managed_by'] == 'desktop'
     monkeypatch.delenv('ASSISTANT_DESKTOP')
@@ -67,11 +67,13 @@ def test_get_reports_workspace_address_and_managers(env, client, monkeypatch):
     assert client.get('/api/settings/workspace').json()['managed_by'] == 'service'
 
 
-def test_get_lists_modified_skills(env, client):
-    (env.workspace / '.roosta' / 'skills.lock.json').write_text(json.dumps(
-        {'roosta': '0.9.0', 'skills': {'actor': {'modified': True}, 'setup': {'hash': 'x'}}}))
-    skills = client.get('/api/settings/workspace').json()['skills']
-    assert skills == {'modified': ['actor'], 'roosta': '0.9.0'}
+def test_settings_identifies_forks_separately_from_installed_core(env, client):
+    fork = env.workspace / ".roosta/skill-forks/actor"
+    fork.mkdir(parents=True)
+    (fork / "SKILL.md").write_text("custom")
+    report = client.get('/api/settings/workspace').json()['skills']
+    assert report["forks"] == {"actor": "legacy copy, review against installed core"}
+    assert "actor" not in report["core"] and "sender" in report["core"]
 
 
 def test_settings_endpoints_are_local_only(env):
@@ -225,13 +227,13 @@ def test_service_refused_for_desktop_and_unsupported_platforms(env, client, monk
     assert not (env.home / 'Library').exists() and env.calls == []
 
 
-def test_skills_sync_reports_the_four_lists(env, client):
-    first = client.post('/api/settings/skills-sync', json={})
-    assert first.status_code == 200 and first.headers['cache-control'] == 'no-store'
-    data = first.json()
-    assert set(data) == {'installed', 'updated', 'current', 'modified'} and data['installed']
-    second = client.post('/api/settings/skills-sync', json={}).json()
-    assert second['installed'] == [] and second['current'] == data['installed']
+def test_running_workspace_never_moves_a_live_skill_tree(env, client):
+    folder = env.workspace / ".agents/skills/setup"
+    folder.mkdir(parents=True)
+    (folder / "SKILL.md").write_text("custom")
+    result = client.post('/api/settings/skills-sync', json={})
+    assert result.status_code == 409 and "restart" in result.json()["error"]
+    assert folder.is_dir()
 
 
 def test_settings_page_has_the_workspace_card_and_escapes_server_text():

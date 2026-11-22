@@ -1,11 +1,11 @@
 ---
 name: setup
-description: First-run and re-runnable setup for a Roosta workspace - interviews the user for their profile, priorities and tools, connects the tools they use (each install approved), turns on the starter schedule, creates a first real board card, trims parts of the operating model they don't want, and merges Roosta updates into skills they have edited. Use when the board's "Set up your workspace" card is opened, when the user says "set up Roosta", "redo my setup", "update my profile", or after a Roosta upgrade reports edited skills.
+description: First-run and re-runnable setup for a Roosta workspace - interviews the user for their profile, priorities and tools, connects the tools they use (each install approved), turns on the starter schedule, creates a first real board card, trims parts of the operating model they don't want, and reviews legacy skill customisations. Use when the board's "Set up your workspace" card is opened, when the user says "set up Roosta", "redo my setup", "update my profile", or to review workspace forks.
 ---
 
 # Setup
 
-You are setting up Roosta with the user: a workspace (this folder) run by an operating model (`.roosta/operating-model.md`), with the Assistant board as its main interface. Aim to finish in about ten minutes. Be warm and brisk: ask a few questions at a time, offer sensible defaults, and write as you go so nothing is lost if the user stops halfway.
+You are setting up Roosta with the user: a workspace (this folder) run by the installed operating model, with the Assistant board as its main interface. Aim to finish in about ten minutes. Be warm and brisk: ask a few questions at a time, offer sensible defaults, and write as you go so nothing is lost if the user stops halfway.
 
 Setup can run in a board chat or in `claude` in this folder. In a board chat, ask one short batch of questions per turn and end each turn as the `actor` skill says; installs and sign-ins still need the user's explicit yes.
 
@@ -39,7 +39,7 @@ From their priorities, pick the one with the clearest next step and create a boa
 
 ## 6. Trim what they don't want
 
-The operating model ships whole; setup removes rather than adds. Ask whether any part doesn't fit (provenance stamps, `## Related` tables, the dated-file convention, the `[AI]` footer on posts). Record each opt-out as a one-line rule in their `AGENTS.md`, which overrides the operating model. Never edit `.roosta/operating-model.md`; Roosta replaces it on update.
+The operating model ships whole; setup removes rather than adds. Ask whether any part doesn't fit (provenance stamps, `## Related` tables, the dated-file convention). Record each opt-out as a one-line rule in their `AGENTS.md`, which records workspace preferences. Approval and tool protocols always apply.
 
 ## 7. Finish
 
@@ -51,13 +51,9 @@ Then give **three to five things to try next**, each a sentence they could send 
 
 Read the current `PROFILE.md`, `PRIORITIES.md`, `TOOLS.md` and `.roosta/connectors.yaml` first and ask only about what is missing or changed. Never overwrite the user's own words; update in place.
 
-## Merging Roosta skill updates
+## Reviewing workspace forks
 
-`roosta skills sync` updates core skills the user never edited and leaves edited ones alone. `.roosta/skills.lock.json` marks those `"modified": true` with `available` set when a newer version shipped. For each:
-
-1. Find the shipped version: `roosta skills path` prints the folder holding Roosta's core skills.
-2. Diff it against the user's copy in `.agents/skills/<name>/`, and explain in a few lines what Roosta changed and what the user changed.
-3. Propose a merged version that keeps the user's intent and takes Roosta's fixes. Apply it only when they agree, then run `roosta skills sync` again so the lock records the new base.
+Run `roosta skills status` in the workspace. Compare the installed skill, active fork and every archived alternative listed under `review`, including helper scripts and references. If a fork is retired, explain which workers still use it and offer to keep or archive it. Explain which local behaviour would change. With the user's agreement, capture additive preferences in the file printed by `roosta skills extend NAME`. Check those rules against the installed version before running `roosta skills use-core NAME`. With Roosta open, the switch takes effect on restart so active runs can finish. The archive keeps the full tree. Keep the fork active if the user still needs replacement behaviour.
 
 ## Related
 

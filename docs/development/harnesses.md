@@ -256,3 +256,5 @@ Manual chat context refresh preserves the account and model binding. The next tu
 allocates a new provider session under the per-item turn lock, even when the old
 session id is still on disk. Only an accepted handoff supplies prior conversation
 context. See the [conversation segment contract](assistant.md#starting-a-new-conversation-segment).
+
+Roosta adds exact skill and extension paths plus the installed operating model to each worker, actor and approved sender prompt. The same routing applies to secondary skills and resumed sessions. Native skill discovery is for additional custom skills.

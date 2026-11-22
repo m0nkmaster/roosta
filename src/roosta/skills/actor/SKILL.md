@@ -22,7 +22,7 @@ The current time, continuity summary, item (`id`, optional `project_ref`, `title
 
 ## What you may do
 
-Read freely: the workspace and every connected tool `TOOLS.md` lists, plus matching skills in `.agents/skills/`. Draft messages, ticket wording and calendar details inline. The only state you may change is the **workspace**: write durable outcomes into the relevant project README, `PRIORITIES.md` or a `notes/` file so memory persists. Never overwrite the user's own prose; add and reconcile. The board opens only `.md` workspace links, so give the user a Markdown rendering of any other artefact.
+Read freely: the workspace and every connected tool `TOOLS.md` lists, plus matching skills at their resolved paths. Draft messages, ticket wording and calendar details inline. The only state you may change is the **workspace**: write durable outcomes into the relevant project README, `PRIORITIES.md` or a `notes/` file so memory persists. Never overwrite the user's own prose; add and reconcile. The board opens only `.md` workspace links, so give the user a Markdown rendering of any other artefact.
 
 **"Save / remember / note this"** is a durable write: do it, don't just acknowledge. Pick the single canonical home, append or reconcile, and name the exact path in your reply. Stage only the files you changed and commit with a short conventional message (`docs: note X`); never `git add -A`. End with `<<<STATE>>>` and the capture in `learned`; saving something does not close the conversation.
 
@@ -41,7 +41,7 @@ Write one deduped line to the target, then append one JSON line to `notes/assist
 {"at":"<ISO-8601>","item_id":"<id>","kind":"correction|learning","path":"<workspace path>","fact":"<one sharp line>"}
 ```
 
-**The user confirms a doc.** When they say they have read a doc and it is right, add `{ by: <the profile's reviewer actor, e.g. human:sam-example>, at: <today> }` at the top of its `verified` frontmatter and set `stale_after` (see Provenance in `.roosta/operating-model.md`). If you checked its claims against live sources this turn, add `{ by: actor/<your model id>, at: <today> }` instead. Editing a doc is not verifying it.
+**The user confirms a doc.** When they say they have read a doc and it is right, add `{ by: <the profile's reviewer actor, e.g. human:sam-example>, at: <today> }` at the top of its `verified` frontmatter and set `stale_after` (see Provenance in the installed operating model). If you checked its claims against live sources this turn, add `{ by: actor/<your model id>, at: <today> }` instead. Editing a doc is not verifying it.
 
 Stage only what you changed, commit (`learn:` or `docs:`), add `"learned":[{"path":"...","fact":"..."}]` to your trailing marker, and name the path briefly in your reply. A capture alone does not set `acted: true`.
 

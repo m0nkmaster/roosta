@@ -1,5 +1,6 @@
 import json
 import os
+import shutil
 import socket
 import subprocess
 import sys
@@ -28,9 +29,9 @@ def test_init_creates_a_workspace_without_clobbering(tmp_path):
     target = tmp_path / "ws"
     assert cli.init(target, check=False) == 0
     for name in ("AGENTS.md", "PROFILE.md", "PRIORITIES.md", "CONTEXT.md", "TOOLS.md",
-                 ".roosta/tasks.yaml", ".roosta/connectors.yaml", ".roosta/operating-model.md",
-                 ".roosta/skills.lock.json", "projects/README.md", ".mcp.json"):
+                 ".roosta/tasks.yaml", ".roosta/connectors.yaml", "projects/README.md", ".mcp.json"):
         assert (target / name).is_file(), name
+    assert not (target / ".agents/skills/actor").exists()
     assert (target / "CLAUDE.md").resolve() == (target / "AGENTS.md").resolve()
     assert (target / ".claude" / "skills").resolve() == (target / ".agents" / "skills").resolve()
     assert ".roosta/state/" in (target / ".gitignore").read_text().splitlines()
@@ -55,32 +56,86 @@ def test_init_refuses_a_full_folder_unless_adopting(tmp_path):
     assert (tmp_path / ".roosta" / "tasks.yaml").is_file()
 
 
-def test_skills_sync_updates_untouched_skills_and_keeps_edited_ones(tmp_path):
+def test_core_upgrades_and_extensions_follow_installed_files(tmp_path, monkeypatch):
+    core = make_core(tmp_path)
+    workspace = tmp_path / "workspace"
+    ws = workspace / ".roosta"
+    ws.mkdir(parents=True)
+    monkeypatch.setattr(paths, "CORE_SKILLS_DIR", core)
+    args = ["--workspace", str(workspace)]
+    assert cli.main(["skills", "extend", "actor", *args]) == 0
+    extension = ws / "skill-extensions/actor.md"
+    extension.write_text("Use our team’s terms")
+    assert cli.main(["skills", "fork", "actor", *args]) == 0
+    fork = ws / "skill-forks/actor"
+    (fork / "SKILL.md").write_text("pinned edition")
+    (core / "actor/helper.py").write_text("improved helper")
+    assert skills.status(core, workspace)["forks"] == {"actor": "core update available"}
+    assert str(fork / "SKILL.md") in skills.instructions("actor", workspace, workspace)
+    assert cli.main(["skills", "use-core", "actor", *args]) == 0
+    assert (ws / "skill-archive/forks/actor/SKILL.md").read_text() == "pinned edition"
+    assert skills.find_skill_files("actor", workspace, workspace, core) == [core / "actor/SKILL.md"]
+    assert str(extension) in skills.instructions("actor", workspace, workspace)
+    assert extension.read_text() == "Use our team’s terms"
+
+
+@pytest.mark.parametrize("lock", [None, "[]", "{broken", '{"skills":{"actor":"invalid"}}'])
+def test_unverifiable_legacy_trees_survive_including_claude(tmp_path, lock):
     core = make_core(tmp_path)
     ws = tmp_path / "ws"
-    report = skills.sync(core, ws)
-    assert report.installed == ["actor"]
-    installed = ws / ".agents" / "skills" / "actor" / "SKILL.md"
-
-    (core / "actor" / "SKILL.md").write_text("---\nname: actor\n---\nv2\n")
-    assert skills.sync(core, ws).updated == ["actor"]
-    assert installed.read_text().endswith("v2\n")
-
-    installed.write_text("my edit\n")
-    (core / "actor" / "SKILL.md").write_text("---\nname: actor\n---\nv3\n")
-    report = skills.sync(core, ws)
-    assert report.modified == ["actor"] and installed.read_text() == "my edit\n"
-    lock = json.loads((ws / ".roosta" / "skills.lock.json").read_text())
-    assert lock["skills"]["actor"]["modified"] is True
-    assert lock["skills"]["actor"]["available"] == skills.tree_hash(core / "actor")
+    (ws / ".roosta").mkdir(parents=True)
+    if lock:
+        (ws / ".roosta/skills.lock.json").write_text(lock)
+    for group in (".agents", ".claude"):
+        skill = ws / group / "skills/actor"
+        shutil.copytree(core / "actor", skill)
+        (skill / "helper.py").write_text(group)
+    assert len(skills.sync(core, ws)) == 2
+    assert skills.sync(core, ws) == []
+    assert (ws / skills.FORKS / "actor/helper.py").read_text() == ".agents"
+    assert (ws / skills.ARCHIVE / "review-claude/actor/helper.py").read_text() == ".claude"
+    assert skills.status(core, ws)["review"] == {"actor": [".roosta/skill-archive/review-claude/actor"]}
 
 
-def test_skills_sync_treats_an_adopted_edit_as_the_users(tmp_path):
+def test_clean_missing_and_retired_legacy_skills(tmp_path):
     core = make_core(tmp_path)
     ws = tmp_path / "ws"
-    (ws / ".agents" / "skills" / "actor").mkdir(parents=True)
-    (ws / ".agents" / "skills" / "actor" / "SKILL.md").write_text("Locally edited skill\n")
-    assert skills.sync(core, ws).modified == ["actor"]
+    shipped = core / "actor"
+    old = ws / ".agents/skills/actor"
+    shutil.copytree(shipped, old)
+    retired = old.with_name("retired")
+    shutil.copytree(shipped, retired)
+    records = {name: {"hash": skills.tree_hash(old)} for name in ("actor", "missing", "retired")}
+    (ws / ".roosta").mkdir()
+    (ws / ".roosta/skills.lock.json").write_text(json.dumps({"skills": records}))
+    (shipped / "SKILL.md").write_text("latest")
+    shutil.copytree(shipped, core / "missing")
+    skills.sync(core, ws)
+    assert skills.status(core, ws)["core"] == ["actor", "missing"]
+    assert skills.status(core, ws)["forks"] == {"retired": "retired from core"}
+    assert (ws / skills.ARCHIVE / ".agents/actor/SKILL.md").read_text().endswith("v1\n")
+    assert not old.exists() and not old.with_name("missing").exists()
+
+
+@pytest.mark.parametrize("link", [".agents", ".roosta", ".agents/skills/actor/helper.py"])
+def test_migration_refuses_symlinks_before_touching_their_targets(tmp_path, link):
+    core = make_core(tmp_path)
+    ws = tmp_path / "ws"
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    source = ws / link
+    source.parent.mkdir(parents=True)
+    source.symlink_to(outside, target_is_directory=True)
+    if link.endswith("helper.py"):
+        (source.parent / "SKILL.md").write_text("legacy")
+    if link == ".roosta":  # No trustworthy location for workspace runtime metadata.
+        with pytest.raises(ValueError, match="linked"):
+            skills.sync(core, ws)
+    else:
+        assert any("Review" in message for message in skills.sync(core, ws))
+        report = skills.status(core, ws)
+        assert report["problems"] or report["pending"]
+    assert source.is_symlink() and not list(outside.iterdir())
 
 
 def test_shipped_core_skills_carry_frontmatter():
@@ -154,3 +209,123 @@ def test_core_skills_have_a_single_source():
     tracked = subprocess.run(["git", "ls-files", ".agents", ".claude"], cwd=repo,
                              capture_output=True, text=True, check=True).stdout
     assert tracked == "", "core skills belong only in src/roosta/skills"
+
+
+def test_start_binds_workspace_and_port_before_loading_paths(tmp_path):
+    workspace = tmp_path / "selected"
+    (workspace / ".roosta").mkdir(parents=True)
+    check = """
+import sys
+from pathlib import Path
+from types import SimpleNamespace
+from roosta import cli
+def run(*args, **kwargs):
+    from roosta import paths
+    assert paths.WORKSPACE == Path(sys.argv[1]) and paths.PORT == 8777
+sys.modules["uvicorn"] = SimpleNamespace(run=run)
+raise SystemExit(cli.main(["start", "--workspace", sys.argv[1], "--port", "8777"]))
+"""
+    subprocess.run([sys.executable, "-c", check, str(workspace)], check=True)
+
+
+def test_clean_primary_and_unknown_secondary_follow_upgrades(tmp_path):
+    core = make_core(tmp_path)
+    ws = tmp_path / "workspace"
+    agents = ws / ".agents/skills/actor"
+    shutil.copytree(core / "actor", agents)
+    old = ws / ".claude/skills/actor"
+    shutil.copytree(agents, old)
+    (old / "SKILL.md").write_text("possibly stale Windows copy")
+    (ws / ".roosta").mkdir()
+    (ws / ".roosta/skills.lock.json").write_text(json.dumps({"skills": {"actor": {"hash": skills.tree_hash(agents)}}}))
+    (core / "actor/SKILL.md").write_text("next release")
+    skills.sync(core, ws)
+    report = skills.status(core, ws)
+    assert report["forks"] == {} and report["core"] == ["actor"]
+    archived, = report["review"]["actor"]
+    assert (ws / archived / "SKILL.md").read_text() == "possibly stale Windows copy"
+    assert skills.sync(core, ws) == []
+
+
+def test_pointer_refresh_preserves_owner_files(tmp_path):
+    core = make_core(tmp_path)
+    ws = tmp_path / "workspace"
+    pointer = ws / ".roosta/operating-model.md"
+    pointer.parent.mkdir(parents=True)
+    (ws / "AGENTS.md").write_text("Read .roosta/operating-model.md. My own rules.")
+    # The unchanged legacy document from 0.16 has the same body with its original header and precedence.
+    legacy = (paths.APP_ROOT / "operating-model.md").read_text().replace(
+        "Read from the installed Roosta package.", "Owned by Roosta and replaced on every `roosta skills sync`.").replace(
+        "including team conventions. Roosta’s tool permissions, external approvals and output protocols always apply.",
+        "and wins where they differ.")
+    pointer.write_text(legacy)
+    skills.sync(core, ws)
+    assert "roosta skills instructions" in pointer.read_text()
+    assert (ws / skills.ARCHIVE / "model/operating-model.md").read_text() == legacy
+    assert "My own rules" in (ws / "AGENTS.md").read_text()
+    pointer.write_text("my operating rules")
+    skills.sync(core, ws)
+    assert pointer.read_text() == "my operating rules"
+    assert any("operating-model.md" in issue for issue in skills.status(core, ws)["problems"])
+
+
+def test_standalone_and_project_skill_paths(tmp_path, monkeypatch, capsys):
+    ws = tmp_path / "workspace"
+    core = make_core(tmp_path)
+    monkeypatch.setattr(paths, "CORE_SKILLS_DIR", core)
+    fork = skills.manage("fork", "actor", ws, core)
+    extra = skills.manage("extend", "actor", ws, core)
+    assert cli.main(["skills", "instructions", "actor", "--workspace", str(ws)]) == 0
+    output = capsys.readouterr().out.rstrip()
+    assert output == skills.instructions("actor", ws, ws).rstrip()
+    assert str(fork / "SKILL.md") in output and str(extra) in output
+    project = ws / "projects/local/.agents/skills/report/SKILL.md"
+    project.parent.mkdir(parents=True)
+    project.write_text("local")
+    assert str(project) in skills.instructions("report", "projects/local", ws)
+
+
+def test_retired_fork_archives_without_interrupting_active_turns(tmp_path):
+    core = make_core(tmp_path)
+    ws = tmp_path / "workspace"
+    fork = skills.manage("fork", "actor", ws, core)
+    (core / "actor").rename(tmp_path / "retired")
+    with skills.ownership_lock(ws, "skill-runner", wait=False):
+        decision = skills.manage("use-core", "actor", ws, core)
+        assert decision.is_file() and fork.is_dir()
+        assert "restart" in skills.status(core, ws)["forks"]["actor"]
+        skills.sync(core, ws)
+        assert fork.is_dir()
+    skills.sync(core, ws)
+    assert not decision.exists() and not fork.exists()
+    (tmp_path / "retired").rename(core / "actor")
+    assert skills.find_skill_files("actor", ws, ws, core) == [core / "actor/SKILL.md"]
+    assert (ws / skills.status(core, ws)["review"]["actor"][0] / "SKILL.md").exists()
+
+
+def test_bad_entry_and_bad_metadata_leave_other_skills_available(tmp_path):
+    core = make_core(tmp_path)
+    ws = tmp_path / "ws"
+    (ws / ".agents/skills/actor").mkdir(parents=True)
+    fork = skills.manage("fork", "actor", ws, core)
+    (fork / skills.BASE).write_bytes(b"\xff")
+    shutil.copytree(core / "actor", core / "sender")
+    skills.sync(core, ws)
+    report = skills.status(core, ws)
+    assert report["pending"] == [".agents/skills/actor"]
+    assert report["forks"]["actor"] == "needs review" and report["problems"]
+    assert skills.find_skill_files("sender", ws, ws, core) == [core / "sender/SKILL.md"]
+
+
+def test_concurrent_legacy_migration_keeps_a_single_complete_fork(tmp_path):
+    from concurrent.futures import ThreadPoolExecutor
+    core = make_core(tmp_path)
+    ws = tmp_path / "ws"
+    legacy = ws / ".agents/skills/actor"
+    shutil.copytree(core / "actor", legacy)
+    (legacy / "helper.py").write_text("my helper")
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        results = list(pool.map(lambda _: skills.sync(core, ws), range(8)))
+    assert any(results) and not legacy.exists()
+    assert (ws / skills.FORKS / "actor/helper.py").read_text() == "my helper"
+    assert not skills.status(core, ws)["review"]

@@ -84,13 +84,13 @@ files without replacing existing configuration.
   every sensor cache and would re-raise it as a board card.
 
 - **Skill descriptions stay canonical.** The runner reads each task skill's `description` from
-  `SKILL.md` frontmatter, preferring the task workspace before global skill roots, and shows it as
+  `SKILL.md` frontmatter, using the same resolved file as the actual prompt, and shows it as
   one truncated line with the full text on hover.
 
 ## Settings endpoints for the CLI
 
 `/api/settings/workspace` (GET, POST select/create/adopt), `/api/settings/address`,
-`/api/settings/service` and `/api/settings/skills-sync` reuse `cli.py` and `skills.py`. They are
+`/api/settings/service` reuse `cli.py`. The old skills-sync POST returns 409 with restart guidance. They are
 local-only and same-origin like `/api/ai/*` (`local_ai_settings`), return `Cache-Control: no-store`,
 and never restart or switch workspace in-process: they record `workspace`, `host` and `port` in
 `~/.config/roosta/config.json` for the next `roosta start`, which uses flags first, then config,
@@ -155,7 +155,7 @@ comment. Issue creation and other GitHub changes still use board approval.
 Add to the workspace's `.roosta/tasks.yaml`:
 ```yaml
   - id: my-task
-    skill: skill-name       # matches a Cursor-discoverable global or workspace skill
+    skill: skill-name       # installed, forked or custom skill name
     name: My task           # optional: Skill runner display name (default: id)
     nickname: Dwight        # optional: what The Office calls this worker (default: id)
     description: Does X     # optional: overrides the skill's description
@@ -225,10 +225,10 @@ vault Markdown through `documents`), and wrap the final output in `<task-output>
   renders sanitised Markdown, including frontmatter as YAML code, and closes with Close or Escape.
 
 - **Unscheduled skills sit below the workers.** `GET /api/skills/unscheduled` lists skills in the
-  selected workspace's own `.agents`, `.claude` and `.cursor` skill roots that no task names, with
-  their descriptions. Global and core-only skills are excluded, as are the dashboard-invoked `actor`
+  installed package, workspace forks and the workspace’s `.agents`, `.claude` and `.cursor` roots that no task names, with
+  their descriptions. Global-only skills are excluded, as are the dashboard-invoked `actor`
   and `sender`. `GET /api/skills/{name}/skill` previews only those workspace skills, with the same
-  document checks. **Schedule** opens the hire chat with the request prefilled, never sent. The
+  document checks and any additive workspace instructions. **Schedule** opens the hire chat with the request prefilled, never sent. The
   page reloads the list when the set of scheduled skills changes and every 30s.
 
 ## AI activity feed
@@ -274,3 +274,5 @@ here.
 Workers with no `connection` resolve the default once at execution, after the writer queue, and bind activity
 to that connection id. Missing or disconnected connections wait with a Settings repair message;
 manual triggers are cleared on the same auth gate as legacy tasks. See [AI harnesses](harnesses.md).
+
+Startup migrates legacy skill copies before starting workers or chats. Skills resolve to an active workspace fork, then installed core, then custom task/workspace/global skills. See [skill ownership and recovery](../../README.md#skills-give-your-workers-their-jobs) for CLI commands.

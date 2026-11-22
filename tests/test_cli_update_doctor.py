@@ -190,9 +190,9 @@ def test_malformed_worker_connectors_accounts(workspace, capsys):
 def test_doctor_account_and_lock_drift(workspace, capsys):
     cfg = workspace / ".roosta"
     skills.sync(paths.CORE_SKILLS_DIR, workspace)
-    (workspace / ".agents/skills/setup/SKILL.md").write_text("local edit")
+    skills.manage("fork", "setup", workspace, paths.CORE_SKILLS_DIR)
     state = cfg / "state"
-    state.mkdir()
+    state.mkdir(exist_ok=True)
     state.joinpath("ai-connections.json").write_text(json.dumps({
         "default": "a"*32, "connections": [
             {"id": "a"*32, "connected": False, "provider": "anthropic", "auth": "system"},

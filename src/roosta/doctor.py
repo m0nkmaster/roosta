@@ -215,22 +215,18 @@ def task_field_error(row):
         return "days_of_week"
 
 
-def lock_check(root, add):
+def ownership_check(root, add):
     from roosta.paths import CORE_SKILLS_DIR
 
-    lock = mapping(json.loads(read_file(root / ".roosta" / skills.LOCK_NAME, root)))
-    records = mapping(lock["skills"])
-    changed = 0
-    for source in CORE_SKILLS_DIR.iterdir():
-        if not (source / "SKILL.md").is_file():
-            continue
-        dest = root / ".agents" / "skills" / source.name
-        shipped = skills.tree_hash(source)
-        if (dest.resolve() != dest or not dest.is_dir() or mapping(records.get(source.name, {})).get("hash") != shipped
-                or skills.tree_hash(dest, read=lambda p: read_file(p, root)) != shipped):
-            changed += 1
-    add("Core skills", "WARN" if changed else "PASS", f"{changed} differ from shipped skills or lock records."
-        + (" Run roosta skills sync for this workspace. Use setup to merge local edits." if changed else ""))
+    report = skills.status(CORE_SKILLS_DIR, root)
+    forks = report["forks"]
+    detail = ", ".join(f"{name} ({reason})" for name, reason in forks.items())
+    add("Core skills", "WARN" if forks or report["pending"] or report["review"] or report["problems"] else "PASS",
+        f"{len(report['core'])} installed core skills. " +
+        (" ".join(report["problems"]) + " " if report["problems"] else "") +
+        (f"Legacy copies awaiting migration: {', '.join(report['pending'])}. " if report["pending"] else "") +
+        (f"Additional archived edits to review: {', '.join(report['review'])}. " if report["review"] else "") +
+        (f"Forks: {detail}. Review with roosta skills status; use extend and use-core to follow updates." if forks else ""))
 
 
 def ai_checks(root, add, tasks):
@@ -342,9 +338,9 @@ def workspace_checks(root, add, selected):
         tasks = []
         add("Workers", "FAIL", "Repair tasks.yaml or restore it with roosta init.")
     try:
-        lock_check(root, add)
+        ownership_check(root, add)
     except READ_ERRORS:
-        add("Core skills", "WARN", "Check skills.lock.json and run roosta skills sync for this workspace.")
+        add("Core skills", "WARN", "Review skill ownership paths and run roosta skills status for this workspace.")
     return tasks
 
 

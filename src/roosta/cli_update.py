@@ -139,8 +139,7 @@ def update(check_only=False):
         if installed != latest:
             print("The installer did not select the requested release. Check its constraints and tool home.")
             return 1
-        print("Restart your existing runner or service, reload the dashboard, then run "
-              "roosta skills sync --workspace <folder> for each workspace.")
+        print("Restart your existing runner or service and reload the dashboard to use the installed core skills.")
         return 0
     except UpdateError as exc:
         print(exc)
