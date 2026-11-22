@@ -23,6 +23,15 @@ function resolved(file, seen = new Set()) {
 export function denied(event, policy, cwd = process.cwd()) {
   const tool = event.toolName, input = event.input || {};
   if (!policy || !Array.isArray(policy.deny)) return 'Roosta permission policy is missing';
+  const fileTool = ['read', 'edit', 'write'].includes(tool);
+  const file = fileTool ? resolved(path.resolve(cwd, input.path || '.')) : null;
+  const command = tool === 'bash' ? String(input.command || '') : '';
+  const targetsRoot = root => file === root || file?.startsWith(root + path.sep) || command.includes(root);
+  if ((policy.protected || []).some(targetsRoot)) return 'AI credentials and runtime state are private';
+  if (policy.readOnlyRoot && tool !== 'read' && targetsRoot(policy.readOnlyRoot)) {
+    return 'The installed Roosta package is read-only';
+  }
+
   if (policy.unrestricted) return '';
   if (tool.startsWith('mcp__')) {
     const name = tool.split('__').slice(2).join('__');
@@ -33,10 +42,8 @@ export function denied(event, policy, cwd = process.cwd()) {
     return '';
   }
   if (tool === 'tool_search' || ['list_mcp_resources', 'list_mcp_resource_templates', 'read_mcp_resource'].includes(tool)) return '';
-  if (!['read', 'edit', 'write', 'bash'].includes(tool)) return 'Tool is outside the Roosta policy';
-  if (['read', 'edit', 'write'].includes(tool)) {
-    const file = resolved(path.resolve(cwd, input.path || '.'));
-    if ((policy.protected || []).some(root => file === root || file.startsWith(root + path.sep))) return 'AI credentials and runtime state are private';
+  if (!fileTool && tool !== 'bash') return 'Tool is outside the Roosta policy';
+  if (fileTool) {
     const kind = tool === 'read' ? 'Read' : 'Write';
     for (const rule of policy.deny) {
       const match = /^(Read|Write)\((.*)\)$/.exec(rule);
@@ -44,8 +51,7 @@ export function denied(event, policy, cwd = process.cwd()) {
     }
   }
   if (tool === 'bash') {
-    const command = String(input.command || '');
-    if ((policy.protected || []).some(root => command.includes(root)) || /(?:\.env\b|\.pem\b|\.key\b|auth\.json|credentials\.json)/i.test(command)) return 'Credential files are private';
+    if (/(?:\.env\b|\.pem\b|\.key\b|auth\.json|credentials\.json)/i.test(command)) return 'Credential files are private';
     // Shell policies are guardrails, as in the other runtimes, not an OS sandbox.
     for (const rule of policy.deny) {
       const match = /^Shell\(([^:)]+)(?::(.*))?\)$/.exec(rule);

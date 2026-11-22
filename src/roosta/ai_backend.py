@@ -26,12 +26,6 @@ DEFAULT_BACKEND = CLAUDE  # setup configures Claude Code; Cursor is opt-in
 BACKEND_FILE = paths.CACHE_DIR / "ai-backend.json"
 
 
-def _protected_roots(workspace: str) -> tuple[Path, ...]:
-    roots = (connections.CONNECTIONS_DIR.resolve(), ai_runtime.RUNTIME_ROOT.resolve())
-    app_root = paths.APP_ROOT.resolve()
-    return roots if app_root.is_relative_to(Path(workspace).resolve()) else roots + (app_root,)
-
-
 def current(path: Path | None = None) -> str:
     try:
         saved = json.loads(Path(path or BACKEND_FILE).read_text()).get("backend")
@@ -351,7 +345,11 @@ def prepare(connection_id: str, workspace: str, *, model: str = "", session_id: 
     directory = connections.directory(connection["id"])
     sid = session_id or str(uuid.uuid4())
     mcp = {"mcpServers": {}} if probe else mcp_config(workspace)
-    workspace_key = hashlib.sha256(str(Path(workspace).resolve()).encode()).hexdigest()[:16]
+    workspace_root = Path(workspace).resolve()
+    workspace_key = hashlib.sha256(str(workspace_root).encode()).hexdigest()[:16]
+    private_roots = (connections.CONNECTIONS_DIR.resolve(), ai_runtime.RUNTIME_ROOT.resolve())
+    package = paths.APP_ROOT.resolve()
+    external_package = not package.is_relative_to(workspace_root)
     if backend == CLAUDE:
         mcp_path = directory / f"mcp-{workspace_key}.json"
         _private_json(mcp_path, mcp)
@@ -361,9 +359,13 @@ def prepare(connection_id: str, workspace: str, *, model: str = "", session_id: 
                                       session_id=sid, partial=True, projects=projects)
         settings_index = args.index("--settings") + 1
         settings = json.loads(Path(args[settings_index]).read_text())
-        for protected in _protected_roots(workspace):
+        permissions = settings["permissions"]
+        for protected in private_roots:
             for tool in ("Read", "Edit", "Write"):
-                settings["permissions"]["deny"].append(f"{tool}(/{protected}/**)")
+                permissions["deny"].append(f"{tool}(/{protected}/**)")
+        if external_package:
+            for tool in ("Edit", "Write"):
+                permissions["deny"].append(f"{tool}(/{package}/**)")
         settings_path = directory / f"permissions-{profile}-{workspace_key}.json"
         _private_json(settings_path, settings)
         args[settings_index] = str(settings_path)
@@ -399,7 +401,9 @@ def prepare(connection_id: str, workspace: str, *, model: str = "", session_id: 
         policy = cursor_agent.merged_permissions(json.loads(Path(template).read_text())["permissions"])
         if profile == "unrestricted":
             policy = {"allow": [], "deny": [], "unrestricted": True}
-        policy["protected"] = [str(p) for p in _protected_roots(workspace)]
+        policy["protected"] = [str(p) for p in private_roots]
+        if external_package:
+            policy["readOnlyRoot"] = str(package)
         env["ROOSTA_PI_POLICY"] = json.dumps(policy)
         args = pi_agent.pi_args(binary, connection, model, pi_dir, sid, workspace)
         if effort:

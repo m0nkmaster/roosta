@@ -2,6 +2,10 @@
 
 Record each release newest first. Bump minor for features and visible behaviour, patch for fixes and polish.
 
+## 0.17.1 - 2026-11-22
+
+- Fix file access for chats and workers using named AI connections. Review customisations can now read installed core skills, their references and the operating model.
+
 ## 0.17.0 - 2026-11-22
 
 - Workers and chats use the installed core skills and operating model. Workspace extensions follow core improvements on every upgrade.
