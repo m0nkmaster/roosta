@@ -33,7 +33,7 @@ See [Assistant contracts](assistant.md) and [Office rendering](office.md) for pa
 
 - **Settings → Notifications** shows Mac users the manual path to Roosta’s notification preferences and points them to the menu-bar test notification if Roosta is missing.
 
-- **Recently closed chats** in Settings lists up to 50 named threads. Restore opens the original conversation in Assistant. The Chats rail also offers a ten-second Undo toast. See the [chat archive contract](assistant.md).
+- **Recently closed chats** in Settings shows the newest 10 threads on load and on return from the back/forward cache. With more than 10 available, Show more reveals up to 50 and Show less returns to 10. Restore opens the original conversation in Assistant. The Chats rail also offers a ten-second Undo toast. See the [chat archive contract](assistant.md).
 
 - **Folder browsing** (`GET /api/settings/folders`) keeps listing readable folders when a child's
   `.roosta` marker cannot be inspected; that child has no workspace badge. An unreadable selected

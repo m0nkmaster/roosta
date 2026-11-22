@@ -3975,8 +3975,9 @@ class Element {
   querySelector(s){ return this.parts[s]??=new Element(); }
   appendChild(e){ this.children.push(e); if(e.id) elements[e.id]=e; return e; }
   append(...es){ es.forEach(e=>this.appendChild(e)); }
-  replaceChildren(){ this.children=[]; }
+  replaceChildren(...children){ this.children=children; }
   setAttribute(k,v){ this[k]=v; }
+  getAttribute(k){ return this[k]; }
   remove(){ this.removed=true; }
 }
 const elements={},document={getElementById:id=>elements[id],createElement:()=>new Element(),body:new Element()};
@@ -3984,9 +3985,10 @@ const id='doc:notes/u & "v",w.md', other='worker:alice', title='<hello>', NEW_CH
 let activeId=other,chats=[{id},{id:other}],ok=true,archived=true,destination='';
 const location={assign:url=>destination=url}, trackUsage=()=>{}, renderRail=()=>{}, load=async()=>{};
 const chatItem=()=>({title}),openItem=id=>activeId=id,esc=s=>s.replaceAll('<','&lt;');
+let closed=[{id,title}];
 const calls=[],fetch=async(url,options)=>{
   calls.push([url,options&&JSON.parse(options.body)]);
-  return {ok,json:async()=>url.endsWith('/archived')?[{id,title}]:{archived}};
+  return {ok,json:async()=>url.endsWith('/archived')?closed:{archived}};
 };
 const timers=[], setTimeout=(fn,ms)=>{timers.push({fn,ms});return timers.length;},clearTimeout=()=>{};
 const notice=()=>elements['closed-notices'].children.at(-1);
@@ -4009,12 +4011,29 @@ const notice=()=>elements['closed-notices'].children.at(-1);
   assert.ok(notice().innerHTML.includes('Could not close'));
   ok=true; archived=false; const last=notice(); await archiveChat(id); assert.equal(notice(),last);
   const list=elements['closed-chats']=new Element(),status=elements['closed-chats-status']=new Element();
+  const footer=elements['closed-chats-footer']=new Element();
+  const toggle=elements['closed-chats-toggle']=new Element();
   await loadClosedChats();
+  assert.equal(footer.hidden,true);
   const [name,button]=list.children[0].children;
   assert.equal(name.textContent,title); assert.equal(button['aria-label'],'Restore '+title);
   ok=false; await button.onclick(); assert.equal(destination,''); assert.equal(button.disabled,false);
   assert.match(status.textContent,/Could not restore/);
   ok=true; await button.onclick(); assert.equal(new URL(destination,'http://localhost').searchParams.get('item'),id);
+  closed=Array.from({length:55},(_,i)=>({id:'chat-'+i,title:'Chat '+i}));
+  const visibleTitles=()=>list.children.map(row=>row.children[0].textContent);
+  const first=n=>closed.slice(0,n).map(chat=>chat.title);
+  await loadClosedChats();
+  assert.equal(footer.hidden,false); assert.deepEqual(visibleTitles(),first(10));
+  toggle.onclick(); assert.deepEqual(visibleTitles(),first(50)); assert.equal(toggle['aria-expanded'],'true');
+  assert.equal(toggle.textContent,'Show less');
+  await list.children.at(-1).children[1].onclick();
+  assert.deepEqual(calls.at(-1),['/api/chats/restore',{item_id:'chat-49'}]);
+  toggle.onclick(); assert.deepEqual(visibleTitles(),first(10)); assert.equal(toggle.textContent,'Show more');
+  toggle.onclick(); await loadClosedChats();
+  assert.deepEqual(visibleTitles(),first(10)); assert.equal(toggle['aria-expanded'],'false');
+  closed=closed.slice(0,10); await loadClosedChats(); assert.equal(footer.hidden,true);
+  closed=[]; await loadClosedChats(); assert.equal(status.textContent,'No recently closed chats.');
   ok=false; await loadClosedChats(); assert.match(status.textContent,/Could not load/);
 })().catch(e=>{console.error(e);process.exitCode=1;});
 """], check=True)
