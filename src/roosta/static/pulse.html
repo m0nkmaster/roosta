@@ -99,7 +99,7 @@
         .legend-key.drift::before { background: var(--signal-coral); }
         .legend-key.link::before { background: var(--tblr-secondary-color); }
         .legend-key.keys::before { display: none; }
-        .legend-key.moon::before { width: 4px; height: 4px; background: #c9d1d9; }
+        .legend-key.moon::before { width: 4px; height: 4px; background: var(--console-secondary); }
         .running-list, .hot-list { list-style: none; padding: 0; margin: 0; gap: .5rem; }
         .hot-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(260px, 100%), 1fr)); }
         .hot-item { height: 100%; overflow-wrap: anywhere; font-size: .8125rem; }
@@ -140,7 +140,7 @@
         .link-chip { white-space: normal; text-align: left; }
         .link-chip.stale { color: var(--signal-coral); }
         .detail-actions { margin-top: auto; display: grid; gap: .4rem; }
-        body.hyperdrive::after { content: ''; position: fixed; inset: 0; pointer-events: none; background: radial-gradient(circle at 35% 50%, #ff6b7233, transparent 35%), radial-gradient(circle at 65% 50%, #8b83f633, transparent 35%); animation: hyper 1.2s ease-out; z-index: 9999; }
+        body.hyperdrive::after { content: ''; position: fixed; inset: 0; pointer-events: none; background: radial-gradient(circle at 35% 50%, color-mix(in srgb, var(--signal-coral) 20%, transparent), transparent 35%), radial-gradient(circle at 65% 50%, color-mix(in srgb, var(--signal-violet) 20%, transparent), transparent 35%); animation: hyper 1.2s ease-out; z-index: 9999; }
         @keyframes hyper { 0% { opacity: 1; transform: scale(.2); } 100% { opacity: 0; transform: scale(2); } }
         @media (max-width: 900px) {
             .stats-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -176,7 +176,7 @@
             </div>
             <div class="card-body"><div class="constellation-layout">
                 <div class="constellation-wrap">
-                    <canvas id="constellation" data-bs-theme="dark" aria-label="Project constellation: documented relationships on rings of time since last change"></canvas>
+                    <canvas id="constellation" aria-label="Project constellation: documented relationships on rings of time since last change"></canvas>
                     <div class="constellation-zoom" id="constellation-zoom" role="group" aria-label="Constellation zoom">
                         <button type="button" class="btn btn-sm" data-zoom="in" aria-label="Zoom in">+</button>
                         <button type="button" class="btn btn-sm" data-zoom="out" aria-label="Zoom out">−</button>
@@ -502,13 +502,23 @@
         ];
         const INNER_EDGE = 0.16;
         let ringEdges = [0.3, 0.53, 0.76, 0.99];
-        const STATE_COLOUR = {
-            attention: [242, 184, 91],
-            drifting: [255, 107, 114],
-            fresh: [113, 196, 214],
-            rested: [111, 118, 129],
-            quiet: [139, 148, 158],
-        };
+        function readPalette() {
+            const style = getComputedStyle(canvas);
+            const token = name => style.getPropertyValue(name).trim();
+            return {
+                attention: token('--signal-amber'),
+                drifting: token('--signal-coral'),
+                fresh: token('--signal-cyan'),
+                quiet: token('--console-secondary'),
+                rested: token('--console-tertiary'),
+                text: token('--console-text'),
+                halo: token('--console-panel'),
+                accent: token('--signal-violet'),
+                trace: token('--signal-mint'),
+            };
+        }
+        let palette = readPalette();
+        window.addEventListener('roosta-theme', () => { palette = readPalette(); });
 
         function ringIndex(age) {
             if (age === null || age === undefined) return RINGS.length - 1;
@@ -701,13 +711,15 @@
         function drawRings(cx, cy, rx, ry) {
             RINGS.forEach((ring, i) => {
                 ctx.setLineDash([2, 5]);
-                ctx.strokeStyle = 'rgba(120, 128, 140, 0.16)';
+                ctx.strokeStyle = palette.rested;
+                ctx.globalAlpha = 0.4;
                 ctx.lineWidth = 1;
                 ctx.beginPath();
                 ctx.ellipse(cx, cy, rx * ringEdges[i], ry * ringEdges[i], 0, 0, Math.PI * 2);
                 ctx.stroke();
                 ctx.setLineDash([]);
-                ctx.fillStyle = 'rgba(120, 128, 140, 0.55)';
+                ctx.globalAlpha = 1;
+                ctx.fillStyle = palette.rested;
                 const k = 1 / view.scale;
                 ctx.font = `${9 * k}px -apple-system, system-ui, sans-serif`;
                 ctx.textAlign = 'left';
@@ -734,7 +746,7 @@
             queue.sort((a, b) => a.priority - b.priority);
             // Text stays screen-sized at any zoom (k converts screen px to world units).
             const k = 1 / view.scale;
-            queue.forEach(({ node, radius, active, colour }) => {
+            queue.forEach(({ node, radius, active, colour, alpha }) => {
                 ctx.font = `${active ? '600 ' : ''}${10 * k}px -apple-system, system-ui, sans-serif`;
                 const full = node.title || node.name;
                 const text = full.length > 26 ? `${full.slice(0, 25)}…` : full;
@@ -746,10 +758,12 @@
                 placed.push(box(chosen));
                 // A halo keeps the name readable where it crosses a star or a link.
                 ctx.lineWidth = 3 * k;
-                ctx.strokeStyle = 'rgba(9, 10, 13, 0.85)';
+                ctx.strokeStyle = palette.halo;
+                ctx.globalAlpha = alpha;
                 ctx.strokeText(text, node.x, node.drawY + chosen);
                 ctx.fillStyle = colour;
                 ctx.fillText(text, node.x, node.drawY + chosen);
+                ctx.globalAlpha = 1;
             });
         }
 
@@ -776,10 +790,12 @@
                     const age = (Date.now() - new Date(page.mtime).getTime()) / 86400000;
                     const alpha = fade * (focus ? 1 : 0.8) * Math.max(0.6, 1 - age / 60);
                     const hovered = hoveredMoon && hoveredMoon.page.path === page.path;
-                    ctx.fillStyle = hovered ? '#f0f3f6' : `rgba(201, 209, 217, ${alpha})`;
+                    ctx.fillStyle = hovered ? palette.text : palette.quiet;
+                    ctx.globalAlpha = hovered ? 1 : alpha;
                     ctx.beginPath();
                     ctx.arc(moon.x, moon.y, moon.r * (hovered ? 1.8 : 1), 0, Math.PI * 2);
                     ctx.fill();
+                    ctx.globalAlpha = 1;
                     moons.push(moon);
                 });
             });
@@ -789,10 +805,10 @@
                     ctx.font = `${10 * k}px -apple-system, system-ui, sans-serif`;
                     ctx.textAlign = 'center';
                     ctx.lineWidth = 3 * k;
-                    ctx.strokeStyle = 'rgba(9, 10, 13, 0.85)';
+                    ctx.strokeStyle = palette.halo;
                     const text = hoveredMoon.page.title.length > 40 ? `${hoveredMoon.page.title.slice(0, 39)}…` : hoveredMoon.page.title;
                     ctx.strokeText(text, moon.x, moon.y - 6 * k);
-                    ctx.fillStyle = 'rgba(240, 243, 246, 0.95)';
+                    ctx.fillStyle = palette.text;
                     ctx.fillText(text, moon.x, moon.y - 6 * k);
                 }
             }
@@ -832,11 +848,8 @@
                 if (!matchesSearch(a) || !matchesSearch(b)) return;
                 const lit = focus && (focus.has(a.name) && focus.has(b.name));
                 const dimmed = focus && !lit;
-                ctx.strokeStyle = lit
-                    ? 'rgba(113, 196, 214, 0.55)'
-                    : dimmed
-                        ? 'rgba(110, 118, 129, 0.05)'
-                        : 'rgba(110, 118, 129, 0.16)';
+                ctx.strokeStyle = lit ? palette.fresh : palette.rested;
+                ctx.globalAlpha = lit ? 0.85 : dimmed ? 0.12 : 0.5;
                 ctx.lineWidth = (lit ? 1.4 : 1) / view.scale;
                 ctx.beginPath();
                 ctx.moveTo(a.x, a.drawY);
@@ -844,9 +857,11 @@
                 ctx.stroke();
             });
 
+            ctx.globalAlpha = 1;
+
             // The centre is "now": everything drifts outward as it goes untouched.
             const corePulse = 0.5 + (reduceMotion ? 0 : Math.sin(frame * 0.04) * 0.15);
-            ctx.fillStyle = hyperdrive ? '#c884f4' : (selectedTrace ? '#62d7a5' : '#ff6b72');
+            ctx.fillStyle = hyperdrive ? palette.accent : (selectedTrace ? palette.trace : palette.drifting);
             ctx.beginPath();
             ctx.arc(cx, cy, 5 * (0.7 + corePulse * 0.6), 0, Math.PI * 2);
             ctx.fill();
@@ -855,7 +870,8 @@
                 const target = nodes[tracedIndex];
                 for (let i = 0; i < 3; i++) {
                     const t = ((frame * 0.014 + i * 0.33) % 1);
-                    ctx.strokeStyle = `rgba(139, 131, 246, ${0.5 * (1 - t)})`;
+                    ctx.strokeStyle = palette.accent;
+                    ctx.globalAlpha = 0.5 * (1 - t);
                     ctx.lineWidth = 1.6;
                     ctx.beginPath();
                     ctx.arc(target.x, target.drawY, 6 + t * 26, 0, Math.PI * 2);
@@ -880,21 +896,21 @@
                     : Math.sin(frame * (0.018 + Math.min(edits, 10) * 0.003) + node.phase) * 1.8;
                 node.drawY = node.y + bob;
                 const r = nodeRadius(node) + (active ? 1.6 : 0);
-                const [cr, cg, cb] = hyperdrive ? [200, 132, 244] : STATE_COLOUR[state];
+                const colour = hyperdrive ? palette.accent : palette[state];
                 const glow = Math.max(0.28, 1 - (node.age_days ?? 180) / 30);
                 if (active || state === 'attention' || state === 'drifting') {
                     ctx.shadowBlur = active ? 15 : 8;
-                    ctx.shadowColor = `rgba(${cr}, ${cg}, ${cb}, ${alpha})`;
+                    ctx.shadowColor = colour;
                 }
-                ctx.fillStyle = active
-                    ? '#f0f3f6'
-                    : `rgba(${cr}, ${cg}, ${cb}, ${alpha * (state === 'quiet' || state === 'rested' ? 0.2 + glow * 0.5 : 0.55 + glow * 0.45)})`;
+                ctx.fillStyle = active ? palette.text : colour;
+                ctx.globalAlpha = active ? 1 : alpha * (0.65 + 0.35 * glow);
                 ctx.beginPath();
                 ctx.arc(node.x, node.drawY, r, 0, Math.PI * 2);
-                ctx.fill();
+                if (state !== 'rested' || active) ctx.fill();
                 ctx.shadowBlur = 0;
                 if (state === 'rested') {
-                    ctx.strokeStyle = `rgba(${cr}, ${cg}, ${cb}, ${alpha * 0.55})`;
+                    ctx.strokeStyle = colour;
+                    ctx.globalAlpha = alpha;
                     ctx.lineWidth = 1;
                     ctx.beginPath();
                     ctx.arc(node.x, node.drawY, r + 2.5, 0, Math.PI * 2);
@@ -902,11 +918,8 @@
                 }
                 if (state === 'attention' || active) {
                     const ringPulse = reduceMotion ? 0 : Math.sin(frame * 0.06) * 1.2;
-                    ctx.strokeStyle = active && !traced
-                        ? 'rgba(240, 243, 246, 0.8)'
-                        : traced
-                            ? 'rgba(139, 131, 246, 0.85)'
-                            : `rgba(${cr}, ${cg}, ${cb}, ${alpha * 0.75})`;
+                    ctx.strokeStyle = traced ? palette.accent : active ? palette.text : colour;
+                    ctx.globalAlpha = alpha * 0.85;
                     ctx.lineWidth = 1.6;
                     ctx.beginPath();
                     ctx.arc(node.x, node.drawY, r + 3.8 + ringPulse, 0, Math.PI * 2);
@@ -918,13 +931,13 @@
                         radius: r,
                         active,
                         priority: active ? 0 : state === 'attention' ? 1 : 2,
-                        colour: active
-                            ? 'rgba(240, 243, 246, 0.95)'
-                            : `rgba(${cr}, ${cg}, ${cb}, ${Math.min(1, alpha) * 0.85})`,
+                        colour: active ? palette.text : colour,
+                        alpha,
                     });
                 }
             });
 
+            ctx.globalAlpha = 1;
             drawMoons(w, h);
             drawLabels(labelQueue);
 
@@ -932,13 +945,15 @@
                 for (let i = 0; i < 12; i++) {
                     const a = frame * 0.08 + i * 0.52;
                     const dist = 20 + (i % 4) * 18;
-                    ctx.fillStyle = `hsla(${260 + i * 12}, 80%, 70%, 0.35)`;
+                    ctx.fillStyle = i % 2 ? palette.accent : palette.drifting;
+                    ctx.globalAlpha = 0.5;
                     ctx.beginPath();
                     ctx.arc(cx + Math.cos(a) * dist, cy + Math.sin(a) * dist, 2, 0, Math.PI * 2);
                     ctx.fill();
                 }
             }
 
+            ctx.globalAlpha = 1;
             frame++;
             requestAnimationFrame(drawConstellation);
         }

@@ -28,8 +28,10 @@ See [Assistant contracts](assistant.md) and [Office rendering](office.md) for pa
   is one `[data-bs-theme="light"]` block in `shell.css` that redefines
   the `--console-*` and `--signal-*` tokens (signals darken to stay legible on white). Pages use those
   tokens (`--console-rail`, `--console-selected`, `--console-tint`, ...) rather than hardcoded dark hexes,
-  or light mode leaves dark patches. The constellation canvas carries its own `data-bs-theme="dark"`
-  because it draws light text; the Office canvas and Ceefax TV are art and stay as they are
+  or light mode leaves dark patches. The Pulse and full-screen constellation inherit the shell palette. Their canvas renderer
+  reads the colour tokens on load and on `roosta-theme`, including changes from another tab.
+  The existing animation loop paints the new colours with the current view and project positions.
+  The Office canvas and Ceefax TV retain their artwork palettes.
 
 - **Settings → Notifications** shows Mac users the manual path to Roosta’s notification preferences and points them to the menu-bar test notification if Roosta is missing.
 
