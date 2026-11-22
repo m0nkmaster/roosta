@@ -126,7 +126,9 @@ See [Assistant contracts](assistant.md) and [Office rendering](office.md) for pa
 - **`static/markdown-copy.js`** - Copy-as-Markdown for the document page, Workspace preview and
   the whole Assistant board (items, chats, document pane; text fields keep native copy): `watch(selector)` makes highlighting (or Cmd+C) copy the selection via
   Turndown (CDN, GFM plugin); `copyMarkdown(text)` backs each Copy button. Copies use
-  `execCommand('copy')` because the desktop app denies every permission, async clipboard included
+  `execCommand('copy')` because the desktop app denies every permission, async clipboard included. Assistant chat and item code blocks have a keyboard-accessible Copy code
+  button added after sanitisation. It copies the rendered code verbatim. Selections inside a block
+  copy plain code, and selections spanning prose and code retain Markdown formatting.
 
 - **Workspace search never runs AI.** `/api/workspace` returns visible Markdown contents with
   `no-store`; literal matching and highlighting stay in browser memory. Selected paths persist per
