@@ -295,8 +295,6 @@ def test_writer_tasks_serialise_but_reader_runs_alongside_writer(tmp_path):
 
 
 def test_writer_waiting_on_lock_names_the_holder_not_a_stale_teams_block(tmp_path):
-    """11 Nov: incident-tracker kept saying "Waiting for sign-in: Teams (run `msteams login`)" while it
-    actually waited for office-director to release the writer lock."""
     async def scenario():
         teams_status = "auth-failed"
         holder_started = asyncio.Event()
@@ -1592,7 +1590,6 @@ def test_git_push_task_prompt_distinguishes_manual_run_now():
 
 
 def test_git_push_prompts_are_not_specific_to_the_okr_refresh():
-    """Run now on the vault gardener was told to refresh OKR metric snapshots (16 Oct)."""
     gardener = task_config.TaskConfig(
         id="shared-vault-gardener", skill="shared-vault-gardener",
         allow_git_push=True, push_on_schedule=True,
@@ -1713,8 +1710,6 @@ def test_run_task_kills_hung_child(tmp_path, monkeypatch):
 
 
 def test_run_task_survives_system_sleep(tmp_path, monkeypatch):
-    """An idle timeout during which the awake clock barely moved (the Mac slept) must not kill
-    the run. 298 runs were killed as "presumed hung" after 5-70s of awake time."""
     async def scenario():
         body = '<task-output>{"summary":"done","status":"success","details":""}</task-output>'
         payload = json.dumps({"type": "result", "subtype": "success", "result": body}).encode()
@@ -2108,7 +2103,6 @@ def test_only_tasks_that_require_a_connector_check_it_before_running(tmp_path):
 
 
 def test_task_output_with_a_missing_or_extra_closing_brace_still_parses():
-    # Shapes from real runs (27 Oct incident-tracker, 14 Oct support watch) that were recorded as errors.
     missing = '<task-output>{"summary":"No incident changes.","status":"success","details":{"notes":"a {b} c"}</task-output>'
     extra = '<task-output>{"summary":"No new activity.","status":"success","details":{"auth":"ok"}}}</task-output>'
     assert scheduler.parse_task_output(missing)["status"] == "success"
@@ -2158,8 +2152,6 @@ def test_partial_pass_reports_its_own_summary_not_an_invalid_result(tmp_path, mo
 
 
 def test_daily_run_lost_to_the_network_retries_soon_but_real_errors_wait(tmp_path):
-    """11 Nov: an offline spell failed email-important-watch-am with "Can't reach the API
-    server", and the daily task then waited until tomorrow."""
     async def scenario():
         calls: list[str] = []
 

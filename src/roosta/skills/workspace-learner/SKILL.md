@@ -128,7 +128,7 @@ End with `<task-output>` JSON:
     "corrections": [ { "file": "", "what": "", "source": "" } ],
     "learned": [ { "fact": "", "target": "", "source": "" } ],
     "open": [ "" ],
-    "queued_for_rob": [ "" ],
+    "queued_for_user": [ "" ],
     "items": []
   }
 }

@@ -28,13 +28,10 @@ keep stale nav.
   `.roosta/state/cache/*.json` and `.roosta/state/assistant/*.json`; watching those outputs can
   create a restart loop. The current `roosta start` and supervised desktop launch do not enable
   reload. Preserve that behaviour unless a development launcher explicitly excludes runtime files.
-- **A slow login shell breaks Cursor and the runner together.** Cursor resolves `PATH` by spawning
-  an interactive login shell with a ~10s budget; under load (reload thrash plus several background
-  `agent` tasks) a heavy `.zshrc` blows past it, logging "Unable to resolve your shell environment"
-  and leaving blank IDE windows *and* a backend the supervisor cannot probe healthy in 30s, which
-  SIGTERMs it into orphaned processes squatting off-port. If both fail at once, time
-  `zsh -i -l -c exit` before suspecting the dashboard, and clear stray python processes on the Roosta port
-  before relaunching.
+- **Check login shell startup if both Cursor and the runner fail to open.** Cursor gives an
+  interactive login shell about 10 seconds to resolve `PATH`. The supervisor allows 30 seconds
+  for the runner health check. Time `zsh -i -l -c exit` and check the Roosta port for a stale
+  runner before relaunching.
 - Native notifications are owned solely by the Electron main process. New board items from the
   conductor or a scheduled sensor feed notify once per id across restarts, including while the
   window is focused. An item is recorded as seen only after Electron emits `show`; failed or
@@ -45,13 +42,10 @@ keep stale nav.
   without showing them so re-enabling does not replay a backlog. The first-run prompt is skipped and
   the tray says "off in Settings"; **Send Test Notification** still works. Settings gives Mac users manual instructions.
   External links remain limited to HTTP and HTTPS.
-- **Notifications work with the local self-signed identity; notarisation is not required.** If they
-  go silently to Notification Centre with no banner/sound, do **not** chase notarisation or
-  `terminal-notifier` (Homebrew's bottle isn't notarised anyway). The real causes are: a duplicate
-  Launch Services registration (the `dist/` build output registered alongside `/Applications` under
-  the same bundle id - `install:mac` cleans this up), the macOS *alert* volume being zero
-  (separate from output volume; affects sound only), or banners landing on a second display. See the
-  Notifications troubleshooting section in `desktop/README.md`.
+- The local self-signed identity supports notifications without notarisation. If a notification
+  reaches Notification Centre without a banner or sound, check for duplicate Launch Services
+  registrations, a muted macOS alert volume and banners on a second display. See
+  [Notifications troubleshooting](../../desktop/README.md#notifications-troubleshooting).
 - Notification clicks deep-link to `/assistant?item=<id>` or `/?task=<id>` via `openNoticeTarget`;
   macOS `activate` must not reset that navigation to the generic Assistant home. The static pages must
   preserve those query-string entry points. Each notification's macOS `id` is its notice key
@@ -60,9 +54,8 @@ keep stale nav.
   the `ready` event's `launchInfo`. Without the key, a click just opens the default item.
 - Renderer code has no Node integration. External links open in the default browser; only the
   localhost dashboard remains in the app window.
-- **The bundle id is `com.m0nkmaster.roosta`.** This migration from
-  `com.robmacdonald.workspace-assistant` resets macOS notification permission once; keep the new
-  id stable after this. The board page inside the app is called Assistant (Open Assistant,
+- **Keep the bundle id stable at `com.m0nkmaster.roosta`.** macOS associates notification
+  permissions with this identity. The board page inside the app is called Assistant (Open Assistant,
   Refresh Assistant Now).
 - The app does not launch at login and has no auto-updater. Electron's macOS notification API
   requires a stable code signature: run `npm run setup:signing` once to create the local

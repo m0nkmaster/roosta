@@ -79,7 +79,7 @@ def test_skills_sync_treats_an_adopted_edit_as_the_users(tmp_path):
     core = make_core(tmp_path)
     ws = tmp_path / "ws"
     (ws / ".agents" / "skills" / "actor").mkdir(parents=True)
-    (ws / ".agents" / "skills" / "actor" / "SKILL.md").write_text("Rob's version\n")
+    (ws / ".agents" / "skills" / "actor" / "SKILL.md").write_text("Locally edited skill\n")
     assert skills.sync(core, ws).modified == ["actor"]
 
 

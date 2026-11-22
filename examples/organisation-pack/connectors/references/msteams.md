@@ -3,7 +3,7 @@
 Offer this only when `command -v msteams` succeeds: the CLI is distributed inside some organisations and rides the user's own browser session, so it cannot run unattended on a server.
 
 - **Access:** `msteams <tool> ... --json` prints the payload directly; redirect it to a file, because piped output can be cut off at 64 KB. Parameters are camelCase; `msteams help <command>` lists flags.
-- **Sign-in:** `msteams login` (interactive). `teams_get_me` answers from a cached profile, so it is not a sign-in check. The messaging token lapses on its own while the session is still good, and the CLI usually recovers it with a headless re-login; gating on `messaging.available` held every Teams task back for hours. Leave it out of `expect`, and have each Teams skill run `msteams login` once and retry when a read fails on sign-in, asking the user only if that fails. A `fetch failed` from search is a search outage, not a sign-in failure: fall back to thread reads.
+- **Sign-in:** `msteams login` (interactive). `teams_get_me` answers from a cached profile, so it is not a sign-in check. The messaging token lapses on its own while the session is still good, and the CLI usually recovers it with a headless re-login. Leave `messaging.available` out of `expect`, and have each Teams skill run `msteams login` once and retry when a read fails on sign-in, asking the user only if that fails. A `fetch failed` from search is a search outage, not a sign-in failure: fall back to thread reads.
 
 ```yaml
 - id: teams

@@ -513,7 +513,7 @@
             office: { x0: 0, x1: 600, y0: WALL, y1: MID, name: "Ops floor" }, meeting: { x0: 600, x1: 880, y0: WALL, y1: MID, name: "Meeting room" },
             kitchen: { x0: 880, x1: W, y0: WALL, y1: MID, name: "Kitchen" }, firstaid: { x0: 0, x1: 150, y0: FLOOR2, y1: H, name: "First aid" },
             lounge: { x0: 150, x1: 760, y0: FLOOR2, y1: H, name: "Lounge" }, games: { x0: 760, x1: 1150, y0: FLOOR2, y1: H, name: "Games room" },
-            rob: { x0: 1150, x1: W, y0: FLOOR2, y1: H, name: "Your office" },
+            userOffice: { x0: 1150, x1: W, y0: FLOOR2, y1: H, name: "Your office" },
         };
         // Desks: worker sits south of the desk, back to camera, laptop screen facing us.
         const DESKS = [];
@@ -539,7 +539,7 @@
         const PONG = { x: 968, y: 560, w: 64, h: 26 }; PONG.L = PONG.x - 5; PONG.R = PONG.x + PONG.w + 5;
         const FOOS = { x: 990, y: 636, w: 52, h: 30 };
         const DARTS = { x: 1066, y: 392 }, SCORE = { x: 1008, y: 378 }; // dartboard and its chalk scoreboard
-        const ROB_DESK = { x: 1188, y: 548 }; // the user's office: their desk faces the door, visitors sit across it
+        const USER_DESK = { x: 1188, y: 548 }; // the user's office: their desk faces the door, visitors sit across it
         // games room den: a TV and console on a low unit, a row of beanbags and a sofa behind, all facing the screen
         const DEN = { x: 823, y: 560, tv: { x: 829, y: 527 } }, GS = { x: DEN.tv.x + 2, y: DEN.tv.y + 3, w: 48, h: 27 }, DEN_SOFA = { x: 808, y: 646 };
         const BEANBAGS = [{ x: 806, y: 620, col: "#c0504d", hi: "#e07a6e" }, { x: 838, y: 620, col: "#3d8c8c", hi: "#5fb3b0" },
@@ -645,9 +645,9 @@
         prop("plantFern", 1100, 652, { base: 703 });
         // --- The user's office: a desk facing the door with two visitor chairs, bookshelves, a filing cabinet, lamp and plant
         prop("books1", 1158, 382, { base: 452 }); prop("books2", 1190, 382, { base: 452 });
-        prop("chairFront", ROB_DESK.x + 17, ROB_DESK.y - 18, { base: ROB_DESK.y + 11, block: false }); // the user's chair, empty
-        prop("deskDark", ROB_DESK.x, ROB_DESK.y, { block: [ROB_DESK.x, ROB_DESK.y + 6, ROB_DESK.x + 58, ROB_DESK.y + 35], after: () => drawRobDesk() });
-        const VISIT = [1204, 1236].map((x) => ({ x, y: ROB_DESK.y + 54 }));
+        prop("chairFront", USER_DESK.x + 17, USER_DESK.y - 18, { base: USER_DESK.y + 11, block: false }); // the user's chair, empty
+        prop("deskDark", USER_DESK.x, USER_DESK.y, { block: [USER_DESK.x, USER_DESK.y + 6, USER_DESK.x + 58, USER_DESK.y + 35], after: () => drawUserDesk() });
+        const VISIT = [1204, 1236].map((x) => ({ x, y: USER_DESK.y + 54 }));
         for (const sP of VISIT) prop("chairBack", sP.x - 12, sP.y - 22, { base: sP.y + 2, block: [sP.x - 10, sP.y - 6, sP.x + 10, sP.y + 4], noShadow: true });
         prop("drawers", 1244, 452, { base: 521, block: [1244, 509, 1276, 521] });
         prop("lampFloor", 1158, 660, { base: 709 });
@@ -1564,7 +1564,7 @@
             const R = ROOMS, below = (r) => ({ ...r, y0: MID }); // bottom-row floors run under the dividing wall so doorways show floor
             // floors: warm planks on the ops floor, herringbone meeting room, checker kitchen, clinic tiles, walnut lounge, dark games tiles
             floor(R.office, planks(32, 0, "w")); floor(R.meeting, herring()); floor(R.kitchen, tiles(A.img.tile, 32, 32, 64));
-            floor(below(R.firstaid), tiles(A.img.tileB, 32, 0, 32)); floor(below(R.lounge), planks(0, 0, "l")); floor(below(R.games), tiles(A.img.tileB, 32, 64, 96)); floor(below(R.rob), herring());
+            floor(below(R.firstaid), tiles(A.img.tileB, 32, 0, 32)); floor(below(R.lounge), planks(0, 0, "l")); floor(below(R.games), tiles(A.img.tileB, 32, 64, 96)); floor(below(R.userOffice), herring());
             // subtle floor wear: darker towards the front of each row
             for (const [y0, y1] of [[WALL, MID], [FLOOR2, H]]) { const fl = bx.createLinearGradient(0, y0, 0, y1); fl.addColorStop(0, "#0000"); fl.addColorStop(.6, "#0000"); fl.addColorStop(1, "#00000030"); bx.fillStyle = fl; bx.fillRect(0, y0, W, y1 - y0); }
             // rugs (9-slice): meeting table, lounge sofas, games room
@@ -2093,26 +2093,29 @@
             const a = (Math.atan2(dx, -dy) * 180 / Math.PI + 369) % 360; // clockwise from the top, 20 centred
             return SEGS[Math.floor(a / 18) % 20] * (d > 8 ? 2 : d > 4 && d <= 6 ? 3 : 1);
         }
-        const robDarts = { n: 0, total: 0, at: -1e9, best: 0, d: [0, 1, 2].map(() => ({ x: 0, y: 0, t: 0 })) };
-        try { robDarts.best = +sessionStorage.getItem("office.robBest") || 0; } catch { /* storage blocked: best lasts until reload */ }
+        const playerDarts = { n: 0, total: 0, at: -1e9, best: 0, d: [0, 1, 2].map(() => ({ x: 0, y: 0, t: 0 })) };
+        try {
+            const best = sessionStorage.getItem("office.dartsBest") ?? sessionStorage.getItem("office.robBest");
+            playerDarts.best = Number(best) || 0;
+        } catch { /* storage blocked: best lasts until reload */ }
         const hitDartboard = (p) => Math.hypot(p.x - DARTS.x, p.y - DARTS.y) < 14;
         function throwDart(now) {
-            if (robDarts.n === 3) { robDarts.n = 0; robDarts.total = 0; }
+            if (playerDarts.n === 3) { playerDarts.n = 0; playerDarts.total = 0; }
             const g = () => Math.sqrt(-2 * Math.log(1 - Math.random())) * Math.cos(2 * Math.PI * Math.random()) * 4.2;
-            const dx = g(), dy = g(), s = dartScore(dx, dy), dart = robDarts.d[robDarts.n++];
+            const dx = g(), dy = g(), s = dartScore(dx, dy), dart = playerDarts.d[playerDarts.n++];
             dart.x = Math.round(DARTS.x + clamp(dx, -13, 13)); dart.y = Math.round(DARTS.y + clamp(dy, -13, 13)); dart.t = 0; // flight clock starts on the next frame
-            robDarts.total += s; robDarts.at = now;
-            floatText(DARTS.x + (robDarts.n - 2) * 32, DARTS.y - 18, s ? String(s) : "miss", s >= 50 || (s > 20 && s % 3 === 0) ? "#ffd166" : s ? "#f4f6f8" : "#ff8a8a");
-            if (robDarts.n < 3) return;
-            const t = robDarts.total, fan = [...workers.values()].find((w) => w.act === "darts" && !w.path.length);
+            playerDarts.total += s; playerDarts.at = now;
+            floatText(DARTS.x + (playerDarts.n - 2) * 32, DARTS.y - 18, s ? String(s) : "miss", s >= 50 || (s > 20 && s % 3 === 0) ? "#ffd166" : s ? "#f4f6f8" : "#ff8a8a");
+            if (playerDarts.n < 3) return;
+            const t = playerDarts.total, fan = [...workers.values()].find((w) => w.act === "darts" && !w.path.length);
             const line = t >= 180 ? "ONE HUNDRED AND EIGHTY!" : t >= 100 ? `ton-plus, ${USER_NAME}!` : t >= 60 ? "tidy arrows" : t ? `unlucky, ${USER_NAME}` : "mind the wallpaper!";
             const ch = dartsChallenge.by && workers.get(dartsChallenge.by), live = ch && ch.act === "darts" && !ch.path.length && now < dartsChallenge.until;
             if (live) settleChallenge(ch, t, now);
             else if (fan) { say(fan, line, now); fan.emote = t >= 100 ? "star" : "q"; fan.emoteUntil = now + 1800; }
             else floatText(DARTS.x, DARTS.y - 30, USER_NAME + ": " + t, "#7ee0b5");
-            if (t > robDarts.best) { // chalked on the scoreboard
-                if (robDarts.best) { floatText(SCORE.x + 19, SCORE.y - 26, "NEW BEST!", "#ffd166"); starBurst(SCORE.x + 19, SCORE.y + 15); }
-                robDarts.best = t; try { sessionStorage.setItem("office.robBest", String(t)); } catch { /* ignore */ }
+            if (t > playerDarts.best) { // chalked on the scoreboard
+                if (playerDarts.best) { floatText(SCORE.x + 19, SCORE.y - 26, "NEW BEST!", "#ffd166"); starBurst(SCORE.x + 19, SCORE.y + 15); }
+                playerDarts.best = t; try { sessionStorage.setItem("office.dartsBest", String(t)); } catch { /* ignore */ }
             }
         }
         // A colleague who has settled in at the board throws down a challenge: beat the user's chalked best (or 60 before
@@ -2126,10 +2129,10 @@
                 if (w.act !== "darts" || w.path.length || w.challenged === w.arrivedAt || now - w.arrivedAt < 5000 || now < w.quipUntil) continue;
                 w.challenged = w.arrivedAt; // once per visit to the board
                 if (hash(w.id + w.arrivedAt) > .5) continue;
-                const target = robDarts.best || 60;
+                const target = playerDarts.best || 60;
                 Object.assign(dartsChallenge, { by: w.id, target, until: now + 60000 });
                 w.emote = "bang"; w.emoteUntil = now + 2400;
-                say(w, pick(robDarts.best ? [`bet you can't beat ${target}, {user}`, `${target}? beat that, {user}`, "go on, {user}, best of three"] : ["fancy a game, {user}? first to 60", "{user}! three darts, beat 60"], Math.random()), now);
+                say(w, pick(playerDarts.best ? [`bet you can't beat ${target}, {user}`, `${target}? beat that, {user}`, "go on, {user}, best of three"] : ["fancy a game, {user}? first to 60", "{user}! three darts, beat 60"], Math.random()), now);
                 floatText(DARTS.x - 24, DARTS.y + 22, "CHALLENGE: beat " + target, "#ffd166");
                 return;
             }
@@ -2140,17 +2143,17 @@
             say(ch, pick(v === "beat" ? ["fine, you win. rematch?", "lucky arrows, {user}!", "I'll get you next time"] : v === "tie" ? ["a draw! sudden death?", "dead level!"] : [`${t}? told you, {user}`, "the board's safe from you", "better luck next time!"], Math.random()), now);
             if (v === "beat") starBurst(DARTS.x, DARTS.y);
         }
-        function drawRobDarts(now) {
-            if (tnow() - robDarts.at > 20000) return;
-            for (let i = 0; i < robDarts.n; i++) {
-                const d = robDarts.d[i]; if (!d.t) d.t = now;
+        function drawPlayerDarts(now) {
+            if (tnow() - playerDarts.at > 20000) return;
+            for (let i = 0; i < playerDarts.n; i++) {
+                const d = playerDarts.d[i]; if (!d.t) d.t = now;
                 const u = REDUCED ? 1 : clamp((now - d.t) / 200, 0, 1);
                 const x = Math.round(lerp(DARTS.x, d.x, u)), y = Math.round(lerp(DARTS.y + 130, d.y, u));
                 ctx.fillStyle = "#1b1830"; ctx.fillRect(x, y, 1, 3); ctx.fillStyle = "#7ee0b5"; ctx.fillRect(x - 1, y + 3, 3, 1);
             }
         }
         function drawDarts(now) {
-            drawRobDarts(now);
+            drawPlayerDarts(now);
             let thrown = 0;
             for (const w of workers.values()) {
                 if (w.act !== "darts" || w.path.length) continue;
@@ -2162,7 +2165,7 @@
                 }
             }
             ctx.fillStyle = "#e8e4d8"; // chalk tally on the scoreboard
-            const rows = robDarts.best ? 1 : 2; // the user's best takes the bottom row once they have one
+            const rows = playerDarts.best ? 1 : 2; // the user's best takes the bottom row once they have one
             for (let i = 0; i < Math.min(thrown, rows * 10); i++) { const gx = 1182 + (i % 10) * 3 + Math.floor((i % 10) / 5) * 2, gy = 384 + Math.floor(i / 10) * 10; ctx.fillRect(gx, gy, 1, 6); }
         }
         function drawSink(x, y) {
@@ -2825,12 +2828,12 @@
             ctx.fillStyle = cols[piece % 5]; ctx.fillRect(x0 + pc * 2, y0 + (tick % 3), 4, 2);
         }
         // The user's desk: papers, a mug, a nameplate and a desk lamp (their chair stays empty: the user isn't one of the workers)
-        function drawRobDesk() {
-            const { x, y } = ROB_DESK;
+        function drawUserDesk() {
+            const { x, y } = USER_DESK;
             blit(ctx, "paper", x + 6, y + 4); blit(ctx, "lampTable", x + 34, y - 20);
             ctx.fillStyle = "#1b1830"; ctx.fillRect(x + 23, y + 3, 6, 6); ctx.fillStyle = "#5b8cff"; ctx.fillRect(x + 24, y + 4, 4, 4); ctx.fillStyle = "#ffffff55"; ctx.fillRect(x + 24, y + 4, 1, 4);
             ctx.fillStyle = "#3a2a22"; ctx.fillRect(x + 20, y + 11, 16, 4); ctx.fillStyle = "#c8962a"; ctx.fillRect(x + 21, y + 12, 14, 2); // nameplate
-            if (hovered === "robdesk") { ctx.strokeStyle = "#ffd166cc"; ctx.lineWidth = 1; ctx.strokeRect(x - .5, y - .5, 59, 36); }
+            if (hovered === "userDesk") { ctx.strokeStyle = "#ffd166cc"; ctx.lineWidth = 1; ctx.strokeRect(x - .5, y - .5, 59, 36); }
         }
         function drawDeskTop(d, now) {
             const on = deskBusy(d), game = !on && deskGaming(d);
@@ -3402,17 +3405,17 @@
         // fades dark, and its lamps snap back on when someone walks in. Equipment (TV, rack, arcades, screens) stays lit.
         function roomAt(x, y) {
             if (y < MID) return x < 600 ? "office" : x < 880 ? "meeting" : "kitchen";
-            return x < 150 ? "firstaid" : x < 760 ? "lounge" : x < 1150 ? "games" : "rob";
+            return x < 150 ? "firstaid" : x < 760 ? "lounge" : x < 1150 ? "games" : "userOffice";
         }
         function sensorHours(T) { return T.t >= 22 || T.t < 6; }
-        const SENSOR_HOLD = 20000, roomLit = { office: 1, meeting: 1, kitchen: 1, firstaid: 1, lounge: 1, games: 1, rob: 1 }, roomSeen = { office: -1e9, meeting: -1e9, kitchen: -1e9, firstaid: -1e9, lounge: -1e9, games: -1e9, rob: -1e9 };
+        const SENSOR_HOLD = 20000, roomLit = { office: 1, meeting: 1, kitchen: 1, firstaid: 1, lounge: 1, games: 1, userOffice: 1 }, roomSeen = { office: -1e9, meeting: -1e9, kitchen: -1e9, firstaid: -1e9, lounge: -1e9, games: -1e9, userOffice: -1e9 };
         // A dark room's tubes don't fade up: they strike - blink, die, blink, glow dim, then settle (seconds since the strike).
         const STRIKE = [[.08, 1], [.2, 0], [.27, 1], [.42, 0], [.6, .45], [.8, .8]];
         function tubeStrike(age) {
             for (const [end, v] of STRIKE) if (age < end) return v;
             return 1;
         }
-        const roomStrike = { office: 9, meeting: 9, kitchen: 9, firstaid: 9, lounge: 9, games: 9, rob: 9 }; // seconds since each room last struck
+        const roomStrike = { office: 9, meeting: 9, kitchen: 9, firstaid: 9, lounge: 9, games: 9, userOffice: 9 }; // seconds since each room last struck
         function sensorLights(dt, now) { // runs in simulate, so ?warp and catch-up play the sensors out too
             const on = !sensorHours(clock());
             for (const w of workers.values()) roomSeen[roomAt(w.x, w.y)] = now;
@@ -3478,7 +3481,7 @@
                 { x: TV.x + TV.w / 2, y: TV.y + TV.h + 24, r: 96 + Math.round(Math.sin(now / 160) * 4 + Math.sin(now / 47) * 3), c: "120,170,255" },
                 { x: GS.x + GS.w / 2, y: GS.y + 34, r: 56 + Math.round(Math.sin(now / 130) * 3 + Math.sin(now / 53) * 2), c: "130,180,255" }, { x: 934, y: 618, r: 60, fx: 1, c: "255,210,140" },
                 { x: 1000, y: 548, r: 90, fx: 1, c: "255,220,170" }, { x: FOOS.x + 26, y: FOOS.y - 10, r: 60, fx: 1, c: "255,220,170" },
-                { x: 1170, y: 672, r: 70, fx: 1, c: "255,210,140" }, { x: ROB_DESK.x + 44, y: ROB_DESK.y - 4, r: 50, fx: 1, c: "255,220,160" }, { x: DARTS.x, y: DARTS.y, r: 26, fx: 1, c: "255,230,190" },
+                { x: 1170, y: 672, r: 70, fx: 1, c: "255,210,140" }, { x: USER_DESK.x + 44, y: USER_DESK.y - 4, r: 50, fx: 1, c: "255,220,160" }, { x: DARTS.x, y: DARTS.y, r: 26, fx: 1, c: "255,230,190" },
             ];
             for (const d of DESKS) if (deskBusy(d)) lights.push({ x: d.x + 18, y: d.y + 2, r: 46, c: "120,200,255" });
             for (const b of bursts) if (b.on && b.age >= .3 && b.age < 1.4) { const k = clamp(1.5 - b.age, 0, 1); lights.push({ x: b.x, y: b.y, r: Math.round(8 + 18 * k), c: FW_RGB[b.col] }, { x: b.x, y: WALL + 20, r: Math.round(60 * k), c: FW_RGB[b.col] }); } // firework flash through the glass
@@ -3565,9 +3568,9 @@
         function present(now) {
             vctx.imageSmoothingEnabled = false;
             vctx.drawImage(scene, 0, 0, view.width, view.height);
-            if (robDarts.best) { // the user's best three darts, chalked on the games-room scoreboard
+            if (playerDarts.best) { // the user's best three darts, chalked on the games-room scoreboard
                 vctx.font = `500 ${Math.round(6.5 * S)}px "Pixelify Sans"`; vctx.textBaseline = "alphabetic"; vctx.textAlign = "center";
-                vctx.fillStyle = "#e8e4d8d0"; vctx.fillText(USER_NAME.toUpperCase() + " " + robDarts.best, Math.round((SCORE.x + 19) * S), Math.round((SCORE.y + 26) * S)); vctx.textAlign = "left";
+                vctx.fillStyle = "#e8e4d8d0"; vctx.fillText(USER_NAME.toUpperCase() + " " + playerDarts.best, Math.round((SCORE.x + 19) * S), Math.round((SCORE.y + 26) * S)); vctx.textAlign = "left";
             }
             if (pong.active) { // table-tennis flip counter digits
                 const nx = PONG.x + (PONG.w >> 1), by = PONG.y + PONG.h + 1;
@@ -3597,7 +3600,7 @@
             if (boardHover) label(boardHover.length > 60 ? boardHover.slice(0, 58) + "…" : boardHover, BOARD.x + BOARD.w / 2, BOARD.y + BOARD.h + 12, { size: 6, color: "#ffd166", border: "#e8964a", dodge: quipRects });
             if (hovered === "cat" && !(cat.quip && now < cat.quipUntil)) label("office cat", cat.x, cat.y - 16, { size: 6, color: "#ffd166", border: "#e8964a", dodge: quipRects });
             if (hovered === "console") { const g = CONSOLE_GAMES[consoleSlot(now).idx]; label(g.name, GS.x + GS.w / 2, DEN.tv.y - 2, { size: 6, color: g.col, border: g.col, dodge: quipRects }); }
-            if (hovered === "robdesk") label(officeName() + " · door's open", ROB_DESK.x + 29, ROB_DESK.y - 22, { size: 6, color: "#ffd166", border: "#e8964a", dodge: quipRects });
+            if (hovered === "userDesk") label(officeName() + " · door's open", USER_DESK.x + 29, USER_DESK.y - 22, { size: 6, color: "#ffd166", border: "#e8964a", dodge: quipRects });
             if (hovered === "frame") label(eotwText(eotwView), FRAME.x + 14, FRAME.y + FRAME.h + 26, { size: 6, color: "#ffd166", border: "#e8964a", dodge: quipRects });
             if (hovered === "copier") label("copier", COPIER.x + 26, COPIER.y - 2, { size: 6, color: "#ffd166", border: "#e8964a", dodge: quipRects });
             if (hovered === "door") label("front door · badge ok", DOOR.x + 20, DOOR.y - 4, { size: 6, color: "#7ee0b5", border: "#7ee0b5", dodge: quipRects });
@@ -3981,7 +3984,7 @@
         const hitCopier = (p) => p.x >= COPIER.x && p.x <= COPIER.x + 53 && p.y >= COPIER.y && p.y <= COPIER.y + 45;
         const hitDoor = (p) => p.x >= DOOR.x - 4 && p.x <= DOOR.x + 45 && p.y >= DOOR.y - 4 && p.y <= WALL + 10;
         const hitCall = (p) => p.x >= CALL.x - 2 && p.x <= CALL.x + 32 && p.y >= CALL.y - 2 && p.y <= CALL.y + 50;
-        const hitRobDesk = (p) => p.x >= ROB_DESK.x && p.x <= ROB_DESK.x + 58 && p.y >= ROB_DESK.y - 20 && p.y <= ROB_DESK.y + 35;
+        const hitUserDesk = (p) => p.x >= USER_DESK.x && p.x <= USER_DESK.x + 58 && p.y >= USER_DESK.y - 20 && p.y <= USER_DESK.y + 35;
         const hitFrame = (p) => p.x >= FRAME.x - 1 && p.x <= FRAME.x + FRAME.w + 1 && p.y >= FRAME.y - 3 && p.y <= FRAME.y + FRAME.h + 1;
         const hitEgg = (p) => eggs.find((e) => !e.found && p.x >= e.x - 7 && p.x <= e.x + 7 && p.y >= e.y - 14 && p.y <= e.y + 2) || null;
         let hoverEgg = null;
@@ -4076,8 +4079,8 @@
         view.addEventListener("mousemove", (e) => {
             const p = worldPoint(e), c = hitCat(p), w = c ? null : hit(p), cl = !c && !w && hitCall(p), cp = !c && !w && !cl && hitCopier(p), dr = !c && !w && !cl && !cp && hitDoor(p), cn = !c && !w && !cl && !cp && !dr && hitConsole(p);
             hoverEgg = !c && !w ? hitEgg(p) : null;
-            const fr = !c && !w && !hoverEgg && hitFrame(p), rd = !c && !w && !hoverEgg && !fr && hitRobDesk(p);
-            hovered = c ? "cat" : w ? w.id : hoverEgg ? "egg" : fr ? "frame" : rd ? "robdesk" : cl ? "call" : cp ? "copier" : dr ? "door" : cn ? "console" : null;
+            const fr = !c && !w && !hoverEgg && hitFrame(p), rd = !c && !w && !hoverEgg && !fr && hitUserDesk(p);
+            hovered = c ? "cat" : w ? w.id : hoverEgg ? "egg" : fr ? "frame" : rd ? "userDesk" : cl ? "call" : cp ? "copier" : dr ? "door" : cn ? "console" : null;
             const bn = w || c ? null : hitBoardNote(p); boardHover = bn ? bn.title : null;
             const kind = hintKind(p, w, c), id = w ? w.id : null;
             if (kind !== hint.kind || id !== hint.id) { hint.kind = kind; hint.id = id; hint.since = performance.now(); }

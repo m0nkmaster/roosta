@@ -136,7 +136,6 @@ def test_catalogue_examples_parse_with_every_denial():
 
 
 def test_optional_teams_reference_ignores_a_lapsed_messaging_token():
-    # Seen 12-13 Nov 2026: gating on messaging.available held every Teams task back for hours.
     import re
     from pathlib import Path
     import yaml
