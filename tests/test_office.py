@@ -262,7 +262,7 @@ def test_motion_sensor_rooms_and_hours():
           "[[150,14],[740,40],[1008,196],[30,370],[652,462],[1066,392],[1236,600]].map(([x,y])=>roomAt(x,y)),"
           "[21.9,22,23.5,0,5.9,6,12].map((t)=>sensorHours({t}))]))")
     rooms, hours = _node(js)
-    assert rooms == ["office", "meeting", "kitchen", "firstaid", "lounge", "games", "rob"]
+    assert rooms == ["office", "meeting", "kitchen", "firstaid", "lounge", "games", "userOffice"]
     assert hours == [False, True, True, True, True, False, False]
 
 

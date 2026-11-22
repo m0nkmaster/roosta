@@ -198,10 +198,8 @@ _CARRIED_FIELDS = _REFINABLE_FIELDS + ("links", "documents")
 def carry_forward_board_items(details, previous) -> None:
     """Fill a conductor pass's id-only "keep" stubs from the board it replaced.
 
-    The conductor's output replaces the board wholesale. On 13 Nov it began
-    keeping unchanged cards as `{id, new: false}`, which blanked them, and each
-    later pass copied the blank board. A field the new pass leaves empty keeps
-    its previous value; a field it supplies always wins. Mutates `details`.
+    For matching ids, copy missing or empty fields into `details`. Values
+    supplied by the current pass take precedence.
     """
     if not isinstance(details, dict) or not isinstance(details.get("items"), list):
         return
@@ -227,7 +225,7 @@ def _refine_board_item(target: dict, update: dict, raw: dict,
 
     `fill_only` is for a duplicate folded in by a conductor merge: the kept card
     is the conductor's synthesis, so the duplicate's narrower view only fills
-    blanks and adds context, never rewrites the synthesis (4 Nov team-wins card).
+    blanks and adds context.
     """
     for name in _REFINABLE_FIELDS:
         if raw.get(name) and not (fill_only and target.get(name)):

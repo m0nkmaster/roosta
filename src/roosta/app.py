@@ -166,14 +166,9 @@ async def _start_chat_router() -> None:
         log.warning("%s unavailable: %s (chats disabled)", ai_backend.label(), e)
 
 
-# Cursor's CLI writes a per-run SQLite session store under each config dir's `chats/`
-# tree. The dashboard never reads these (it renders Cursor history from
-# ~/.cursor/projects and Claude history from ~/.claude/projects); they are pure CLI
-# scratch that otherwise grows without bound - thousands of stores, many with orphaned
-# -wal files from sessions that never closed. Reclaim the old ones at startup, the same
-# way activity.jsonl is compacted. ~/.claude and ~/.cursor transcript trees are left
-# alone: they are the surfaces the drill-down reads and mingle with the user's own non-dashboard
-# CLI history, so pruning them would be real context loss.
+# Prune only Cursor's per-run SQLite stores under each config directory's chats/ tree.
+# The ~/.cursor/projects and ~/.claude/projects transcripts supply the activity drill-down
+# and include the user's own CLI sessions.
 SESSION_STORE_RETENTION_DAYS = 30
 
 
@@ -926,7 +921,7 @@ async def api_activity_transcript(activity_id: str):
 
 
 def transcript_outcome(turns: list[dict]) -> str:
-    """The <task-output> summary from a run's last assistant turn, for rows logged before outcomes were."""
+    """Recover the last assistant <task-output> summary for activity rows without an outcome."""
     for turn in reversed(turns):
         if turn.get("role") == "assistant" and "<task-output>" in turn.get("text", ""):
             return outcome_summary(parse_task_output(turn["text"]), "")

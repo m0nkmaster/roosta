@@ -23,7 +23,7 @@ whether Roosta or the user installed it. Downloads use the default SSL context w
 backend includes keyring's native backend, so installation needs neither Node nor system Python.
 Updating stages and verifies the download before replacing the managed copy. New harness releases do not require a Roosta update.
 
-Settings has one provider/account flow; no new harness picker. AI software reports installation status; installed binaries offer Update to latest under Updates, which does not imply a detected failure. On macOS, Open in Terminal starts the exact installed Claude Code or Pi binary in `paths.WORKSPACE` as a standalone interactive session using the CLI’s own login/settings, not a Roosta connection. The local-only `POST /api/ai/terminal` accepts only the two runtime ids, refuses missing/installing binaries, shell-quotes both paths, and passes the command as an argument to a fixed AppleScript. It never exports Roosta connection credentials or submits a prompt. The `local_ai_settings` dependency
+Settings uses one provider/account flow. AI software reports installation status; installed binaries offer Update to latest under Updates, which does not imply a detected failure. On macOS, Open in Terminal starts the exact installed Claude Code or Pi binary in `paths.WORKSPACE` as a standalone interactive session using the CLI’s own login/settings, not a Roosta connection. The local-only `POST /api/ai/terminal` accepts only the two runtime ids, refuses missing/installing binaries, shell-quotes both paths, and passes the command as an argument to a fixed AppleScript. It never exports Roosta connection credentials or submits a prompt. The `local_ai_settings` dependency
 requires a loopback client, a local Host, and a same-origin browser request for credential/setup APIs.
 Tests and installs run as supervised setup jobs; status contains no credentials or authentication output.
 Claude enterprise sign-in invokes the official `auth login --sso` browser flow under a unique
@@ -99,7 +99,7 @@ also protect connection state, the managed runtime directory and the running app
 (`paths.APP_ROOT`) under every profile. With an editable install the package is inside the source
 checkout. Give a product engineering worker a separate Git worktree and point its skill there.
 It can keep the ordinary profile and launch from the workspace to discover its custom skill. Ordinary Claude runs
-use `dontAsk`, including the legacy path (the previous implementation incorrectly bypassed permissions).
+use `dontAsk`, including the legacy path.
 
 `SessionMap` reads old string values and writes `{session_id, connection}` records. Existing legacy
 sessions retain their engine; new chats bind the connected default once. Changing the default never
@@ -114,9 +114,8 @@ The local-only `POST /api/ai/operations/{key}/cancel` accepts the running test�
 The disclosed setup probe uses a temporary file with a random value and requires both a successful
 read-tool result and an assistant response containing it. It does not load workspace MCP or skills.
 Automated tests cover routing, account/session isolation, approvals, request-origin checks, timeouts,
-checksums and policies. Native Pi and Claude were exercised against local mock HTTP servers through
-an actual read-tool round. Live OpenAI and Anthropic API/enterprise-account sign-in and OpenRouter acceptance on a clean
-packaged machine remains required; local mocks do not establish account access or billing eligibility.
+checksums and policies. Verify live OpenAI and Anthropic sign-in, enterprise account access and
+OpenRouter acceptance on a clean packaged machine to confirm provider access and billing eligibility.
 
 ## Legacy configurations
 
@@ -127,18 +126,15 @@ backend API and saved selection remain for compatibility; new selections use nam
 
 - **Claude prompts go on stdin, never argv.** Endpoint security on some managed Macs SIGKILLs (exit 137,
   before any output) any process whose command line contains certain words, e.g. "openclaw" in any
-  case. A chat message quoting one killed the turn as "Claude Code could not finish this reply."
-  `claude_args` therefore takes no prompt; every caller writes it to the child's stdin. The Cursor
-  and OpenCode paths still pass prompts in argv and are exposed to the same kill.
+  case. Every caller of `claude_args` writes the prompt to the child's stdin. Cursor and
+  OpenCode pass prompts in argv and are exposed to the same risk.
 
 - **Legacy tasks pick one of three harnesses: Claude Code, Cursor or Ollama.** `harness:` in
   `tasks.yaml` is `claude`, `cursor` or `opencode-ollama`; unset follows the
   chat engine (`resolve_harness`). Cursor runs `agent --print --force --trust --approve-mcps`; local runs use
-  `ollama launch opencode --model <model> -- run --standalone --format json --auto`. OpenCode 2
-  removed `--pure`, `--dir` and `--variant`: `--standalone` gives the run a private server so it
-  reads this run's `OPENCODE_CONFIG_DIR` (the shared background service would not), and the
-  project directory comes from `PWD`, so `opencode_ollama_env` sets it to the task's `dir` - an
-  inherited `PWD` put runs in the dashboard folder, where they could not find their skill. The wrapper supplies
+  `ollama launch opencode --model <model> -- run --standalone --format json --auto`. OpenCode's
+  `--standalone` starts a private server that reads the run's `OPENCODE_CONFIG_DIR`.
+  `opencode_ollama_env` sets `PWD` to the task's `dir` so OpenCode finds the workspace skill. The wrapper supplies
   the Ollama provider inline without changing OpenCode's user config. The tracked
   `opencode-runner.json` policy is seeded into a gitignored, highest-precedence config directory
   with the dashboard's secret, destructive-git and external-write denials, plus the selected

@@ -743,7 +743,7 @@ def test_teams_drafts_send_bare_urls_as_markdown_links():
 
 
 def test_jira_comment_cards_convert_wiki_markup_to_markdown():
-    # The 18 Oct PROJ-10589 approval: jira --body is Markdown on Cloud.
+    # Jira Cloud accepts Markdown in --body.
     wiki = ('jira --agent comment add PROJ-10589 --body "*Proposed approach:* a data change.\n'
             '# *Confirm the codes* e.g. {{id}} vs {{id-ID}}\n'
             '# Add a migration like [V171|https://github.example.com/V171]\nh2. Notes\n'
@@ -1024,7 +1024,7 @@ def test_visible_reply_filter_keeps_answers_that_end_in_now():
         assert visible.feed(answer) + visible.finish() == answer
 
 
-def test_visible_reply_filter_keeps_model_advice_rob_asked_for():
+def test_visible_reply_filter_keeps_model_advice_the_user_requested():
     answer = "Sonnet would handle this well, so use it for the quick lookups."
     visible = cmod.VisibleReplyFilter()
     assert visible.feed(answer) + visible.finish() == answer
@@ -1572,7 +1572,6 @@ def test_vault_document_endpoint_returns_markdown(monkeypatch, tmp_path):
 
 
 def test_vault_document_endpoint_shows_linked_text_files_as_source(monkeypatch, tmp_path):
-    # 9 Nov: a chat reply linked projects/ai-office-hours/confluence-page.storage.html and it 404'd.
     project = tmp_path / "projects" / "ai-office-hours"
     project.mkdir(parents=True)
     (project / "confluence-page.storage.html").write_text("<p>Fortnightly ```x```</p>\n")
@@ -1711,7 +1710,6 @@ def test_board_feed_folds_merged_duplicate_into_kept_card():
 
 
 def test_folded_duplicate_never_rewrites_the_conductor_synthesis():
-    # 4 Nov: a three-person roundup was retitled as Ari's win by his folded card.
     conductor = board.normalise_board_doc({"items": [{
         "id": "team-wins-2026-11-04", "title": "Squad shipped data-accuracy and search fixes",
         "situation": "Quinn, James and Ari all landed work",
@@ -1733,7 +1731,7 @@ def test_folded_duplicate_never_rewrites_the_conductor_synthesis():
     assert [link["label"] for link in card["links"]] == ["PROJ-10691", "PROJ-10631"]
 
 
-def test_record_merges_keeps_the_card_rob_talked_on(tmp_path):
+def test_record_merges_keeps_the_card_with_user_history(tmp_path):
     history = cmod.ConversationHistoryStore(tmp_path / "h.json")
     history.append("teams-root1", "user", "What did Robin ask?")
     cr = cmod.ChatRouter(agent=None, session_map=cmod.SessionMap(tmp_path / "s.json"),
@@ -2306,7 +2304,7 @@ def test_assistant_keeps_inline_action_panels_in_the_message_bubble():
     assert "ai.appendChild(div)" not in html
 
 
-def test_rob_owned_recommendation_is_display_only():
+def test_user_owned_recommendation_is_display_only():
     html = (Path(__file__).resolve().parent.parent / "src" / "roosta" / "static" / "assistant.html").read_text()
     assert "it.action_owner==='assistant'?`<div class=\"recommendation-actions\">" in html
     assert "if(recommendationButton) recommendationButton.onclick=()=>send(id,'')" in html
@@ -3529,7 +3527,6 @@ def test_assistant_records_coarse_usage_without_item_content():
 
 
 def test_chat_failure_explains_silent_signal_kill():
-    # Endpoint security SIGKILLed Claude over a word in the prompt (2 Oct 2026).
     killed = cmod.failure_reason("Claude Code", -9, "")
     assert "stopped by macOS (signal 9)" in killed
     assert "rephrasing" in killed
@@ -3538,7 +3535,6 @@ def test_chat_failure_explains_silent_signal_kill():
 
 
 def test_pending_approvals_are_reoffered_by_item(tmp_path):
-    # A 13 Oct "Book room" card never reached the UI; the board must re-offer it.
     router = cmod.ChatRouter(object(), cmod.SessionMap(tmp_path / "sessions.json"), "/vault")
     router._paused["run-room"] = {
         "item_id": "chat:0123456789ab",
@@ -3581,8 +3577,7 @@ def _hold_stream(events):
 
 
 def test_tool_round_hold_drops_progress_before_a_tool_call():
-    # Observed 14 Oct: "Still tracing where holdout results get their segments in the
-    # UI code." led a stored reply because no phrase rule matched it.
+    # Tool boundaries also catch progress text that matches no phrase rule.
     sep, tool = {"kind": "separator", "text": "\n\n"}, {"kind": "tool", "text": ""}
     reply = _hold_stream([
         {"kind": "text", "text": "Still tracing where holdout results "},
@@ -3606,7 +3601,6 @@ def test_tool_round_hold_keeps_long_answers_streaming_before_a_tool_call():
 
 
 def test_doc_pane_rereads_the_document_after_a_reply_without_losing_scroll():
-    """The user saw a stale draft after the chat edited it (21 Oct): the pane must refresh."""
     node = shutil.which("node")
     if not node:
         pytest.skip("node not available")
@@ -3639,7 +3633,7 @@ def test_document_page_rereads_on_return_and_keeps_scroll():
 
 
 def test_board_health_names_an_expired_github_signin_from_real_run_summaries():
-    lost = [  # verbatim from failed runs on 7-8 Nov 2026
+    lost = [
         "No new wins (GitHub unavailable: token invalid).",
         "GitHub auth is invalid (keyring token), so merged PRs were not checked.",
         "GitHub unavailable (gh auth failed for github.example.com); Teams was a thin search.",

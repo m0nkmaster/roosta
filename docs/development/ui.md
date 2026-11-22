@@ -5,7 +5,7 @@ See [Assistant contracts](assistant.md) and [Office rendering](office.md) for pa
 
 ## Shared shell and components
 
-- **Worker AI selection** uses the connected default when `connection` is absent. The Workers page shows one default choice that writes nothing to `tasks.yaml`; only choosing a named account persists a connection id. There is no legacy “keep/use previous setup” choice.
+- **Worker AI selection** uses the connected default when `connection` is absent. The Workers page shows one default choice that writes nothing to `tasks.yaml`; only choosing a named account persists a connection id.
 
 - **Workers drawer.** An expanded worker shows its description and 1:1/Office links, any error or blocked message, then its last run (summary, time and duration, with details folded). Settings sit in a closed `<details>` grouped into Schedule, AI and Name; `openSettings` keeps it open across re-renders. Don't repeat row facts (schedule, runs, skill, status) in the drawer.
 

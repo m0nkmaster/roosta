@@ -51,9 +51,8 @@ files without replacing existing configuration.
   (monotonic) clock, so a Mac that sleeps mid-run does not kill it on wake. When judging a
   "presumed hung" error, compare its `duration` with wall time before blaming the skill.
 
-- **Task loops are supervised.** Each task's poll loop runs under `_supervised_loop`, so an
-  exception restarts the loop instead of silently freezing that task's status and queueing manual
-  triggers forever. If a task looks stuck, grep `runner.log` for "poll loop crashed" first.
+- **Task loops are supervised.** `_supervised_loop` records an error and restarts the task's poll
+  loop after an unexpected exception. If a task looks stuck, check `runner.log` for "poll loop crashed".
 
 - **Missed weekly slots catch up once.** Daily `run_at` tasks already run later the same day. A
   `days_of_week` task whose latest scheduled slot passed while the runner was down runs once on the

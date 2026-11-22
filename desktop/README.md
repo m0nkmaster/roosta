@@ -62,7 +62,7 @@ npm run dmg                       # app, DMG and SHA-256 checksum under dist/
 after installation to avoid duplicate notification registrations. Run the backend build again
 before packaging Python changes. Build arm64 on Apple Silicon and x64 on Intel; cross-compiling
 the Python bundle is not supported. App and DMG versions come from `src/roosta/__init__.py`.
-The bundle id remains `com.m0nkmaster.roosta`.
+The bundle id is `com.m0nkmaster.roosta`.
 
 `ASSISTANT_CODESIGN_IDENTITY` overrides the default `Assistant Local Notifications` identity.
 Self-signing does not satisfy Gatekeeper: see [installation instructions](INSTALL.txt).
@@ -115,7 +115,7 @@ the cause is almost always one of these, in order of likelihood:
 - **Duplicate Launch Services registration.** If both `/Applications/Roosta.app` and the
   `dist/…/Roosta.app` build output are registered under `com.m0nkmaster.roosta`,
   macOS can't decide which app owns the notification identity and downgrades delivery to
-  Notification Centre only. `install:mac` now removes the `dist` copy and re-registers the installed
+  Notification Centre only. `install:mac` removes the `dist` copy and re-registers the installed
   app as the sole owner. To check by hand: `lsregister -dump | grep -i Roosta.app` should show a
   single `/Applications` path. (`lsregister` lives under
   `CoreServices.framework/…/LaunchServices.framework/…/Support/`.)

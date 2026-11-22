@@ -295,8 +295,7 @@ async def run_task(
         # Print mode exits when the turn ends, so a backgrounded command's completion
         # notification never arrives and the run ends without <task-output>.
         child_env["CLAUDE_CODE_DISABLE_BACKGROUND_TASKS"] = "1"
-        # With backgrounding off, Claude's 10-minute foreground Bash cap killed teams-archive's
-        # script mid-pass. Let one command run up to the run's ceiling, leaving time to report.
+        # Allow long foreground commands while reserving time for the task report.
         child_env["BASH_MAX_TIMEOUT_MS"] = str(int(max(600, maxt - 120) * 1000))
         result_text = claude_result_text
         has_progress, transient = claude_stream_has_progress, is_transient_claude_failure
@@ -371,9 +370,8 @@ async def run_task(
                         proc.stdout.read(65536), timeout=min(idle, remaining)
                     )
                 except asyncio.TimeoutError:
-                    # On macOS the timer keeps counting while the Mac sleeps but
-                    # time.monotonic() does not, so every run in flight at lid-close
-                    # was killed as "hung" on wake. Only awake silence counts.
+                    # On macOS the wait timer includes sleep. Measure awake silence
+                    # with the monotonic clock before declaring the child hung.
                     if time.monotonic() - last_output < idle / 2:
                         continue
                     await ai_backend.kill(proc)
@@ -430,7 +428,6 @@ async def run_task(
     return status, output, error, chat_id
 
 
-# Seen 11 Nov 2026: one offline spell failed eight tasks, and daily ones lost their slot until tomorrow.
 OFFLINE_FAILURES = (
     "reach the api server",
     "computer went to sleep",
@@ -565,12 +562,7 @@ class TaskRunner:
         )
 
     async def _supervised_loop(self, task_id: str) -> None:
-        """Keep a task's poll loop alive through unexpected errors.
-
-        An unhandled exception used to end the loop silently: the task kept its
-        last good status, manual runs queued forever, and the error only surfaced
-        as a failed shutdown.
-        """
+        """Keep a task's poll loop alive through unexpected errors."""
         while self._running:
             try:
                 await self._poll_loop(task_id)

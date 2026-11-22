@@ -64,7 +64,6 @@
     --tblr-btn-input-fg: var(--console-text);
 }
 
-/* The previous dark palette remains available in Settings. */
 [data-roosta-scheme="slate"] {
     --console-canvas: #101720;
     --console-panel: #192330;

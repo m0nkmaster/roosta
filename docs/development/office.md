@@ -40,7 +40,7 @@ The page chrome follows the [shared UI rules](ui.md); simulation and art details
   is standard shell and Tabler (page header, stat cards for lifetime runs, runs today counted from
   `/api/activity` since midnight, and clock, status badges, a Crew card with portrait roster) and a
   dossier card (level = √runs, cadence, next due, last error). Role and layout derive
-  client-side from skill name and task id - no new endpoint. The look comes from the nickname: `CAST`
+  client-side from skill name and task id. The look comes from the nickname: `CAST`
   maps each one to a body, skin tone, hair, beard and glasses that suit the name (the shirt stays the
   role's colour), and an unlisted nickname gets a hashed masculine look. `tests/test_office.py` fails
   until every starter-schedule nickname is cast and every layer it needs is vendored. Workers go by their `tasks.yaml`
