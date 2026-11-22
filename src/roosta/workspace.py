@@ -107,8 +107,8 @@ def navigation_text(body: str) -> str:
     def blank(match):
         return re.sub(r"[^\n]", " ", match[0])
 
-    return re.sub(r"<!--.*?(?:-->|\Z)|^ {0,3}(?P<fence>`{3,}|~{3,})[^\n]*\n"
-                  r".*?(?:^ {0,3}(?P=fence)[`~]*[ \t\r]*$|\Z)", blank, body, flags=re.M | re.S)
+    return re.sub(r"<!--.*?(?:-->|\Z)|^ {0,3}(?P<fence>(?P<marker>[`~])(?P=marker){2,})[^\n]*\n"
+                  r".*?(?:^ {0,3}(?P=fence)(?P=marker)*[ \t\r]*$|\Z)", blank, body, flags=re.M | re.S)
 
 
 def index_links(page: dict, known: dict, *, list_only: bool = True):

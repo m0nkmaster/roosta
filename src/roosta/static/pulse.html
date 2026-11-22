@@ -998,7 +998,7 @@
             const tooltip = document.getElementById('constellation-tooltip');
             document.getElementById('constellation-tooltip-title').textContent = moon.page.title;
             document.getElementById('constellation-tooltip-detail').textContent =
-                `${moon.parent.title || moon.parent.name} · ${moon.page.path.split('/').slice(2).join('/')} · changed ${timeAgo(moon.page.mtime)} · click to open`;
+                `${moon.parent.title || moon.parent.name} · ${moon.page.path} · changed ${timeAgo(moon.page.mtime)} · click to open`;
             tooltip.style.left = `${Math.max(0, Math.min(x, canvas.clientWidth - 250))}px`;
             tooltip.style.top = `${Math.max(0, Math.min(y, canvas.clientHeight - 70))}px`;
             tooltip.classList.add('open');
