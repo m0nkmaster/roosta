@@ -76,7 +76,7 @@ The Assistant board brings together what needs you now. Workers handle recurring
 | Office (`/office`) | See your scheduled workers in a pixel-art office |
 | Workers (`/runner`) | Give workers jobs, set schedules, check run history and chat to refine their skills |
 | Workspace (`/workspace`) | Search your shared knowledge and choose files as chat context |
-| Pulse (`/pulse`) | Explore workspace activity and connections between projects |
+| Pulse (`/pulse`) | Explore workspace activity and review pages that need attention |
 | Custom pages (`/pages/<name>/`) | Use views Roosta builds for you with the `page-builder` skill |
 
 ### Skills give your workers their jobs
@@ -120,6 +120,52 @@ Your office's knowledge lives in a local folder of Markdown files: your profile,
     pages/             # your custom pages
     state/             # runtime state (gitignored)
 ```
+
+### Choose your Workspace collections
+
+In `WORKSPACE.md`, list the collection overviews you want to browse.
+
+```markdown
+# Workspace
+
+- [Clients](Clients/README.md)
+- [Projects](projects/README.md)
+```
+
+In `Clients/README.md`, explain the collection and list its members.
+
+```markdown
+# Clients
+
+Current engagements, in review order.
+
+- [North Coast](North%20Coast.md)
+- [Acme](Enterprise/Acme.md)
+```
+
+Use the first inline Markdown link on each top-level list item. Paths are relative
+to that index and case-sensitive. Encode spaces as `%20` or enclose the destination
+in angle brackets. Headings and paragraphs are yours. The first occurrence sets the
+order. Hidden, private, symlinked, external and missing targets are ignored.
+Only collection members become stars, once per source path. A README's supporting
+folder documents and a single page's list of linked documents can appear as moons.
+
+Without `WORKSPACE.md`, Roosta shows existing `projects/*/README.md` overviews,
+or the existing priorities and context pages if there are no projects. Creating an
+empty index clears that selection. All knowledge still searches visible Markdown.
+
+Use `topics/<tag>.md` for an introduction and a reading list alongside shared tag
+discovery. Decisions and plans surface matching level-two sections from the source.
+Optionally list sources in `Decisions.md` or `Plans.md`, for example
+`- [Delivery sequence](Clients/Enterprise/Acme.md#delivery-sequence)` for a
+`## Delivery sequence` section. Open source reads the whole document.
+
+Constellation rings use the later of the page's valid `last_updated` and dated
+`verified` entries. With neither, the page's own modification time is an estimate
+and formatting that page can move its star. Editing a collection index or a supporting
+file leaves its members' attention dates alone. Active or blocked pages drift after
+30 days. An expired `stale_after` or missing verification brings an unfinished page
+into review. Confirming records your profile reviewer and today's date.
 
 ## Safety
 

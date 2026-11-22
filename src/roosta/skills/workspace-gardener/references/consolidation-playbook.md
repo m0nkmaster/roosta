@@ -99,6 +99,8 @@ Get the end state clear before moving files.
 
 1. **Create or extend the canonical skill** - mental model, decision tree, agent instructions, bundled `references/`
 2. **Migrate content** - move reference material into `references/`, not duplicated
+Preserve user-curated collection and topic overviews, membership, order and prose throughout this procedure.
+
 3. **Slim what remains** - runbooks to commands only, READMEs to indexes
 4. **Delete legacy** - remove superseded files; no stubs
 5. **Update AGENTS.md** - single pointer per domain (root and project-level as needed)

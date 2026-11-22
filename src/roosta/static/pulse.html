@@ -160,23 +160,23 @@
 <div class="page-header dashboard-page-header"><div><div class="page-pretitle">Workspace health</div><h1 class="page-title">Pulse</h1><p class="page-subtitle">Activity, attention and the shape of your vault</p></div></div>
         <section class="card constellation-panel mb-4" id="constellation-panel">
             <div class="card-header panel-head">
-                <h2 class="card-title">Project constellation</h2>
+                <h2 class="card-title">Workspace constellation</h2>
                 <div class="panel-tools">
                 <input type="search" class="form-control constellation-search" id="constellation-search"
-                    placeholder="Search title, tags, owner…" aria-label="Search projects by title or front matter">
+                    placeholder="Search title, tags, owner…" aria-label="Search pages by title or front matter">
                 <div class="btn-group" id="constellation-filters" role="group" aria-label="Constellation focus">
                     <button type="button" class="btn btn-sm active" data-filter="all" aria-pressed="true">All</button>
                     <button type="button" class="btn btn-sm" data-filter="attention" aria-pressed="false">Needs me<span class="chip-count" data-count="attention"></span></button>
                     <button type="button" class="btn btn-sm" data-filter="stale" aria-pressed="false">Drifting<span class="chip-count" data-count="stale"></span></button>
-                    <button type="button" class="btn btn-sm" data-filter="due" aria-pressed="false" title="Not verified, or past stale_after">Unverified<span class="chip-count" data-count="due"></span></button>
+                    <button type="button" class="btn btn-sm" data-filter="due" aria-pressed="false" title="Not verified, or past stale_after">Review due<span class="chip-count" data-count="due"></span></button>
                 </div>
-                <button type="button" class="btn btn-sm btn-primary" id="review-start" title="Walk the projects that need a decision (r)">Review<span class="chip-count" data-count="review"></span></button>
+                <button type="button" class="btn btn-sm btn-primary" id="review-start" title="Walk the pages that need a decision (r)">Review<span class="chip-count" data-count="review"></span></button>
                 <a class="btn btn-sm" id="full-toggle" href="/constellation" title="Full screen (f)">Full screen</a>
                 </div>
             </div>
             <div class="card-body"><div class="constellation-layout">
                 <div class="constellation-wrap">
-                    <canvas id="constellation" aria-label="Project constellation: documented relationships on rings of time since last change"></canvas>
+                    <canvas id="constellation" aria-label="Workspace constellation: documented relationships on rings of time since last attention"></canvas>
                     <div class="constellation-zoom" id="constellation-zoom" role="group" aria-label="Constellation zoom">
                         <button type="button" class="btn btn-sm" data-zoom="in" aria-label="Zoom in">+</button>
                         <button type="button" class="btn btn-sm" data-zoom="out" aria-label="Zoom out">−</button>
@@ -191,12 +191,12 @@
                 <aside class="card card-body constellation-detail" id="constellation-detail"></aside>
             </div>
             <div class="constellation-legend" aria-label="Constellation legend">
-                <span class="legend-key rings">Rings: time since last change</span>
+                <span class="legend-key rings">Rings: time since last attention</span>
                 <span class="legend-key important">Amber: on the board now</span>
                 <span class="legend-key drift">Coral: active but untouched 30d+</span>
-                <span class="legend-key active">Cyan: edited this week</span>
+                <span class="legend-key active">Cyan: attention this week</span>
                 <span class="legend-key link">Lines: documented Related links</span>
-                <span class="legend-key moon">Zoom in: a project's pages orbit it</span>
+                <span class="legend-key moon">Zoom in: supporting pages orbit each star</span>
                 <span class="legend-key keys">Keys: <kbd class="hint">/</kbd> search · <kbd class="hint">r</kbd> review · <kbd class="hint">f</kbd> full screen · <kbd class="hint">Esc</kbd> clear</span>
             </div></div>
         </section>
@@ -277,7 +277,7 @@
         const CHAT_LINES = ['The Assistant is thinking out loud.', 'A reply is taking shape.'];
 
         function esc(s) {
-            return String(s).replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+            return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
         }
 
         function fmt(n) {
@@ -493,7 +493,7 @@
             ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
         }
 
-        // Radius reads outward as time since anything in the project last changed.
+        // Radius reads outward as time since the selected page received attention.
         const RINGS = [
             { label: 'today', max: 1 },
             { label: '7 days', max: 7 },
@@ -552,7 +552,7 @@
         function nodeState(node) {
             if (Number(node.active_board_items || 0) > 0) return 'attention';
             if (node.stale) return 'drifting';
-            if (Number(node.recent_edits || 0) > 0) return 'fresh';
+            if (node.age_days != null && node.age_days < 7) return 'fresh';
             if (node.status === 'completed' || node.status === 'paused') return 'rested';
             return 'quiet';
         }
@@ -568,7 +568,7 @@
            the slug, title or any front-matter value (tags, owner, repos, …). */
         function matchesSearch(node) {
             if (!searchTerms.length) return true;
-            const haystack = [node.name, node.title, node.keywords, node.status, node.owner]
+            const haystack = [node.name, node.path, node.collections, node.title, node.keywords, node.status, node.owner]
                 .map(value => String(value || '')).join(' ').toLowerCase();
             return searchTerms.every(term => haystack.includes(term));
         }
@@ -988,7 +988,7 @@
             const edits = Number(node.recent_edits || 0);
             const board = Number(node.active_board_items || 0);
             const parts = [node.status || 'unknown'];
-            parts.push(node.last_activity ? `changed ${timeAgo(node.last_activity)}` : 'no recorded activity');
+            parts.push(node.last_activity ? `attention ${timeAgo(node.last_activity)}` : 'no recorded activity');
             if (edits) parts.push(`${edits} ${edits === 1 ? 'edit' : 'edits'} this week`);
             if (board) parts.push(`${board} on the board`);
             return parts.join(' · ');
@@ -1015,7 +1015,7 @@
             const links = (node.related || []).length;
             document.getElementById('constellation-tooltip-title').textContent = node.title || node.name;
             document.getElementById('constellation-tooltip-detail').textContent =
-                `${nodeSummaryLine(node)}${links ? ` · ${links} linked ${links === 1 ? 'project' : 'projects'}` : ''}${(node.pages || []).length ? ` · ${node.pages.length} pages` : ''}`;
+                `${nodeSummaryLine(node)}${links ? ` · ${links} linked ${links === 1 ? 'page' : 'pages'}` : ''}${(node.pages || []).length ? ` · ${node.pages.length} pages` : ''}`;
             tooltip.style.left = `${Math.max(0, Math.min(x, canvas.clientWidth - 250))}px`;
             tooltip.style.top = `${Math.max(0, Math.min(y, canvas.clientHeight - 70))}px`;
             tooltip.classList.add('open');
@@ -1048,7 +1048,7 @@
                 ].join('');
             }
             const rows = [
-                `<div class="detail-title">${fmt(projects.length)} projects</div>`,
+                `<div class="detail-title">${fmt(projects.length)} pages</div>`,
                 `<div class="detail-row">${fmt(touchedToday)} touched today · ${fmt(edges.length)} documented links · ${fmt(board)} on the board</div>`,
             ];
             if (drifting.length) {
@@ -1057,7 +1057,7 @@
                     `<div class="chip-list">${projectChips(drifting.slice(0, 5).map(node => node.name))}</div>`
                 );
             }
-            rows.push('<div class="detail-hint">Hover a star to light its documented relationships. Click one for detail. Scroll or use + to zoom (deep enough and each project’s pages appear as moons), drag to pan, double-click to reset.</div>');
+            rows.push('<div class="detail-hint">Hover a star to light its documented relationships. Click one for detail. Scroll or use + to zoom (deep enough and supporting pages appear as moons), drag to pan, double-click to reset.</div>');
             return rows.join('');
         }
 
@@ -1081,24 +1081,14 @@
             ).map(node => node.name);
         }
 
-        function vaultLinks(markdown, slug) {
-            // README links are relative to the project folder; send them to the in-app viewer.
-            return String(markdown || '')
-                .replace(/\[\[([^\]|#]+)(?:#[^\]|]*)?(?:\|([^\]]+))?\]\]/g, (_, target, label) => `**${(label || target).trim()}**`)
-                .replace(/\]\((?!https?:|mailto:|#)([^)\s]+\.md)(#[^)]*)?\)/g, (_, rel) => {
-                    const path = new URL(rel, `https://vault/projects/${slug}/`).pathname.slice(1);
-                    return `](/document?path=${encodeURIComponent(path)}&from=${encodeURIComponent(location.pathname)})`;
-                });
-        }
-
-        function md(markdown, slug) {
+        function md(markdown, node, brief) {
             return typeof safeMarkdown === 'function' && typeof marked !== 'undefined'
-                ? safeMarkdown(vaultLinks(markdown, slug))
+                ? safeMarkdown(wikiLinks(markdown, brief.linked_paths || [], node.path, location.pathname + location.search))
                 : `<p>${esc(markdown)}</p>`;
         }
 
         function docHref(path) {
-            return `/document?path=${encodeURIComponent(path)}&from=${encodeURIComponent(location.pathname)}`;
+            return `/document?path=${encodeURIComponent(path)}&from=${encodeURIComponent(location.pathname + location.search)}`;
         }
 
         async function loadBrief(name, force = false) {
@@ -1121,8 +1111,9 @@
             const label = { human: 'Human-checked', machine: 'Agent-checked', unverified: 'Unverified' }[state];
             const last = prov?.verified?.[0];
             const due = prov ? prov.due : node.verification_due;
-            const title = last ? `Last verified ${last.at} by ${last.by}${prov.stale_after ? ` · re-check from ${prov.stale_after}` : ''}` : 'No verified entry in the README frontmatter';
-            return `<span class="badge prov-pill ${due ? 'due' : esc(state)}" title="${esc(title)}">${esc(label)}${due && state !== 'unverified' ? ' · due' : ''}</span>`;
+            const expired = prov ? prov.expired : node.expired;
+            const title = last ? `Last verified ${last.at} by ${last.by}${prov.stale_after ? ` · re-check from ${prov.stale_after}` : ''}` : 'No verified entry in the page frontmatter';
+            return `<span class="badge prov-pill ${due ? 'due' : esc(state)}" title="${esc(title)}">${esc(label)}${due && expired ? ' · expired' : ''}</span>`;
         }
 
         function reviewBox(node) {
@@ -1140,7 +1131,7 @@
                 <div class="review-buttons"><button type="button" class="btn btn-sm btn-success" data-review-action="confirm" ${reviewBusy ? 'disabled' : ''} title="Records your verification today and moves stale_after (c)">I've read it, it's right</button></div>
                 <div class="review-buttons" role="group" aria-label="Set status">${statuses}</div>
                 ${reviewError ? `<div class="review-error">${esc(reviewError)}</div>` : ''}
-                <div class="detail-hint">Writes only the README frontmatter. Read the current state before confirming.</div>
+                <div class="detail-hint">Writes only the page frontmatter. Read the current state before confirming.</div>
             </div>`;
         }
 
@@ -1148,11 +1139,12 @@
             const brief = briefs.get(node.name);
             const edits = Number(node.recent_edits || 0);
             const status = String(node.status || 'unknown').toLowerCase();
-            const path = `projects/${node.name}/README.md`;
+            const path = node.path || `projects/${node.name}/README.md`;
             const rows = [
                 `<div class="detail-title">${esc(node.title || node.name)}</div>`,
+                `<div class="detail-hint">${esc((node.collections || []).join(' · '))}</div>`,
                 `<div class="detail-meta"><span class="badge status-pill ${esc(status)}">${esc(status)}</span>${provenanceBadge(node, brief)}${node.owner ? `<span class="detail-owner">${esc(node.owner)}</span>` : ''}</div>`,
-                `<div class="detail-row">${node.last_activity ? `Changed ${esc(timeAgo(node.last_activity))}` : 'No recorded activity'} · ${fmt(edits)} ${edits === 1 ? 'edit' : 'edits'} this week${brief?.last_updated ? ` · README dated ${esc(brief.last_updated)}` : ''}</div>`,
+                `<div class="detail-row">${node.last_activity ? `Attention ${esc(timeAgo(node.last_activity))} (${esc(node.attention_basis || 'file modification')})` : 'No recorded activity'} · ${fmt(edits)} ${edits === 1 ? 'edit' : 'edits'} this week${brief?.last_updated ? ` · Page dated ${esc(brief.last_updated)}` : ''}</div>`,
             ];
             if (node.stale) {
                 rows.push(`<div class="detail-flag">Marked ${esc(status)}, untouched for ${Math.round(node.age_days)} days. Restart it or change its status.</div>`);
@@ -1168,13 +1160,13 @@
                     ? `<div class="detail-hint">Briefing unavailable: ${esc(briefErrors.get(node.name))}</div>`
                     : '<div class="detail-hint">Loading briefing…</div>');
             } else {
-                if (brief.overview) rows.push(`<div class="brief-section"><strong>Overview</strong><div class="brief-md">${md(brief.overview, node.name)}</div></div>`);
+                if (brief.overview) rows.push(`<div class="brief-section"><strong>Overview</strong><div class="brief-md">${md(brief.overview, node, brief)}</div></div>`);
                 if (brief.current_state) {
                     const open = expanded.has(node.name);
-                    rows.push(`<div class="brief-section"><strong>Current state</strong><div class="brief-md ${open ? '' : 'brief-clamp'}">${md(brief.current_state, node.name)}</div>
+                    rows.push(`<div class="brief-section"><strong>Current state</strong><div class="brief-md ${open ? '' : 'brief-clamp'}">${md(brief.current_state, node, brief)}</div>
                         <button type="button" class="btn btn-link brief-toggle" data-brief-toggle="${esc(node.name)}">${open ? 'Show less' : 'Show all'}</button></div>`);
                 } else {
-                    rows.push('<div class="detail-hint">No “Current state” section in the README.</div>');
+                    rows.push('<div class="detail-hint">Open the source for the full page.</div>');
                 }
                 if (brief.links.length) {
                     rows.push(`<div class="brief-section"><strong>Linked</strong><ul class="brief-list">${brief.links.map(link =>
@@ -1191,7 +1183,7 @@
                 : '<div class="detail-hint">No documented relationships yet.</div>');
             rows.push(`<div class="detail-actions">
                 <a class="btn btn-primary" href="/assistant?item=${encodeURIComponent('doc:' + path)}">Chat about this</a>
-                <a class="btn" href="${docHref(path)}" target="_blank" rel="noopener">Open README</a>
+                <a class="btn" href="${docHref(path)}" target="_blank" rel="noopener">Open source</a>
             </div>`);
             return rows.join('');
         }
@@ -1506,7 +1498,7 @@
         const detailDivider = document.getElementById('detail-divider');
         detailDivider.addEventListener('roosta-columns-change', onCanvasResize);
         roostaColumns.attach(detailDivider, {
-            id: FULL ? 'constellation.detail' : 'pulse.detail', label: 'Resize project details',
+            id: FULL ? 'constellation.detail' : 'pulse.detail', label: 'Resize page details',
             target: document.getElementById('constellation-detail'), container: document.querySelector('.constellation-layout'),
             variable: '--detail-width', grow: 'left', min: 240, max: width => width - 420,
         });

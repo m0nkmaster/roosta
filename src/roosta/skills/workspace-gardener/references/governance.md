@@ -130,7 +130,7 @@ skills, never to vault-only project files. Personal secrets stay in `notes/` or
 When consolidating:
 
 - Delete superseded files (git remembers)
-- Remove READMEs or gut to thin indexes pointing at the canonical skill
+- Preserve user-curated overviews, including their prose and chosen links. Consolidate duplicate technical instructions in the canonical skill.
 - Update all inbound links in one pass
 - No "deprecated - see X" stubs unless the user explicitly asked for a transition period
 

@@ -35,21 +35,22 @@ function snippet(text,terms){
 }
 
 const params=new URLSearchParams(location.search);
-const state={files:[],collections:[],view:params.get('view')||'all',collection:params.get('collection')||'',path:params.get('path')||'',selected:new Set(),preview:null,request:0};
+const state={files:[],collections:[],view:params.get('view')||(params.has('q')||params.has('path')?'all':'collections'),collection:params.get('collection')||'',path:params.get('path')||'',selected:new Set(),preview:null,request:0};
 try{const saved=JSON.parse(sessionStorage.getItem('workspace-selection')||'[]');if(Array.isArray(saved)) state.selected=new Set(saved.filter(p=>typeof p==='string').slice(0,8));}catch(error){}
 if(params.has('item')) state.selected=new Set(params.getAll('file').slice(0,8));
 $('search').value=params.get('q')||'';
 function notice(message){$('notice').textContent=message;}
 function updateUrl(){
   const url=new URL(location.href);
-  for(const [key,value] of [['q',$('search').value],['view',state.view==='all'?'':state.view],['collection',state.collection],['path',state.path]]){
+  for(const [key,value] of [['q',$('search').value],['view',state.view],['collection',state.collection],['path',state.path]]){
     if(value) url.searchParams.set(key,value);else url.searchParams.delete(key);
   }
   url.searchParams.delete('folder');
   history.replaceState(null,'',url);
 }
 const views={
-  all:{title:'All knowledge',summary:'Explore projects and topics, or search across your workspace.'},
+  collections:{title:'Collections',summary:'Pages chosen in your workspace.'},
+  all:{title:'All knowledge',summary:'Search every visible Markdown document in your workspace.'},
   projects:{title:'Projects',summary:'The work in progress and its supporting plans, notes and decisions.'},
   topics:{title:'Topics',summary:'Shared subjects, connected across projects and documents through their tags.'},
   work:{title:'Decisions & plans',summary:'Find agreements, proposals and the plans for what comes next.'}
@@ -65,18 +66,18 @@ function statusBadge(status){
   return colors[status]?`<span class="badge bg-${colors[status]}-lt">${escapeHtml(status)}</span>`:'';
 }
 function renderCollections(){
-  $('views').innerHTML=Object.entries(views).map(([key,view])=>{
+  $('views').innerHTML=Object.entries(views).filter(([key])=>key!=='projects'||state.view==='projects').map(([key,view])=>{
     const count=key==='all'?state.files.length:state.collections.filter(collection=>collection.group===key).length;
     return `<button type="button" class="nav-link ${state.view===key?'active':''}" data-view="${key}" ${state.view===key?'aria-current="true"':''}><span>${view.title}</span><span class="small text-secondary">${count}</span></button>`;
   }).join('');
-  const group=state.view==='all'?'projects':state.view;
+  const group=state.view==='all'?'collections':state.view;
   const collections=state.collections.filter(collection=>collection.group===group);
   $('collection-label').textContent=views[group].title;
   $('collections').innerHTML=collections.length?collections.map(collection=>`<button type="button" class="list-group-item list-group-item-action collection-item ${state.collection===collection.id?'active':''}" data-collection="${escapeHtml(collection.id)}" ${state.collection===collection.id?'aria-current="true"':''}>
     <span class="collection-title">${escapeHtml(collection.title)}</span>
     ${collection.summary?`<span class="collection-summary">${escapeHtml(collection.summary)}</span>`:''}
     <span class="collection-meta">${statusBadge(collection.status)}<span>${collection.paths.length} document${collection.paths.length===1?'':'s'}</span></span></button>`).join('')
-    :'<div class="navigator-empty small">No collections yet.<br>Collections use project folders and document tags.</div>';
+    :'<div class="navigator-empty small">No collections yet.<br>Add a list of collection links to WORKSPACE.md.</div>';
   const collection=currentCollection(),scope=collection||views[state.view];
   $('scope-title').textContent=scope.title;
   $('scope-summary').textContent=scope.summary||'Explore the documents collected here.';
@@ -87,13 +88,18 @@ function renderCollections(){
 function renderResults(){
   const start=performance.now(),terms=searchTerms($('search').value);
   const results=searchFiles(state.files,$('search').value,scopePaths());
-  const overview=results.findIndex(file=>file.path===currentCollection()?.overview);
-  if(!terms.length&&overview>0) results.unshift(results.splice(overview,1)[0]);
+  const collection=currentCollection();
+  const ordered=collection && (collection.ordered||['collections','topics'].includes(collection.group));
+  if(!terms.length && ordered){
+    const order=new Map(collection.paths.map((path,i)=>[path,i]));
+    results.sort((a,b)=>order.get(a.path)-order.get(b.path));
+  }
+  const sections=collection?.sections||{};
   $('result-count').textContent=`${results.length} document${results.length===1?'':'s'}`;
-  $('search-time').textContent=terms.length?`${Math.max(1,Math.round(performance.now()-start))} ms`: 'Most recent';
+  $('search-time').textContent=terms.length?`${Math.max(1,Math.round(performance.now()-start))} ms`: ordered?'Index order':'Most recent';
   $('results').innerHTML=results.length?results.map(file=>`<div class="list-group-item result-row" aria-current="${file.path===state.path}">
     <input class="form-check-input" type="checkbox" data-select="${escapeHtml(file.path)}" aria-label="Select ${escapeHtml(file.title)} for chat" ${state.selected.has(file.path)?'checked':''}>
-    <button class="result-open" type="button" data-preview="${escapeHtml(file.path)}"><div class="result-title">${highlightText(file.title,terms)}</div><div class="result-purpose" title="${escapeHtml(file.path)}">${highlightText([file.project,file.kind].filter(Boolean).join(' · '),terms)}</div><div class="result-snippet">${highlightText(terms.length?snippet(file.text,terms):(file.summary||snippet(file.text,[])),terms)}</div></button></div>`).join('')
+    <button class="result-open" type="button" data-preview="${escapeHtml(file.path)}"><div class="result-title">${highlightText(file.title,terms)}</div><div class="result-purpose" title="${escapeHtml(file.path)}">${highlightText([file.project,file.kind].filter(Boolean).join(' · '),terms)}</div><div class="result-snippet">${highlightText(terms.length?snippet(file.text,terms):(sections[file.path]||file.summary||snippet(file.text,[])).slice(0,240),terms)}</div></button></div>`).join('')
     :'<div class="navigator-empty">No matching documents.<br><span class="small">Try fewer words or choose All knowledge.</span></div>';
   renderPreview();updateUrl();
 }
@@ -101,7 +107,8 @@ function renderPreview(){
   if(!state.preview) return;
   const terms=searchTerms($('search').value);
   const project=state.collections.find(c=>c.group==='projects'&&c.overview&&c.overview!==state.preview.path&&c.paths.includes(state.preview.path));
-  $('preview').innerHTML=`<div class="preview-copy prose">${project?`<button type="button" class="btn btn-sm btn-ghost-primary mb-2 px-1" data-project="${escapeHtml(project.id)}">↑ ${escapeHtml(project.title)}</button>`:''}<div class="preview-path mb-3">${escapeHtml(state.preview.path)}</div><article>${safeMarkdown(wikiLinks(state.preview.content,state.files.map(file=>file.path),state.preview.path))}</article></div>`;
+  const section=currentCollection()?.sections?.[state.preview.path];
+  $('preview').innerHTML=`<div class="preview-copy prose">${project?`<button type="button" class="btn btn-sm btn-ghost-primary mb-2 px-1" data-project="${escapeHtml(project.id)}">↑ ${escapeHtml(project.title)}</button>`:''}<div class="preview-path mb-3">${escapeHtml(state.preview.path)}</div><article>${safeMarkdown(wikiLinks(section||state.preview.content,state.files.map(file=>file.path),state.preview.path))}</article></div>`;
   if(!terms.length) return;
   const walker=document.createTreeWalker($('preview').querySelector('article'),NodeFilter.SHOW_TEXT),nodes=[];
   while(walker.nextNode()) nodes.push(walker.currentNode);
@@ -118,7 +125,7 @@ async function previewFile(path){
   $('preview').innerHTML='<div class="navigator-empty">Loading document…</div>';
   renderResults();
   try{
-    const response=await fetch('/api/vault-document?path='+encodeURIComponent(path));
+    const response=await fetch('/api/vault-document?path='+encodeURIComponent(path)+'&visible=true');
     const data=await response.json();if(request!==state.request) return;
     if(!response.ok) throw new Error(data.error||'Could not open document.');
     state.preview=data;renderPreview();
@@ -163,8 +170,9 @@ async function loadWorkspace(){
     const paths=new Set(state.files.map(file=>file.path));
     state.selected=new Set([...state.selected].filter(path=>paths.has(path)));
     state.collections=data.collections||[];
-    if(!views[state.view]) state.view='all';
+    if(!Object.hasOwn(views,state.view)) state.view='all';
     if(state.collection&&!currentCollection()) state.collection='';
+    if(!state.collection && state.view==='collections') state.collection=state.collections.find(c=>c.group==='collections')?.id||'';
     if(currentCollection()) state.view=currentCollection().group;
     $('index-status').textContent=`${state.files.length} Markdown documents · Local search`;
     if(data.skipped) notice(`${data.skipped} unreadable or oversized document${data.skipped===1?' was':'s were'} skipped.`);
@@ -186,10 +194,17 @@ $('reveal-workspace').onclick=async()=>{
 };
 $('views').onclick=event=>{
   const button=event.target.closest('[data-view]');if(!button) return;
-  state.view=button.dataset.view;state.collection='';renderCollections();renderResults();
+  clearPreview();state.view=button.dataset.view;state.collection='';
+  if(state.view==='collections'){const first=state.collections.find(c=>c.group==='collections');if(first)return openCollection(first.id);}
+  renderCollections();renderResults();
 };
+function clearPreview(){
+  ++state.request;state.preview=null;state.path='';
+  $('preview').innerHTML='<div class="navigator-empty">Choose a document to read it here.</div>';
+  $('open-document').hidden=true;$('chat-document').hidden=true;$('copy-document').hidden=true;
+}
 function openCollection(id){
-  state.collection=id;state.view=currentCollection().group;
+  clearPreview();state.collection=id;state.view=currentCollection().group;
   renderCollections();renderResults();
   const overview=currentCollection().overview;if(overview) previewFile(overview);
 }

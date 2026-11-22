@@ -17,8 +17,7 @@ facts are accurate.
 
 **Update project `## Current state` sections:**
 For any project with meaningful activity, refresh its current state. Carry forward
-decisions, rationale, or caveats the user wrote there. Update `last_updated` in
-frontmatter.
+decisions, rationale, or caveats the user wrote there. Update `last_updated` for substantive changes to the page. Link and formatting maintenance preserve its attention dates.
 
 **Commit:** `garden: digest [date]`
 

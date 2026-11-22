@@ -2,20 +2,37 @@
 
 from datetime import datetime, timezone
 import os
+import posixpath
 from pathlib import Path
 import re
 from textwrap import shorten
+from urllib.parse import unquote
 
 import yaml
 
 from roosta import paths
-from roosta.pulse import markdown_title
 
 
 EXCLUDED = {"private", "code", "node_modules", "cache", "__pycache__"}
 MAX_DOCUMENT_BYTES = 2 * 1024 * 1024
 MAX_CONTEXT_FILES = 8
 MAX_CONTEXT_BYTES = 192 * 1024
+
+
+def markdown_title(content: str, stem: str) -> str:
+    """Resolve a display title from frontmatter, first heading, or filename."""
+    if content.startswith("---"):
+        end = content.find("\n---", 3)
+        if end != -1:
+            for line in content[3:end].splitlines():
+                if line.strip().startswith("title:"):
+                    title = line.split(":", 1)[1].strip().strip("\"'")
+                    if title:
+                        return title
+    heading = re.search(r"^#\s+(.+)$", content, re.MULTILINE)
+    if heading:
+        return heading.group(1).strip()
+    return stem.replace("-", " ").title()
 
 
 def plain_text(value: str) -> str:
@@ -39,7 +56,7 @@ def metadata(content: str) -> dict:
         return {}
     try:
         data = yaml.safe_load(match.group(1))
-    except yaml.YAMLError:
+    except (yaml.YAMLError, ValueError, OverflowError, RecursionError):
         return {}
     return data if isinstance(data, dict) else {}
 
@@ -85,6 +102,52 @@ def document_kind(path: str, title: str, front: dict) -> str:
     return "Reference" if name in {"readme", "agents", "tools", "context"} else "Notes"
 
 
+def navigation_text(body: str) -> str:
+    """Mask examples and comments while keeping offsets into the original body."""
+    def blank(match):
+        return re.sub(r"[^\n]", " ", match[0])
+
+    return re.sub(r"<!--.*?(?:-->|\Z)|^ {0,3}(?P<fence>`{3,}|~{3,})[^\n]*\n"
+                  r".*?(?:^ {0,3}(?P=fence)[`~]*[ \t\r]*$|\Z)", blank, body, flags=re.M | re.S)
+
+
+def index_links(page: dict, known: dict, *, list_only: bool = True):
+    """The first link of each top-level Markdown list item selects a visible page."""
+    prefix = r"^(?:[-*+]|\d+\.)[ \t]+" if list_only else r"(?<!!)"
+    links = re.finditer(prefix + r"\[[^]\n]+\]\((?:<([^>\n]+)>|([^()\s]+))\)",
+                        navigation_text(strip_frontmatter(page["text"])), re.M)
+    for link in links:
+        raw, _, anchor = (link[1] or link[2]).partition("#")
+        target = unquote(raw)
+        if not target or target.startswith("/") or re.match(r"^[a-z][a-z0-9+.-]*:", target, re.I):
+            continue
+        path = posixpath.normpath(posixpath.join(posixpath.dirname(page["path"]), target))
+        if path in known and path != page["path"]:
+            yield path, unquote(anchor)
+
+
+def index_members(page: dict, known: dict) -> list[str]:
+    return list(dict.fromkeys(path for path, _ in index_links(page, known)))
+
+
+def selected_collections(files: dict, indexed: bool) -> list[dict]:
+    if indexed:
+        home = files.get("WORKSPACE.md")
+        overviews = index_members(home, files) if home else []
+        indexes = set(overviews) | {"WORKSPACE.md"}
+        return [{"id": "collection:" + path, "group": "collections", "overview": path,
+                 "title": files[path]["title"], "summary": files[path]["summary"],
+                 "paths": [p for p in index_members(files[path], files) if p not in indexes]}
+                for path in overviews]
+    paths = [p for p in files if re.fullmatch(r"projects/[^/]+/README\.md", p)]
+    if paths:
+        return [{"id": "collection:projects", "group": "collections", "title": "Projects",
+                 "summary": "Project overviews in this workspace.", "paths": paths}]
+    return [{"id": "collection:context", "group": "collections", "title": "Working context",
+             "summary": "Your priorities and domain knowledge.",
+             "paths": [p for p in ("PRIORITIES.md", "CONTEXT.md") if p in files]}]
+
+
 def knowledge_collections(files: list[dict]) -> list[dict]:
     """Group existing metadata and document conventions; never infer claims with AI."""
     collections = []
@@ -106,24 +169,55 @@ def knowledge_collections(files: list[dict]) -> list[dict]:
                             "paths": [file["path"] for file in files if file["path"].startswith(folder + "/")]})
 
     acronyms = {word.lower(): word for word in ["AI", "API", "AWS", "CI", "MCP", "OKR", "SDK", "SDKs", "UI", "UX"]}
-    for tag, sources in tag_sources.items():
-        if len(sources) < 2:
+    known = {file["path"]: file for file in files}
+    topics = {Path(p).stem.lower(): f for p, f in known.items() if re.fullmatch(r"topics/[^/]+\.md", p)}
+    for tag in sorted(tag_sources.keys() | topics.keys()):
+        sources = tag_sources.get(tag, [])
+        overview = topics.get(tag)
+        if len(sources) < 2 and not overview:
             continue
         paths = [file["path"] for file in files if tag in {value.lower() for value in file["topics"]}]
+        if overview:
+            paths = list(dict.fromkeys(index_members(overview, known) + paths))
         names = sorted({file["project"] or file["title"] for file in sources})
         title = " ".join(acronyms.get(word, word.capitalize()) for word in tag.replace("_", "-").split("-"))
-        collections.append({"id": "topic:" + tag, "group": "topics", "title": title,
-                            "summary": "Across " + ", ".join(names[:3]) + (" and more." if len(names) > 3 else "."),
+        collections.append({"id": "topic:" + tag, "group": "topics", "title": overview["title"] if overview else title,
+                            "overview": overview["path"] if overview else None,
+                            "summary": overview["summary"] if overview else "Across " + ", ".join(names[:3]) + (" and more." if len(names) > 3 else "."),
                             "paths": paths})
 
     for key, title, kind, heading, summary in [
         ("decisions", "Decisions", "Decision record", r"(?:Key\s+)?Decisions?", "Decision records and documents with a decisions section."),
         ("plans", "Plans & roadmaps", "Plan", r"(?:Current\s+)?(?:Plan|Roadmap|Proposal)s?", "Plans, proposals and roadmaps for what comes next."),
     ]:
-        paths = [file["path"] for file in files if file["kind"] == kind
-                 or re.search(r"^##\s+" + heading + r"\s*$", file["text"], re.M | re.I)]
-        if paths:
-            collections.append({"id": "work:" + key, "group": "work", "title": title, "summary": summary, "paths": paths})
+        overview = known.get(key.capitalize() + ".md")
+        sources = {}
+        if overview:
+            for path, anchor in index_links(overview, known):
+                sources.setdefault(path, []).append(anchor)
+        sections = {}
+        for file in files:
+            path = file["path"]
+            if overview is file:
+                continue
+            anchors = sources.get(path, [])
+            excerpts = []
+            body = strip_frontmatter(file["text"]) + "\n"
+            for section in re.finditer(r"^##[ \t]+([^\n]+)\n(.*?)(?=^#{1,2}[ \t]|\Z)",
+                                       navigation_text(body), re.M | re.S):
+                title_text = section[1].strip()
+                anchor = re.sub(r"[^\w -]", "", title_text.lower()).replace(" ", "-")
+                if anchor in anchors or re.fullmatch(heading, title_text, re.I):
+                    excerpts.append("## " + title_text + "\n\n" + body[section.start(2):section.end(2)].strip()[:2400])
+            if excerpts:
+                sections[path] = "\n\n".join(excerpts)
+            if excerpts or file["kind"] == kind:
+                sources.setdefault(path, [])
+        if sources or overview:
+            collections.append({"id": "work:" + key, "group": "work", "title": title,
+                                "summary": overview["summary"] if overview else summary,
+                                "overview": overview["path"] if overview else None,
+                                "ordered": bool(overview), "paths": list(sources), "sections": sections})
     order = {"active": 0, "blocked": 1, "paused": 2, "completed": 3}
     return sorted(collections, key=lambda entry: (order.get(entry.get("status"), 4), entry["title"].casefold()))
 
@@ -142,7 +236,10 @@ def read_document(root: Path, raw: str) -> tuple[Path, str, int]:
     if not visible_path(relative):
         raise ValueError("Choose a workspace Markdown document.")
     vault = root.resolve()
-    target = (vault / relative).resolve()
+    try:
+        target = (vault / relative).resolve()
+    except (RuntimeError, OSError) as exc:
+        raise ValueError("Invalid document path.") from exc
     try:
         canonical = target.relative_to(vault)
     except ValueError as exc:
@@ -158,19 +255,20 @@ def read_document(root: Path, raw: str) -> tuple[Path, str, int]:
     return canonical, content.decode("utf-8"), len(content)
 
 
-def build_catalogue(root: Path) -> dict:
+def catalogue_files(root: Path) -> tuple[list[dict], int]:
     files = []
     skipped = 0
     for parent, directories, names in os.walk(root, followlinks=False):
         directories[:] = sorted(name for name in directories
-                                if name.lower() not in EXCLUDED and not name.startswith(".")
-                                and not (Path(parent) / name).is_symlink())
+                                if name.lower() not in EXCLUDED and not name.startswith("."))
         for name in sorted(names):
             candidate = Path(parent) / name
             relative = candidate.relative_to(root)
-            if not visible_path(relative) or candidate.is_symlink():
+            if not visible_path(relative):
                 continue
             try:
+                if candidate.is_symlink():
+                    continue
                 canonical, content, size = read_document(root, relative.as_posix())
                 modified = datetime.fromtimestamp(candidate.stat().st_mtime, timezone.utc).isoformat()
             except (OSError, UnicodeError, ValueError):
@@ -184,7 +282,13 @@ def build_catalogue(root: Path) -> dict:
                           "kind": document_kind(canonical.as_posix(), title, front),
                           "tags": text_values(front.get("tags")),
                           "status": front.get("status") if isinstance(front.get("status"), str) else ""})
-    return {"files": files, "collections": knowledge_collections(files), "skipped": skipped,
+    return files, skipped
+
+
+def build_catalogue(root: Path) -> dict:
+    files, skipped = catalogue_files(root)
+    selected = selected_collections({f["path"]: f for f in files}, os.path.lexists(root / "WORKSPACE.md"))
+    return {"files": files, "collections": selected + knowledge_collections(files), "skipped": skipped,
             "indexed_at": datetime.now(timezone.utc).isoformat()}
 
 
