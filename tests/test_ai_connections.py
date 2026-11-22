@@ -8,6 +8,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import sys
+import threading
 
 import pytest
 from fastapi.testclient import TestClient
@@ -98,12 +99,9 @@ def test_claude_workers_keep_workspace_specific_source_permissions(accounts, tmp
         assert rule in json.loads(other.read_text())['permissions']['deny']
 
 
-def test_default_requires_tool_test_and_disconnect_never_falls_back(accounts):
+def test_untested_default_works_and_disconnect_never_falls_back(accounts):
     create, _ = accounts
     a, b = create(tested=False), create()
-    with pytest.raises(ValueError, match='Test'):
-        connections.set_default(a['id'])
-    connections.update(a['id'], tested=True)
     connections.set_default(a['id'])
     connections.update(a['id'], connected=False)
     with pytest.raises(ValueError, match='disconnected'):
@@ -207,12 +205,16 @@ def test_application_source_is_readable_when_it_belongs_to_the_worker_workspace(
 
 def test_settings_reject_remote_and_cross_origin_requests(accounts):
     with TestClient(app.app, base_url='http://localhost', client=('192.0.2.10',1234)) as client:
+        assert client.post('/api/ai/operations/test/cancel', json={}).status_code == 403
         assert client.post('/api/ai/connections', json={}).status_code == 403
         assert client.post('/api/ai/terminal', json={'id':'pi'}).status_code == 403
     with TestClient(app.app, base_url='http://localhost', client=('127.0.0.1',1234)) as client:
         assert client.post('/api/ai/connections', json={}, headers={'Origin':'https://attacker.invalid'}).status_code == 403
         assert client.post('/api/ai/terminal', json={'id':'pi'}, headers={'Origin':'https://attacker.invalid'}).status_code == 403
         assert client.post('/api/ai/connections', json={}, headers={'Host':'attacker.invalid'}).status_code == 403
+        for headers in ({'Origin':'https://attacker.invalid'}, {'Host':'attacker.invalid'}):
+            assert client.post('/api/ai/operations/test/cancel', json={}, headers=headers).status_code == 403
+        assert client.post('/api/ai/operations/test/cancel', json={}).status_code == 409
         response = client.post('/api/ai/connections', json={'provider':'openai','api_key':'test-key'})
         assert response.status_code == 201
         assert 'test-key' not in response.text
@@ -239,11 +241,13 @@ def test_sender_retains_original_account_when_default_changes(accounts, tmp_path
 def test_pi_chat_progress_is_transient_and_uses_only_tool_identifiers(accounts, tmp_path, monkeypatch):
     create, _ = accounts
     sessions = chat.SessionMap(tmp_path / "sessions.json")
-    sessions.bind("item", create()["id"])
+    account = create(tested=False)
+    connections.set_default(account['id'])
     history = chat.ConversationHistoryStore(tmp_path / "history.json")
     router = chat.ChatRouter(None, sessions, str(tmp_path), persistent_history=history)
 
     async def stream(run, prompt):
+        assert run.connection["id"] == account["id"]
         yield json.dumps({"type": "message_update", "assistantMessageEvent":
                           {"type": "thinking_delta", "delta": "private thought"}})
         for phase in ("start", "update", "update", "end"):
@@ -359,13 +363,14 @@ def test_pi_missing_policy_never_receives_prompt(accounts, tmp_path):
 
 def test_worker_dispatch_uses_connection_and_retains_legacy_model(accounts, tmp_path, monkeypatch):
     create, _ = accounts
-    c = create()
+    c = create(tested=False)
+    connections.set_default(c['id'])
     seen = []
     async def stream(run, prompt, **kwargs):
         seen.append(run)
         yield json.dumps({'type':'message_end','message':{'role':'assistant','content':[{'type':'text','text':'<task-output>{"status":"success","summary":"Checked"}</task-output>'}]}})
     monkeypatch.setattr(ai_backend,'stream',stream)
-    task = task_config.TaskConfig(id='sample', skill='actor', dir=str(tmp_path), connection=c['id'], harness='cursor', model='legacy-model')
+    task = task_config.TaskConfig(id='sample', skill='actor', dir=str(tmp_path), harness='connection', model='legacy-model')
     status, output, error, session = asyncio.run(scheduler.run_task(task))
     assert status == 'success' and output['summary'] == 'Checked' and not error
     assert seen[0].connection['id'] == c['id'] and seen[0].backend == 'pi'
@@ -592,28 +597,32 @@ def test_system_connection_uses_the_users_own_claude_login(accounts, tmp_path, m
 
 
 def test_system_connection_is_offered_once_and_respects_opt_out(accounts, tmp_path, monkeypatch):
-    offered = connections.offer_system()
+    offered = asyncio.run(connections.offer_system())
     assert offered['auth'] == 'system' and offered['provider'] == 'anthropic'
     assert offered['label'] == 'Claude Code' and not offered['tested']
-    assert connections.offer_system() is None
+    assert asyncio.run(connections.offer_system()) is None
     data = connections.load()
     data['connections'] = [c for c in data['connections'] if c['id'] != offered['id']]
     connections.save(data)
-    assert connections.offer_system() is None
+    assert asyncio.run(connections.offer_system()) is None
     monkeypatch.setattr(connections, 'CONNECTIONS_FILE', tmp_path / 'fresh.json')
     monkeypatch.setattr(ai_runtime, 'find', lambda runtime: '')
-    assert connections.offer_system() is None
+    assert asyncio.run(connections.offer_system()) is None
 
 
-def test_first_successful_test_becomes_default(accounts, monkeypatch):
+@pytest.mark.parametrize('choose_during_test', [False, True])
+def test_successful_test_respects_default(accounts, monkeypatch, choose_during_test):
     c = connections.create({'provider': 'anthropic', 'auth': 'system'})
+    other = accounts[0](tested=False)
     async def stream(run, prompt, **kwargs):
+        if choose_during_test:
+            assert (await app.api_ai_default({'connection': other['id']})).status_code == 200
         nonce = Path(re.search(r'read (\S+\.txt)', prompt).group(1)).read_text()
         yield json.dumps({'type': 'user', 'message': {'content': [{'type': 'tool_result', 'content': nonce}]}}) + '\n'
         yield json.dumps({'type': 'result', 'result': nonce}) + '\n'
     monkeypatch.setattr(ai_backend, 'stream', stream)
     result = asyncio.run(ai_backend.test_connection(c['id']))
-    assert result['tested'] and connections.load()['default'] == c['id']
+    assert result['tested'] and connections.load()['default'] == (other if choose_during_test else c)['id']
 
 
 def test_login_operation_rejected_for_system_connections(accounts, monkeypatch):
@@ -650,7 +659,7 @@ def test_connections_carry_no_model_and_legacy_model_is_ignored(accounts):
 
 def test_system_offer_has_no_model(accounts, tmp_path, monkeypatch):
     monkeypatch.setattr(connections, 'CONNECTIONS_FILE', tmp_path / 'fresh.json')
-    assert 'model' not in connections.offer_system()
+    assert 'model' not in asyncio.run(connections.offer_system())
 
 
 def test_prepare_model_resolution(accounts, tmp_path, monkeypatch):
@@ -875,7 +884,7 @@ def test_connection_workers_pick_a_valid_model(accounts, tmp_path, monkeypatch):
 def test_worker_settings_write_the_connection_model_field(accounts, tmp_path, monkeypatch):
     from test_runner import make_runner
     create, _ = accounts
-    claude, pi = create('anthropic', auth='system'), create('openai')
+    claude, pi = create('anthropic', auth='system', tested=False), create('openai', tested=False)
     connections.set_default(pi['id'])
     tasks_file = tmp_path / 'tasks.yaml'
     tasks_file.write_text('tasks:\n  - id: local\n    skill: skill\n')
@@ -992,8 +1001,9 @@ def test_settings_model_is_saved_and_scoped_to_provider(accounts, monkeypatch):
         assert connections.load() == before
     untested = create(tested=False)
     result = asyncio.run(app.api_ai_default({'connection': untested['id'], 'model': 'gpt-5.4'}))
-    assert result.status_code == 400
-    assert connections.load()['model_choice'] == before['model_choice']
+    assert result.status_code == 200
+    assert connections.get()['id'] == untested['id']
+    assert connections.default_model('openai') == 'gpt-5.4'
 
 
 def test_settings_effort_validates_and_reaches_both_runtimes(accounts, tmp_path, monkeypatch):
@@ -1140,7 +1150,7 @@ def test_latest_install_verifies_download_and_preserves_previous_version(tmp_pat
 
 
 @pytest.mark.parametrize('existing_claude', [False, True])
-def test_first_run_requires_connection_check_before_workspace_setup(accounts, tmp_path, monkeypatch, existing_claude):
+def test_first_run_requires_default_before_workspace_setup(accounts, tmp_path, monkeypatch, existing_claude):
     create, _ = accounts
     monkeypatch.setattr(app.profile, 'load', lambda: app.profile.Profile())
     monkeypatch.setattr(app.paths, 'WORKSPACE', tmp_path)
@@ -1152,7 +1162,7 @@ def test_first_run_requires_connection_check_before_workspace_setup(accounts, tm
     assert card['id'] == board.AI_SETUP_ITEM_ID
     assert card['action_owner'] == 'user'
     assert ('Claude Code' in card['title']) == existing_claude
-    assert 'billable' in card['opening_move']
+    assert 'default account' in card['opening_move']
     assert not router._sessions._connections
     for item in (board.AI_SETUP_ITEM_ID, board.SETUP_ITEM_ID, 'chat:0123456789ab'):
         response = asyncio.run(app.api_board_chat({'item_id':item,'message':'hello'}))
@@ -1168,9 +1178,9 @@ def test_first_run_requires_connection_check_before_workspace_setup(accounts, tm
     ], [], [])
     assert [i['id'] for i in items] == [board.AI_SETUP_ITEM_ID]
     assert items[0]['action_owner'] == 'user'
-    # A failed check keeps the prerequisite. Only a tested default unlocks setup.
+    # Choosing an untested account unlocks setup.
     assert board.setup_item(router)['id'] == board.AI_SETUP_ITEM_ID
-    c = connections.update(c['id'], tested=True) if c else create()
+    c = c or create(tested=False)
     connections.set_default(c['id'])
     assert board.setup_item(router)['id'] == board.SETUP_ITEM_ID
     data = json.loads(asyncio.run(app.api_ai_connections()).body)
@@ -1199,7 +1209,8 @@ def test_claude_detection_runs_before_the_board_and_starts_no_model(accounts, mo
     events = []
     monkeypatch.setattr(app.activity, 'compact', lambda *a: None)
     monkeypatch.setattr(app, 'prune_cursor_session_stores', lambda: None)
-    monkeypatch.setattr(connections, 'offer_system', lambda: events.append('detect'))
+    async def detect(): events.append('detect')
+    monkeypatch.setattr(connections, 'offer_system', detect)
     monkeypatch.setattr(app.runner, 'start', lambda: events.append('runner'))
     async def router(): events.append('router')
     async def stop(): pass
@@ -1265,3 +1276,171 @@ def test_setup_gaps_read_priorities_and_schedule(tmp_path, monkeypatch):
         raise ValueError('bad yaml')
     monkeypatch.setattr(board, 'load_tasks', broken)
     assert board.setup_gaps() == ['your priorities in PRIORITIES.md']
+
+
+@pytest.fixture
+def setup_jobs(monkeypatch):
+    monkeypatch.setattr(ai_settings, 'jobs', {})
+    monkeypatch.setattr(ai_settings, 'job_tasks', {})
+
+
+def test_cancel_before_start_and_stale_cancel_after_retry(accounts, setup_jobs, monkeypatch):
+    key = accounts[0](tested=False)['id']
+    calls = []
+    async def probe(key):
+        calls.append(key)
+        raise ValueError('Diagnostic failed')
+    monkeypatch.setattr(ai_backend, 'test_connection', probe)
+
+    async def exercise():
+        start = {'id': key, 'operation': 'test'}
+        assert (await app.api_ai_operation(start)).status_code == 202
+        first = {'run_id': ai_settings.jobs[key]['run_id']}
+        assert (await app.api_ai_cancel_test(key, first)).status_code == 200
+        assert calls == [] and ai_settings.jobs[key]['status'] == 'interrupted'
+        assert (await app.api_ai_cancel_test(key, first)).status_code == 200
+
+        assert (await app.api_ai_operation(start)).status_code == 202
+        assert (await app.api_ai_cancel_test(key, first)).status_code == 409
+        second = {'run_id': ai_settings.jobs[key]['run_id']}
+        await ai_settings.job_tasks[key]
+        assert (await app.api_ai_cancel_test(key, second)).status_code == 200
+        assert calls == [key] and ai_settings.jobs[key]['status'] == 'error'
+        assert (await app.api_ai_default({'connection': key})).status_code == 200
+        assert ai_backend.connection_available() and connections.get()['id'] == key
+    asyncio.run(exercise())
+
+
+def test_cancel_joins_probe_process_group_and_preserves_other_work(accounts, setup_jobs, tmp_path, monkeypatch):
+    key = accounts[0]('anthropic', auth='system', tested=True)['id']
+    marker = tmp_path / 'pids'
+    binary = tmp_path / 'probe'
+    binary.write_text(f"""#!{sys.executable}
+import os, pathlib, signal, subprocess, sys, time
+child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)'])
+signal.signal(signal.SIGTERM, signal.SIG_IGN)
+pathlib.Path({str(marker)!r}).write_text(f'{{os.getpid()}} {{child.pid}}')
+time.sleep(30)
+""")
+    binary.chmod(0o700)
+    monkeypatch.setattr(ai_runtime, 'find', lambda runtime: str(binary))
+    cleanup_entered, release_cleanup = asyncio.Event(), asyncio.Event()
+    kill_group = ai_backend.kill_group
+    async def delayed_cleanup(proc):
+        cleanup_entered.set()
+        await release_cleanup.wait()
+        await kill_group(proc)
+    monkeypatch.setattr(ai_backend, 'kill_group', delayed_cleanup)
+
+    async def exercise():
+        start = {'id': key, 'operation': 'test'}
+        other = await asyncio.create_subprocess_exec(sys.executable, '-c', 'import time; time.sleep(30)',
+                                                      start_new_session=True)
+        ai_backend.LIVE_PROCESSES.add(other)
+        try:
+            async with asyncio.timeout(8):
+                await app.api_ai_operation(start)
+                while not marker.exists() or not marker.read_text():
+                    await asyncio.sleep(.01)
+                run = {'run_id': ai_settings.jobs[key]['run_id']}
+                cancel = asyncio.create_task(app.api_ai_cancel_test(key, run))
+                await cleanup_entered.wait()
+                repeat = asyncio.create_task(app.api_ai_cancel_test(key, run))
+                await asyncio.sleep(0)
+                assert ai_settings.jobs[key]['status'] == 'running'
+                assert (await app.api_ai_operation(start)).status_code == 409
+                release_cleanup.set()
+                assert all(r.status_code == 200 for r in await asyncio.gather(cancel, repeat))
+                assert ai_settings.jobs[key]['status'] == 'interrupted'
+                assert connections.get(key)['tested']
+                assert not ai_backend.ACTIVE_CONNECTIONS[key]
+                assert other.returncode is None and other in ai_backend.LIVE_PROCESSES
+                for pid in map(int, marker.read_text().split()):
+                    while True:
+                        try:
+                            os.kill(pid, 0)
+                        except ProcessLookupError:
+                            break
+                        await asyncio.sleep(.01)
+        finally:
+            release_cleanup.set()
+            ai_backend.LIVE_PROCESSES.discard(other)
+            await kill_group(other)
+    asyncio.run(exercise())
+
+
+@pytest.mark.parametrize('operation', ['install', 'login'])
+def test_only_tests_can_be_cancelled(setup_jobs, operation):
+    ai_settings.jobs['other'] = {'status':'running', 'operation':operation, 'run_id':'current'}
+    response = asyncio.run(app.api_ai_cancel_test('other', {'run_id':'current'}))
+    assert response.status_code == 409 and ai_settings.jobs['other']['status'] == 'running'
+
+
+def test_account_choice_without_catalogue_and_chat_binding(accounts, tmp_path, monkeypatch):
+    key = accounts[0]('anthropic', auth='system', tested=False)['id']
+    sessions = chat.SessionMap(tmp_path / 'sessions.json')
+    router = chat.ChatRouter(None, sessions, str(tmp_path))
+    monkeypatch.setattr(app, 'chat_router', router)
+    def unavailable(*args, **kwargs):
+        pytest.fail('Account selection attempted model discovery or a diagnostic')
+    monkeypatch.setattr(app, 'validate_model', unavailable)
+    monkeypatch.setattr(connections, 'default_model', unavailable)
+    monkeypatch.setattr(ai_backend, 'test_connection', unavailable)
+    assert asyncio.run(app.api_ai_default({'connection': key})).status_code == 200
+    body = {'connection': key, 'item_id':'test-chat'}
+    assert asyncio.run(app.api_ai_chat_connection(body)).status_code == 200
+    assert sessions.connection('test-chat') == key
+    connections.update(key, connected=False)
+    assert asyncio.run(app.api_ai_chat_connection(body)).status_code == 400
+    assert asyncio.run(app.api_ai_default({'connection': key})).status_code == 400
+
+def test_detecting_claude_during_explicit_default_choice(accounts, monkeypatch):
+    other = accounts[0](tested=False)
+    searching, proceed = threading.Event(), threading.Event()
+    def find(runtime):
+        searching.set()
+        assert proceed.wait(5)
+        return '/managed/claude'
+    monkeypatch.setattr(ai_runtime, 'find', find)
+
+    async def exercise():
+        detect = asyncio.create_task(connections.offer_system())
+        try:
+            assert await asyncio.to_thread(searching.wait, 5)
+            connections.set_default(other['id'])
+        finally:
+            proceed.set()
+        assert (await detect)['auth'] == 'system'
+        assert connections.get()['id'] == other['id']
+    asyncio.run(exercise())
+
+
+def test_cancel_while_subprocess_transport_is_starting(monkeypatch):
+    created, deliver = asyncio.Event(), asyncio.Event()
+    spawn = asyncio.create_subprocess_exec
+    children = []
+    async def slow_spawn(*args, **kwargs):
+        children.append(await spawn(*args, **kwargs))
+        created.set()
+        await deliver.wait()
+        return children[0]
+    monkeypatch.setattr(asyncio, 'create_subprocess_exec', slow_spawn)
+    async def exercise():
+        task = asyncio.create_task(ai_backend.spawn_group(sys.executable, '-c', 'import time; time.sleep(30)'))
+        try:
+            await asyncio.wait_for(created.wait(), 3)
+            task.cancel()
+            await asyncio.sleep(0)
+            assert not task.done()
+            deliver.set()
+            with pytest.raises(asyncio.CancelledError):
+                await asyncio.wait_for(task, 3)
+            assert children[0].returncode is not None
+            with pytest.raises(ProcessLookupError):
+                os.kill(children[0].pid, 0)
+        finally:
+            deliver.set()
+            for child in children:
+                if child.returncode is None:
+                    await ai_backend.kill_group(child)
+    asyncio.run(exercise())

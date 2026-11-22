@@ -99,10 +99,10 @@ starting `assistant/` are under the workspace's `.roosta/state/`. Also see
 
 `setup_item()` first checks whether workspace setup is pending (an empty profile or an existing
 setup conversation). It offers the deterministic `roosta-ai-setup` card until the default named
-account is connected, tested and has installed software and a model when its provider requires one. A detected system Claude Code account
+account is connected and has installed software and a model when its provider requires one. A detected system Claude Code account
 explains login reuse; otherwise the card asks the user to connect AI. Its fixed Settings link needs
 no model, and the page hides its composer and Close/Not now controls. The disclosed connection check
-is an explicit Settings action. `/api/ai/connections.workspace_setup_ready` lets Settings show Continue workspace setup, a page-level notice above Your AI, only when the prerequisite
+is optional. `/api/ai/connections.workspace_setup_ready` lets Settings show Continue workspace setup, a page-level notice above Your AI, only when the prerequisite
 is satisfied, `roosta-setup` is not yet handled and `workspace_setup_missing` lists a concrete gap (name in PROFILE.md, an item under `## My priorities`, or no tasks; see `setup_gaps()`), which the notice names; the board then replaces the AI card with `roosta-setup`. Only this prerequisite pane
 auto-advances when its source disappears. Cached/model items cannot replace either reserved setup id.
 New first-run chats and stale setup requests return a Settings destination before creating a session

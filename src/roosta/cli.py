@@ -259,12 +259,14 @@ def _service_arguments(arguments: list[str]) -> tuple[str | None, int | None]:
 
 def _probe(argv: list[str]) -> bool | None:
     try:
-        return subprocess.run(argv, capture_output=True, timeout=5, check=False).returncode == 0
+        # Resolve OS service utilities on the system path when called from a workspace.
+        return subprocess.run(argv, env={**os.environ, "PATH": os.defpath}, capture_output=True,
+                              timeout=5, check=False).returncode == 0
     except (OSError, subprocess.SubprocessError):
         return None
 
 
-def service_status(workspace: Path) -> dict:
+def service_status(workspace: Path, *, probe: bool = True) -> dict:
     """What `roosta service install` left behind for this platform, and whether it is running."""
     system = platform.system()
     status = {"supported": system in ("Darwin", "Linux"), "platform": {"Darwin": "macos", "Linux": "linux"}.get(system, "other"),
@@ -288,6 +290,8 @@ def service_status(workspace: Path) -> dict:
     except (ValueError, AttributeError, plistlib.InvalidFileException):
         arguments = []
     status["workspace"], status["port"] = _service_arguments(arguments)
+    if not probe:
+        return status
     status["active"] = _probe(["launchctl", "list", LAUNCHD_LABEL] if system == "Darwin"
                               else ["systemctl", "--user", "is-active", "--quiet", "roosta"])
     return status
@@ -323,6 +327,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--version", action="version", version=f"roosta {__version__}")
     sub = parser.add_subparsers(dest="command", required=True)
 
+    update = sub.add_parser("update", help="upgrade this installation to the latest stable release")
+    update.add_argument("--check", action="store_true", help="preview the update")
+    doctor = sub.add_parser("doctor", help="check this installation and workspace")
+    doctor.add_argument("--workspace", type=Path)
+    doctor.add_argument("--json", action="store_true", help="print a structured report")
+    doctor.add_argument("--offline", action="store_true", help="skip network and local endpoint probes")
+
     p_init = sub.add_parser("init", help="create a workspace, or convert an existing folder")
     p_init.add_argument("directory", nargs="?", default=".")
     p_init.add_argument("--no-git", action="store_true", help="skip Git repository creation")
@@ -351,6 +362,16 @@ def main(argv: list[str] | None = None) -> int:
     p_usage.add_argument("--days", type=int, default=14)
 
     args = parser.parse_args(argv)
+    if args.command == "update":
+        try:
+            from roosta.cli_update import update
+        except (ImportError, ValueError, OSError, RuntimeError):
+            print("Cannot load the updater. Run roosta doctor --offline to check this installation.")
+            return 1
+        return update(args.check)
+    if args.command == "doctor":
+        from roosta.doctor import doctor
+        return doctor(args.workspace, args.json, args.offline)
     if args.command == "init":
         return init(Path(args.directory), adopt=args.adopt, check=not args.skip_checks, initialise_git=not args.no_git)
     if args.command == "start":

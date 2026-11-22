@@ -36,7 +36,7 @@ workspace setup, or adopt a folder of documents. Cancelling leaves the folder un
 
 ### Set up your office
 
-1. **Connect your AI.** On a fresh workspace, the board offers **Connect your AI**, or **Check your Claude Code connection** if Claude Code is already installed. Open 'AI settings' to check that login or connect another account and install its software. The first account that passes the check becomes the default.
+1. **Connect your AI.** On a fresh workspace, the board offers **Connect your AI**, or **Choose your Claude Code account** if Claude Code is already installed. Open AI settings to select **Use as default** on that account, or connect another account and install its software.
 2. **Tell Roosta about your work.** Choose **Continue workspace setup**, then open **Set up your workspace** on the board. Roosta helps you describe your priorities, projects and tools, sets up a starter schedule and creates your first board card.
 3. **Build your team.** Open Workers and choose **New worker** to describe a job. Each worker runs a named skill on a schedule; chat with it to refine the job, and see it in the Office.
 
@@ -53,6 +53,18 @@ roosta start                      # http://127.0.0.1:7667/assistant (7667: R-O-O
 ```
 
 Connect your AI and follow the setup steps above. Run Roosta in the background with `roosta service install` (launchd on macOS, systemd on Linux). Settings also covers the workspace, address, background service and core-skills sync, without a terminal. Converting a folder of notes you already have? `roosta init --adopt <folder>` adds Roosta without touching your files.
+
+### Updating and diagnosing Python installations
+
+Run `roosta update --check` to preview the latest stable GitHub release. Run `roosta update` to install it in the environment that supplied this CLI. Python upgrades require a matching, non-yanked wheel on PyPI for your Python version. A current or newer CLI stays in place. Roosta uses the owning uv tool or pipx installation, or the original pip or uv installer in a standalone virtual environment. Source checkouts, bundled apps and installations whose owner cannot be identified receive manual update instructions. After an upgrade, restart the runner serving your workspace and run `roosta skills sync --workspace <folder>` to refresh its core skills.
+
+Run `roosta doctor` for a read-only report. Workspace selection follows `--workspace <folder>`, `ROOSTA_WORKSPACE`, the saved configuration, then the current directory. Use `--offline` to skip the public release and local runner requests, and `--json` for structured checks and counts.
+
+```sh
+roosta doctor --workspace ~/workspace --offline --json
+```
+
+Doctor checks installation and runtime availability, configuration, worker skills and directories, core skill drift, and the local runner. Account and connector checks inspect configuration only. To verify sign-in, use AI Settings or the connector's own login check. Warnings and skipped optional features leave the exit status at zero. A blocking failure returns 1.
 
 ## Inside your office
 
@@ -125,8 +137,8 @@ model and its supported reasoning effort, or **Change AI or manage accounts** to
 account. Each account records its provider and billing route; model choice is saved separately.
 API keys live in the OS credential store (Keychain on macOS). Account sign-in credentials stay in
 Claude Code's or Pi's authentication storage; Roosta can also use your existing Claude Code login.
-The connection test makes one small billable request and proves a safe local file read before an
-account can become the default.
+Choose **Use as default** on any connected account. The optional connection test makes one small
+billable request to check that the model can read a temporary file. Choose **Cancel test** to stop it.
 
 Anthropic models run through the unmodified Claude Code runtime. OpenAI, non-Anthropic OpenRouter
 models and local Ollama models run through Pi. Anthropic models on OpenRouter are rejected: choose

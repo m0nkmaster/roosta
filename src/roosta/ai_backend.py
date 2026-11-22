@@ -81,7 +81,7 @@ def unavailable_message(backend: str | None = None) -> str:
             connections.get()
         except ValueError as exc:
             return str(exc)
-        return "Test or repair your AI connection in Settings"
+        return "Install or repair the software for your AI connection in Settings"
     if (backend or current()) == CLAUDE:
         return "Claude Code CLI unavailable: install it and run `claude` once to sign in"
     binary = cursor_agent.CURSOR_AGENT
@@ -131,7 +131,7 @@ class AIAgent:
     async def create_session(self) -> str:
         return await create_session(self.workspace, current())
 
-# Legacy configuration remains untouched until a tested connection is explicitly selected.
+# Legacy configuration remains untouched until a connection is explicitly selected.
 ACTIVE_CONNECTIONS = Counter()
 LIVE_PROCESSES = set()
 
@@ -146,6 +146,7 @@ class ConnectionRun:
     session_id: str = ""
     secret: str = field(default="", repr=False)
     model: str = ""
+    probe: bool = False
 
     def text(self, output: str) -> str:
         return (claude_code.claude_result_text if self.backend == CLAUDE else pi_agent.result_text)(output)
@@ -248,7 +249,7 @@ def default_connection() -> str:
 def connection_available(connection_id: str = "") -> bool:
     try:
         connection = connections.get(connection_id)
-        return bool(connection.get("tested") and ai_runtime.find(connections.engine(connection["provider"])))
+        return bool(ai_runtime.find(connections.engine(connection["provider"])))
     except ValueError:
         return False
 
@@ -332,8 +333,6 @@ def _private_json(path: Path, value: dict) -> None:
 
 def prepare(connection_id: str, workspace: str, *, model: str = "", session_id: str = "", profile: str = "safe", probe: bool = False, subject: str = "chat") -> ConnectionRun:
     connection = connections.get(connection_id)
-    if not probe and not connection.get("tested"):
-        raise ValueError("Test this connection in Settings before using it")
     model = model or connections.default_model(connection["provider"])
     if not model and connection["provider"] != "anthropic":
         raise ValueError("Choose a model in Settings" if subject == "chat"
@@ -407,7 +406,26 @@ def prepare(connection_id: str, workspace: str, *, model: str = "", session_id: 
             args.extend(["--thinking", effort])
         if probe:
             args.extend(["--no-mcp", "--no-context-files", "--tools", "read"])
-    return ConnectionRun(connection, backend, args, env, workspace, sid, secret, model)
+    return ConnectionRun(connection, backend, args, env, workspace, sid, secret, model, probe)
+
+
+async def kill_group(proc) -> None:
+    # The leader can exit while a descendant still holds the output pipes.
+    try:
+        os.killpg(proc.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+    await proc.communicate()  # Drain any buffered pipes before waiting for transport shutdown.
+
+
+async def spawn_group(*args, **kwargs):
+    # Keep ownership if cancellation arrives between fork and transport creation.
+    spawning = asyncio.create_task(asyncio.create_subprocess_exec(*args, start_new_session=True, **kwargs))
+    try:
+        return await asyncio.shield(spawning)
+    except asyncio.CancelledError:
+        await kill_group(await spawning)
+        raise
 
 
 async def kill(proc) -> None:
@@ -457,9 +475,9 @@ async def stream(run: ConnectionRun, prompt: str, *, idle: float = 300, maximum:
     stderr_task = None
     chunks, errors = [], []
     try:
-        proc = await asyncio.create_subprocess_exec(*run.args, cwd=run.workspace, env=run.env,
+        proc = await spawn_group(*run.args, cwd=run.workspace, env=run.env,
             stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
-            start_new_session=True, limit=16 * 1024 * 1024)
+            limit=16 * 1024 * 1024)
         LIVE_PROCESSES.add(proc)
         async def drain():
             while chunk := await proc.stderr.read(65536):
@@ -525,28 +543,49 @@ async def stream(run: ConnectionRun, prompt: str, *, idle: float = 300, maximum:
             diagnostic = run.redact(failure or b"".join(errors).decode(errors="replace") or stdout)
             raise ValueError(repair_message(diagnostic))
     finally:
-        ACTIVE_CONNECTIONS[run.connection["id"]] -= 1
-        await terminate(proc)
-        LIVE_PROCESSES.discard(proc)
-        if stderr_task is not None and not stderr_task.done():
-            stderr_task.cancel()
-            await asyncio.gather(stderr_task, return_exceptions=True)
+        async def cleanup():
+            if run.probe and proc is not None:
+                if stderr_task is not None:
+                    stderr_task.cancel()
+                    await asyncio.gather(stderr_task, return_exceptions=True)
+                await kill_group(proc)
+            else:
+                await terminate(proc)
+                if stderr_task is not None and not stderr_task.done():
+                    stderr_task.cancel()
+                    await asyncio.gather(stderr_task, return_exceptions=True)
+        try:
+            await _join_on_cancel(cleanup())
+        finally:
+            ACTIVE_CONNECTIONS[run.connection["id"]] -= 1
+            LIVE_PROCESSES.discard(proc)
+
+
+async def _join_on_cancel(work):
+    # Cancellation must join cleanup and bounded offline lookups before releasing the job.
+    task = asyncio.create_task(work)
+    try:
+        return await asyncio.shield(task)
+    except asyncio.CancelledError:
+        await asyncio.gather(task, return_exceptions=True)
+        raise
 
 
 async def _first_model(provider: str) -> str:
     """A model to probe with when the harness reports no default: the first one it lists."""
     if provider == "ollama":
         from roosta.opencode_ollama import OLLAMA, opencode_ollama_env, parse_ollama_models
-        proc = await asyncio.create_subprocess_exec(OLLAMA, "list", env=opencode_ollama_env(),
+        proc = await spawn_group(OLLAMA, "list", env=opencode_ollama_env(),
             stdin=asyncio.subprocess.DEVNULL, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
         try:
             stdout, _ = await asyncio.wait_for(proc.communicate(), 20)
         except (asyncio.TimeoutError, OSError):
-            await terminate(proc)
             stdout = b""
+        finally:
+            await kill_group(proc)
         models = [m["id"] for m in parse_ollama_models(stdout.decode(errors="replace"))]
     else:
-        models = [m for m in await asyncio.to_thread(ai_runtime.model_catalog, provider)
+        models = [m for m in await _join_on_cancel(asyncio.to_thread(ai_runtime.model_catalog, provider))
                   if _acceptable(provider, m)]
     if not models:
         raise ValueError("No models are available for this connection; install or download one first")
@@ -568,10 +607,10 @@ async def test_connection(connection_id: str) -> dict:
         test_file = Path(temporary) / "connection-test.txt"
         test_file.write_text(nonce)
         connection = connections.get(connection_id)
-        model = connections.default_model(connection["provider"])
+        model = await _join_on_cancel(asyncio.to_thread(connections.default_model, connection["provider"]))
         if not model and connection["provider"] != "anthropic":
             model = await _first_model(connection["provider"])
-        run = prepare(connection_id, temporary, model=model, probe=True)
+        run = await _join_on_cancel(asyncio.to_thread(prepare, connection_id, temporary, model=model, probe=True))
         output = "".join([line async for line in stream(run,
             f"Use the read tool to read {test_file}. Reply with only the file contents. Do not run any other tool.",
             idle=90, maximum=120)])
