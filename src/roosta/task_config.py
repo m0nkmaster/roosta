@@ -99,30 +99,8 @@ class TaskState:
 
 def skill_files(skill: str, working_dir: str | Path) -> list[Path]:
     """Existing SKILL.md files for a skill, in the order the runner prefers them."""
-    if not re.fullmatch(r"[A-Za-z0-9._-]{1,100}", skill) or skill in {".", ".."}:
-        return []
-    # SECURITY-REVIEW: working_dir is trusted local task configuration; the
-    # allowlisted skill name prevents path traversal outside known skill roots.
-    work_root = Path(working_dir).expanduser()
-    # The workspace wins over the user's global skills, which win over the core skills
-    # Roosta ships.
-    roots = [
-        work_root / ".agents" / "skills",
-        work_root / ".claude" / "skills",
-        work_root / ".cursor" / "skills",
-        paths.WORKSPACE / ".agents" / "skills",
-        paths.WORKSPACE / ".claude" / "skills",
-        Path.home() / ".agents" / "skills",
-        Path.home() / ".cursor" / "skills",
-        Path.home() / ".claude" / "skills",
-        paths.CORE_SKILLS_DIR,
-    ]
-    files: list[Path] = []
-    for root in roots:
-        candidate = root / skill / "SKILL.md"
-        if candidate not in files and candidate.is_file():
-            files.append(candidate)
-    return files
+    from roosta.skills import find_skill_files
+    return find_skill_files(skill, working_dir, paths.WORKSPACE, paths.CORE_SKILLS_DIR)
 
 
 def skill_description(skill: str, working_dir: str | Path) -> str:

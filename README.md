@@ -54,6 +54,18 @@ roosta start                      # http://127.0.0.1:7667/assistant (7667: R-O-O
 
 Connect your AI and follow the setup steps above. Run Roosta in the background with `roosta service install` (launchd on macOS, systemd on Linux). Settings also covers the workspace, address, background service and core-skills sync, without a terminal. Converting a folder of notes you already have? `roosta init --adopt <folder>` adds Roosta without touching your files.
 
+### Updating and diagnosing Python installations
+
+Run `roosta update --check` to preview the latest stable GitHub release. Run `roosta update` to install it in the environment that supplied this CLI. Python upgrades require a matching, non-yanked wheel on PyPI for your Python version. A current or newer CLI stays in place. Roosta uses the owning uv tool or pipx installation, or the original pip or uv installer in a standalone virtual environment. Source checkouts, bundled apps and installations whose owner cannot be identified receive manual update instructions. After an upgrade, restart the runner serving your workspace and run `roosta skills sync --workspace <folder>` to refresh its core skills.
+
+Run `roosta doctor` for a read-only report. Workspace selection follows `--workspace <folder>`, `ROOSTA_WORKSPACE`, the saved configuration, then the current directory. Use `--offline` to skip the public release and local runner requests, and `--json` for structured checks and counts.
+
+```sh
+roosta doctor --workspace ~/workspace --offline --json
+```
+
+Doctor checks installation and runtime availability, configuration, worker skills and directories, core skill drift, and the local runner. Account and connector checks inspect configuration only. To verify sign-in, use AI Settings or the connector's own login check. Warnings and skipped optional features leave the exit status at zero. A blocking failure returns 1.
+
 ## Inside your office
 
 The Assistant board brings together what needs you now. Workers handle recurring jobs; the Office shows the team at work. Ask Roosta to build custom pages when you need another view of your work.

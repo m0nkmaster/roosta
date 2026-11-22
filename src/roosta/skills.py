@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -19,13 +20,13 @@ LOCK_NAME = "skills.lock.json"
 IGNORED = {".DS_Store", "__pycache__"}
 
 
-def tree_hash(root: Path) -> str:
+def tree_hash(root: Path, *, read=Path.read_bytes) -> str:
     digest = hashlib.sha256()
     for path in sorted(p for p in root.rglob("*") if p.is_file()):
         relative = path.relative_to(root)
         if IGNORED.intersection(relative.parts):
             continue
-        digest.update(relative.as_posix().encode() + b"\0" + path.read_bytes() + b"\0")
+        digest.update(relative.as_posix().encode() + b"\0" + read(path) + b"\0")
     return digest.hexdigest()
 
 
@@ -99,3 +100,30 @@ def sync(core: Path, workspace: Path) -> SyncReport:
     lock_path.write_text(json.dumps({"roosta": __version__, "skills": skills}, indent=2) + "\n",
                          encoding="utf-8")
     return report
+
+
+def find_skill_files(skill: str, working_dir: str | Path, workspace: Path, core: Path) -> list[Path]:
+    if not re.fullmatch(r"[A-Za-z0-9._-]{1,100}", skill) or skill in {".", ".."}:
+        return []
+    # SECURITY-REVIEW: working_dir is trusted local task configuration; the
+    # allowlisted skill name prevents path traversal outside known skill roots.
+    work_root = Path(working_dir).expanduser()
+    # The workspace wins over the user's global skills, which win over the core skills
+    # Roosta ships.
+    roots = [
+        work_root / ".agents" / "skills",
+        work_root / ".claude" / "skills",
+        work_root / ".cursor" / "skills",
+        workspace / ".agents" / "skills",
+        workspace / ".claude" / "skills",
+        Path.home() / ".agents" / "skills",
+        Path.home() / ".cursor" / "skills",
+        Path.home() / ".claude" / "skills",
+        core,
+    ]
+    files: list[Path] = []
+    for root in roots:
+        candidate = root / skill / "SKILL.md"
+        if candidate not in files and candidate.is_file():
+            files.append(candidate)
+    return files

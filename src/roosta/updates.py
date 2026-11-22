@@ -54,7 +54,7 @@ def installation():
             return "unknown"
         receipt = prefix / "uv-receipt.toml"
         pipx = prefix / "pipx_metadata.json"
-        if receipt.exists() and pipx.exists():
+        if receipt.is_symlink() or pipx.is_symlink() or (receipt.exists() and pipx.exists()):
             return "unknown"
         if receipt.exists():
             requirements = tomllib.loads(receipt.read_text())["tool"]["requirements"]
@@ -62,15 +62,19 @@ def installation():
         if pipx.exists():
             main = json.loads(pipx.read_text())["main_package"]
             return "pipx" if main["package"] == "roosta" and not main.get("suffix") else "unknown"
-        return "venv" if util.find_spec("pip") else "unknown"
-    except (OSError, ValueError, KeyError, TypeError, AttributeError, IndexError, metadata.PackageNotFoundError):
+        if (prefix / "conda-meta").exists():
+            return "unknown"
+        if util.find_spec("pip"):
+            return "venv"
+        return "uv-venv" if (dist.read_text("INSTALLER") or "").strip() == "uv" else "unknown"
+    except (OSError, ValueError, KeyError, TypeError, AttributeError, IndexError, RuntimeError, metadata.PackageNotFoundError):
         return "unknown"
 
 
 def compatible_package(data, version):
     info = data["info"]
     python = platform.python_version()
-    return (info["name"] == "roosta" and info["version"] == version
+    return (info["name"] == "roosta" and info["version"] == version and info.get("yanked", False) is False
             and python in SpecifierSet(info["requires_python"])
             and any(file["filename"] == f"roosta-{version}-py3-none-any.whl"
                     and file["yanked"] is False
@@ -78,13 +82,23 @@ def compatible_package(data, version):
                     for file in data["urls"]))
 
 
-async def check():
+async def stable_release():
     release = await read_json(LATEST)  # GitHub excludes drafts and prereleases here.
     tag = release["tag_name"]
     if (release["draft"] is not False or release["prerelease"] is not False
             or not re.fullmatch(r"v(?:0|[1-9][0-9]{0,8})(?:\.(?:0|[1-9][0-9]{0,8})){2}", tag)):
         raise ValueError("Unexpected stable release")
-    version = tag[1:]
+    return tag[1:], release
+
+
+async def python_release(version):
+    data = await read_json(f"https://pypi.org/pypi/roosta/{version}/json")
+    return compatible_package(data, version)
+
+
+async def check():
+    version, release = await stable_release()
+    tag = release["tag_name"]
     if Version(version) <= Version(__version__):
         return {"state": "current"}
     result = {"state": "available", "latest": version, "notes": f"{RELEASES}/tag/{tag}"}
@@ -103,7 +117,7 @@ async def check():
                               "and update it using that checkout’s development workflow.")
     else:
         try:
-            compatible = compatible_package(await read_json(f"https://pypi.org/pypi/roosta/{version}/json"), version)
+            compatible = await python_release(version)
         except CHECK_ERRORS:
             compatible = False
         if not compatible:
@@ -111,6 +125,8 @@ async def check():
         else:
             commands = {"uv": "uv tool upgrade roosta", "pipx": "pipx upgrade roosta",
                         "venv": f"{shlex.quote(sys.executable)} -m pip install --upgrade roosta"}
+            if kind == "uv-venv":
+                commands[kind] = f"uv pip install --python {shlex.quote(sys.executable)} --upgrade roosta"
             if kind in commands:
                 result["guidance"] = (f"Update the Python installation at {sys.prefix}. Use the same "
                                       "tool directory and environment used to install Roosta.")

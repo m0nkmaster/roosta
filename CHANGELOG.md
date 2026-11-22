@@ -4,6 +4,8 @@ Record each release newest first. Bump minor for features and visible behaviour,
 
 ## 0.15.0 - 2026-11-22
 
+- Use roosta update to check for and install a compatible stable release in the current Python installation.
+- Use roosta doctor to diagnose installation, workspace and runner issues with offline and JSON reporting options.
 - Skip cmux terminal-specific Claude wrappers when finding AI software, so Roosta uses a direct Claude installation instead.
 - Choose a connected AI account as default immediately, including while its optional connection test runs. Settings lets you cancel the test and keeps account controls available while model choices load.
 
