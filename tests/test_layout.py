@@ -11,8 +11,8 @@ from chrome_probe import run_probe
 STATIC = Path(__file__).parents[1] / 'src/roosta/static'
 
 
-@pytest.mark.parametrize('name,width,height', [('settings', 1600, 600), ('assistant', 650, 400)])
-def test_page_fills_width_and_bottom_controls_remain_reachable(tmp_path, name, width, height):
+@pytest.fixture
+def chrome():
     chrome = shutil.which('google-chrome') or shutil.which('chromium') or shutil.which('chromium-browser')
     if not chrome:
         mac = Path('/Applications/Google Chrome.app/Contents/MacOS/Google Chrome')
@@ -20,6 +20,11 @@ def test_page_fills_width_and_bottom_controls_remain_reachable(tmp_path, name, w
             chrome = str(mac)
     if not chrome:
         pytest.skip('Chrome or Chromium is required for layout checks')
+    return chrome
+
+
+@pytest.mark.parametrize('name,width,height', [('settings', 1600, 600), ('assistant', 650, 400)])
+def test_page_fills_width_and_bottom_controls_remain_reachable(chrome, tmp_path, name, width, height):
     source = (STATIC / f'{name}.html').read_text()
     source = re.sub(r'<script\b[^>]*>[\s\S]*?</script>', '', source, flags=re.I)
     source = source.replace('/static/', STATIC.as_uri() + '/')
@@ -59,3 +64,64 @@ document.body.appendChild(output);
     else:
         assert result['composerBottom'] <= result['height'] + 1, result
         assert result['logHeight'] > 0 and abs(result['logRemaining']) <= 1, result
+
+
+def test_chat_code_copy_after_rerender(chrome, tmp_path):
+    assistant = (STATIC / 'assistant.html').read_text()
+    page_html = re.sub(r'<script\b[^>]*>[\s\S]*?</script>', '', assistant, flags=re.I)
+    renderer = assistant[assistant.index('const esc='):assistant.index('const ctas=')]
+    listener = assistant[assistant.index("markdownCopy.watch("):assistant.index('function showDocPane')]
+    # Supply parsed Markdown locally. Exercise Roosta's sanitizer and clipboard event path.
+    probe = r"""
+const marked = {parse: source => source};
+let copied = [];
+function copyEvent() {
+  const event = new Event('copy', {bubbles:true, cancelable:true});
+  event.clipboardData = {setData: (type, text) => copied.push(text)};
+  document.dispatchEvent(event);
+  return event.defaultPrevented;
+}
+document.execCommand = command => command === 'copy' && copyEvent();
+const pane = document.getElementById('pane');
+pane.innerHTML = '<article class="msg ai"><div class="who">Assistant</div><div class="bubble"></div></article><textarea></textarea>';
+const bubble = pane.querySelector('.bubble');
+const sample = '<p>Example</p><pre><code class="language-js" onclick="oops()">  &lt;x&gt; &amp; `v`\\n\t  \n\n' +
+  'x'.repeat(200) + '\n</code></pre>';
+bubble.innerHTML = md('<pre><code>partial</code></pre>');
+bubble.innerHTML = md(sample + '<pre><code>second</code></pre><button class="copy-code">fake</button>');
+const buttons = bubble.querySelectorAll('button');
+const code = bubble.querySelector('code');
+buttons[0].focus();
+const focusable = document.activeElement === buttons[0];
+buttons[0].querySelector('svg').dispatchEvent(new MouseEvent('click', {bubbles:true}));
+buttons[1].click();
+const range = document.createRange();
+range.setStart(code.firstChild, 0);
+range.setEnd(code.firstChild, 4);
+window.getSelection().removeAllRanges();
+window.getSelection().addRange(range);
+copyEvent();
+pane.querySelector('textarea').focus();
+const nativeInput = !copyEvent();
+const bounds = buttons[0].getBoundingClientRect();
+const pre = code.parentElement;
+const result = {
+  count: buttons.length, label: buttons[0].getAttribute('aria-label'), focusable,
+  sanitized: !code.attributes.length, copied, nativeInput,
+  fits: pre.scrollWidth > pre.clientWidth && bounds.left >= pre.getBoundingClientRect().right &&
+    bounds.right <= document.documentElement.clientWidth
+};
+const output = document.createElement('pre');
+output.id = 'code-result';
+output.textContent = JSON.stringify(result);
+document.body.append(output);
+"""
+    scripts = '<script>' + '\n'.join([(STATIC / 'markdown-copy.js').read_text(), renderer, listener, probe]) + '</script>'
+    page = tmp_path / 'chat-copy.html'
+    page.write_text(page_html.replace('/static/', STATIC.as_uri() + '/').replace('</body>', scripts + '</body>'))
+    result = run_probe(chrome, page, 520, 600, 'code-result')
+    assert result == {
+        'count': 2, 'label': 'Copy code', 'focusable': True, 'sanitized': True,
+        'copied': ['  <x> & `v`\\n\t  \n\n' + 'x' * 200 + '\n', 'second', '  <x'],
+        'nativeInput': True, 'fits': True,
+    }

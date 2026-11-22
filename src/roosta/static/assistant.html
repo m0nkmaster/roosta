@@ -132,6 +132,9 @@
   .md h1,.md h2,.md h3,.md h4,.bubble h1,.bubble h2,.bubble h3,.bubble h4{font-size:1rem;line-height:1.4;margin:.75rem 0 .35rem}
   .md code,.bubble code{background:var(--console-tint);border:1px solid var(--console-tint);border-radius:4px;padding:.05rem .3rem;font-size:.85em;color:var(--console-code)}
   .md pre,.bubble pre{background:var(--canvas);border:1px solid var(--line);border-radius:6px;padding:.8rem;overflow:auto}
+  .code-block{display:flex;align-items:flex-start;gap:.25rem;margin:.75rem 0}
+  .code-block pre{flex:1;min-width:0;margin:0}
+  .copy-code{flex:none}
   .md pre code,.bubble pre code{background:none;border:0;padding:0;color:inherit}
   .md table,.bubble table{display:block;max-width:100%;overflow:auto;border-collapse:collapse;margin:.75rem 0;font-size:.8125rem}
   .md th,.md td,.bubble th,.bubble td{border:1px solid var(--line);padding:.45rem .6rem;text-align:left;vertical-align:top}
@@ -267,10 +270,10 @@ function vaultMarkdownPath(text){
   const parts=path.split('/');
   return parts.some(part=>!part||part==='.'||part==='..')?'':path;
 }
-function md(source){
+function md(source,copyBlocks=true){
   try{
     const template=document.createElement('template');
-    template.innerHTML=marked.parse(String(source||'').replace(/\\n/g,'\n'));
+    template.innerHTML=marked.parse(String(source||''));
     [...template.content.querySelectorAll('*')].forEach(element=>{
       if(!allowedMarkdownTags.has(element.tagName)){
         element.replaceWith(document.createTextNode(element.textContent||''));
@@ -300,6 +303,17 @@ function md(source){
       link.textContent=element.textContent;
       element.replaceWith(link);
     });
+    if(copyBlocks) template.content.querySelectorAll('pre').forEach(pre=>{
+      if(!pre.querySelector(':scope > code')) return;
+      const block=document.createElement('div');
+      block.className='code-block';
+      block.innerHTML='<button type="button" class="btn btn-icon btn-sm btn-ghost-secondary copy-code" aria-label="Copy code" title="Copy code">'
+        +'<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">'
+        +'<rect x="8" y="8" width="12" height="13" rx="2"/>'
+        +'<path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3"/></svg></button>';
+      pre.replaceWith(block);
+      block.prepend(pre);
+    });
     return template.innerHTML;
   }catch(error){ return esc(source).replace(/\n/g,'<br>'); }
 }
@@ -311,7 +325,7 @@ const documentHref=(path,itemId)=>{
   return href;
 };
 const visibleReply=s=>String(s||'').replace(
-  /<<<(STATE|PAUSE|DEFER|REMIND|DONE|ERROR)>>>[\s\S]*$/,'').trimEnd();
+  /<<<(STATE|PAUSE|DEFER|REMIND|DONE|ERROR)>>>[\s\S]*$/,'');
 const ctas=(links,documents,itemId)=>{
   const external=(links||[]).map(l=>
     `<a class="cta" href="${escAttr(l.url)}" target="_blank" rel="noopener">${esc(l.label)}&nbsp;↗</a>`);
@@ -1142,6 +1156,10 @@ function renderRail(){
 let docPaneToken=0,docPaneMarkdown='';
 // Anywhere on the board copies as Markdown: items, chats and the document pane.
 markdownCopy.watch('.main');
+document.querySelector('.main').addEventListener('click',event=>{
+  const button=event.target.closest('.copy-code');
+  if(button) markdownCopy.copyMarkdown(button.previousElementSibling.querySelector('code').textContent,'Code copied');
+});
 function showDocPane(it){
   const el=document.getElementById('docpane');
   const path=it&&(it.path||(it.documents&&it.documents[0]&&it.documents[0].path));
@@ -1155,7 +1173,7 @@ function showDocPane(it){
         <button class="btn btn-sm" type="button" id="docpane-copy" title="Copy the document as Markdown">Copy</button>
         <a class="btn btn-sm" href="${documentHref(d.path,it.id)}" target="_blank" rel="noopener">Open full</a>
         <button class="btn btn-sm btn-ghost-secondary" type="button" id="docpane-hide" title="Hide document" aria-label="Hide document">${icon('close')}</button></div>
-        <div class="md">${md(d.content)}</div>`;
+        <div class="md">${md(d.content,false)}</div>`;
       el.hidden=false;
       docPaneMarkdown=d.content;
       document.getElementById('docpane-copy').onclick=()=>markdownCopy.copyMarkdown(docPaneMarkdown.trim()+'\n','Document copied as Markdown');
@@ -1176,7 +1194,7 @@ function refreshDocPane(){
     .then(d=>{
       if(!d||token!==docPaneToken) return;
       docPaneMarkdown=d.content;
-      const html=md(d.content);
+      const html=md(d.content,false);
       if(body.innerHTML===html) return;
       const top=el.scrollTop; body.innerHTML=html; el.scrollTop=top;
     })

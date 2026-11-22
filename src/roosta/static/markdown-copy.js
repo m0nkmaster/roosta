@@ -68,6 +68,7 @@
     }
     const holder=document.createElement('div');
     holder.append(node);
+    holder.querySelectorAll('.copy-code').forEach(button=>button.remove());
     holder.querySelectorAll('mark').forEach(mark=>mark.replaceWith(...mark.childNodes));
     // In-app document links become vault paths, which mean something once pasted.
     holder.querySelectorAll('a[href]').forEach(link=>{
@@ -138,7 +139,7 @@
     // Only a highlight that ends in a document counts, so clicking a Copy
     // button with text still selected does not re-copy the selection.
     const target=event.target instanceof Element?event.target:event.target?.parentElement;
-    if(!target||isField(target)||!roots.some(selector=>target.closest(selector))) return;
+    if(!target||target.closest('.copy-code')||isField(target)||!roots.some(selector=>target.closest(selector))) return;
     // Wait a tick so a click that clears the selection is seen as collapsed.
     setTimeout(()=>{
       const found=selectionInRoot();

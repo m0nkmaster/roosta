@@ -4,6 +4,7 @@ Record each release newest first. Bump minor for features and visible behaviour,
 
 ## 0.14.0 - 2026-11-22
 
+- Code blocks in chats and item discussions have a Copy code button that copies the code with its spacing and line breaks.
 - The Pulse and full-screen constellations follow all six appearance schemes. Switching schemes keeps your position, zoom, filters and selected project.
 
 ## 0.13.0 - 2026-11-22
