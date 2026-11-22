@@ -1,6 +1,7 @@
 """Named AI connections: non-secret metadata in the workspace, keys in the OS vault."""
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import re
@@ -174,13 +175,16 @@ def create(body: dict) -> dict:
     return connection
 
 
-def offer_system() -> dict | None:
+async def offer_system() -> dict | None:
     """Offer the user's own Claude Code sign-in once, when a compatible Claude is installed."""
     data = load()
     if data.get("system_offered") or any(c.get("auth") == "system" for c in data["connections"]):
         return None
-    from roosta import ai_runtime
-    if not ai_runtime.find("claude"):
+    if not await asyncio.to_thread(ai_runtime.find, "claude"):
+        return None
+    # Detection can overlap an explicit account choice or another Settings request.
+    data = load()
+    if data.get("system_offered") or any(c.get("auth") == "system" for c in data["connections"]):
         return None
     connection = {"id": uuid.uuid4().hex, "label": "Claude Code", "provider": "anthropic",
                   "auth": "system", "credential_ref": uuid.uuid4().hex,
@@ -205,10 +209,8 @@ def update(connection_id: str, **changes) -> dict:
 
 def set_default(connection_id: str, model: str | None = None, effort: str = "") -> None:
     connection = get(connection_id)
-    if not connection.get("tested"):
-        raise ValueError("Test this connection before making it the default")
     data = load()
-    data["default"] = connection_id
+    data["default"] = connection["id"]
     if model is not None:
         data["model_choice"] = {"provider": connection["provider"], "model": model, "effort": effort}
     save(data)

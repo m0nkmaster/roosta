@@ -2,6 +2,11 @@
 
 Record each release newest first. Bump minor for features and visible behaviour, patch for fixes and polish.
 
+## 0.15.0 - 2026-11-22
+
+- Skip cmux terminal-specific Claude wrappers when finding AI software, so Roosta uses a direct Claude installation instead.
+- Choose a connected AI account as default immediately, including while its optional connection test runs. Settings lets you cancel the test and keeps account controls available while model choices load.
+
 ## 0.14.0 - 2026-11-22
 
 - Code blocks in chats and item discussions have a Copy code button that copies the code with its spacing and line breaks.

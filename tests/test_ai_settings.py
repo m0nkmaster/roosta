@@ -33,11 +33,27 @@ state.default = 'other';
 c.provider = 'openai'; c.auth = 'cli';
 assert(connectionRow(c).includes('Use as default'));
 c.tested = false;
-assert(!connectionRow(c).includes('data-default'));
+assert(connectionRow(c).includes('data-default'));
+for (const [job, text] of [
+  [{operation:'test',status:'running',run_id:'own'}, 'Testing connection'],
+  [{operation:'test',status:'interrupted'}, 'cancelled'],
+  [{operation:'test',status:'error',error:'Rate limited'}, 'failed'],
+  [{operation:'login',status:'success'}, 'Sign-in completed'],
+  [{operation:'login',status:'interrupted'}, 'Sign-in interrupted'],
+  [{operation:'login',status:'error'}, 'Sign-in failed'],
+]) {
+  state.jobs.account = job;
+  html = connectionRow(c);
+  assert(html.includes(text));
+  assert(!/data-default="account"[^>]*disabled/.test(html));
+  assert.equal(html.includes('Cancel test'), job.status === 'running');
+  assert(!html.includes('Working'));
+}
+delete state.jobs.account;
 c.signed_in = false;
 html = connectionRow(c);
 assert(html.includes('>Sign in</button>'));
-assert(/data-op="test"[^>]*disabled/.test(html));
+assert(!html.includes('data-op="test"'));
 state.engines.pi.installed = false;
 html = connectionRow(c);
 assert(html.includes('Install Pi'));
@@ -83,6 +99,7 @@ const assert = require('node:assert/strict');
 const elements = {'settings-model':{value:JSON.stringify(['account','model'])},
   'settings-effort':{}, 'settings-effort-field':{}, 'model-message':{}};
 const $ = id => elements[id];
+const modelVersion = 1;
 let levels = ['low','high','xhigh'];
 async function request(url) { assert(url.includes('/api/ai/efforts?')); return {levels}; }
 (async () => {
@@ -113,7 +130,7 @@ let html = engineRow(engine);
 assert(html.includes('Installed by Roosta'));
 assert(html.includes('Open in Terminal'));
 assert(!html.includes('Repair'));
-assert(html.includes('<details class="small"><summary>Updates</summary>'));
+assert(html.includes('data-engine-details="pi"><summary>Updates</summary>'));
 assert(html.includes('Update to latest'));
 state.jobs.pi = {status:'running',operation:'install'};
 assert(/data-terminal="pi"[^>]*disabled/.test(engineRow(engine)));

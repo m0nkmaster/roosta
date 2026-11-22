@@ -59,18 +59,35 @@ def _version_tuple(text: str) -> tuple:
     return tuple(int(part) for part in text.split("."))
 
 
+def _runtime_path_allowed(binary: Path) -> bool:
+    try:
+        for path in (binary, binary.resolve()):
+            if ("cmux-cli-shims" in path.parts or path.name == "cmux-claude-wrapper"
+                    or path.match("cmux.app/Contents/Resources/bin/claude")):
+                return False
+    except (OSError, RuntimeError, ValueError):
+        return False
+    return True
+
+
 def find(runtime: str) -> str:
     if runtime not in RUNTIMES:
         raise ValueError("Unknown AI runtime")
-    candidate = shutil.which(runtime)
-    candidates = [candidate] if candidate else []
+    candidates = []
+    for directory in os.get_exec_path():
+        candidate = shutil.which(str(Path(directory).absolute() / runtime))
+        if candidate and _runtime_path_allowed(Path(candidate)):
+            candidates.append(candidate)
+            break
     if runtime == "claude":
-        candidates.append(str(Path.home() / ".local/bin/claude"))
+        local = Path.home() / ".local/bin/claude"
+        if _runtime_path_allowed(local):
+            candidates.append(str(local))
     for binary in RUNTIME_ROOT.glob(f"{runtime}-*/{runtime}"):
         try:
-            if binary.resolve().is_relative_to(RUNTIME_ROOT.resolve()):
+            if binary.resolve().is_relative_to(RUNTIME_ROOT.resolve()) and _runtime_path_allowed(binary):
                 candidates.append(str(binary))
-        except (OSError, RuntimeError):
+        except (OSError, RuntimeError, ValueError):
             continue
     selected, newest = "", ()
     for binary in candidates:
