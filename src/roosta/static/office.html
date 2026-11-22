@@ -3782,7 +3782,8 @@
                 const signIn = tasks.some((t) => t.status === "blocked");
                 const sickSub = counts.hurt ? ` · ${counts.hurt} in the sick bay` : "";
                 head = "Signed out";
-                sub = (signIn ? `${counts.locked} stuck on a frozen call in the meeting room - a sign-in needs you` : `${counts.locked} on a frozen call in the meeting room - an AI engine is unavailable`) + sickSub;
+                // the action leads, so a narrow window's ellipsis cuts the detail, not what to do
+                sub = (signIn ? "A sign-in needs you" : "An AI engine is unavailable") + ` · ${counts.locked} stuck on a frozen call in the meeting room` + sickSub;
                 col = UI_COL.locked;
             }
             else if (counts.hurt) { head = "Sick bay"; sub = `${counts.hurt} worker${counts.hurt > 1 ? "s" : ""} hit an error on the last run`; col = UI_COL.hurt; }
