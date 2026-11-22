@@ -13,6 +13,11 @@ import pytest
 from roosta import cli, paths, skills
 
 
+def migrate_at_startup(core, workspace):
+    with skills.ownership_lock(workspace, "skill-runner", wait=True):
+        return skills.migrate(core, workspace)
+
+
 def make_core(root: Path, body: str = "v1") -> Path:
     core = root / "core"
     (core / "actor").mkdir(parents=True)
@@ -90,8 +95,8 @@ def test_unverifiable_legacy_trees_survive_including_claude(tmp_path, lock):
         skill = ws / group / "skills/actor"
         shutil.copytree(core / "actor", skill)
         (skill / "helper.py").write_text(group)
-    assert len(skills.sync(core, ws)) == 2
-    assert skills.sync(core, ws) == []
+    assert len(migrate_at_startup(core, ws)) == 2
+    assert migrate_at_startup(core, ws) == []
     assert (ws / skills.FORKS / "actor/helper.py").read_text() == ".agents"
     assert (ws / skills.ARCHIVE / "review-claude/actor/helper.py").read_text() == ".claude"
     assert skills.status(core, ws)["review"] == {"actor": [".roosta/skill-archive/review-claude/actor"]}
@@ -110,7 +115,7 @@ def test_clean_missing_and_retired_legacy_skills(tmp_path):
     (ws / ".roosta/skills.lock.json").write_text(json.dumps({"skills": records}))
     (shipped / "SKILL.md").write_text("latest")
     shutil.copytree(shipped, core / "missing")
-    skills.sync(core, ws)
+    migrate_at_startup(core, ws)
     assert skills.status(core, ws)["core"] == ["actor", "missing"]
     assert skills.status(core, ws)["forks"] == {"retired": "retired from core"}
     assert (ws / skills.ARCHIVE / ".agents/actor/SKILL.md").read_text().endswith("v1\n")
@@ -130,9 +135,9 @@ def test_migration_refuses_symlinks_before_touching_their_targets(tmp_path, link
         (source.parent / "SKILL.md").write_text("legacy")
     if link == ".roosta":  # No trustworthy location for workspace runtime metadata.
         with pytest.raises(ValueError, match="linked"):
-            skills.sync(core, ws)
+            migrate_at_startup(core, ws)
     else:
-        assert any("Review" in message for message in skills.sync(core, ws))
+        assert any("Review" in message for message in migrate_at_startup(core, ws))
         report = skills.status(core, ws)
         assert report["problems"] or report["pending"]
     assert source.is_symlink() and not list(outside.iterdir())
@@ -239,32 +244,30 @@ def test_clean_primary_and_unknown_secondary_follow_upgrades(tmp_path):
     (ws / ".roosta").mkdir()
     (ws / ".roosta/skills.lock.json").write_text(json.dumps({"skills": {"actor": {"hash": skills.tree_hash(agents)}}}))
     (core / "actor/SKILL.md").write_text("next release")
-    skills.sync(core, ws)
+    migrate_at_startup(core, ws)
     report = skills.status(core, ws)
     assert report["forks"] == {} and report["core"] == ["actor"]
     archived, = report["review"]["actor"]
     assert (ws / archived / "SKILL.md").read_text() == "possibly stale Windows copy"
-    assert skills.sync(core, ws) == []
+    assert migrate_at_startup(core, ws) == []
 
 
-def test_pointer_refresh_preserves_owner_files(tmp_path):
+def test_pointer_refresh_preserves_owner_files(tmp_path, monkeypatch):
     core = make_core(tmp_path)
     ws = tmp_path / "workspace"
     pointer = ws / ".roosta/operating-model.md"
     pointer.parent.mkdir(parents=True)
     (ws / "AGENTS.md").write_text("Read .roosta/operating-model.md. My own rules.")
-    # The unchanged legacy document from 0.16 has the same body with its original header and precedence.
-    legacy = (paths.APP_ROOT / "operating-model.md").read_text().replace(
-        "Read from the installed Roosta package.", "Owned by Roosta and replaced on every `roosta skills sync`.").replace(
-        "including team conventions. Roosta’s tool permissions, external approvals and output protocols always apply.",
-        "and wins where they differ.")
+    legacy = "# Previously shipped model\n"
+    import hashlib
+    monkeypatch.setattr(skills, "LEGACY_MODELS", {hashlib.sha256(legacy.encode()).hexdigest()})
     pointer.write_text(legacy)
-    skills.sync(core, ws)
+    migrate_at_startup(core, ws)
     assert "roosta skills instructions" in pointer.read_text()
     assert (ws / skills.ARCHIVE / "model/operating-model.md").read_text() == legacy
     assert "My own rules" in (ws / "AGENTS.md").read_text()
     pointer.write_text("my operating rules")
-    skills.sync(core, ws)
+    migrate_at_startup(core, ws)
     assert pointer.read_text() == "my operating rules"
     assert any("operating-model.md" in issue for issue in skills.status(core, ws)["problems"])
 
@@ -294,9 +297,9 @@ def test_retired_fork_archives_without_interrupting_active_turns(tmp_path):
         decision = skills.manage("use-core", "actor", ws, core)
         assert decision.is_file() and fork.is_dir()
         assert "restart" in skills.status(core, ws)["forks"]["actor"]
-        skills.sync(core, ws)
+        assert cli.main(["skills", "sync", "--workspace", str(ws)]) == 0
         assert fork.is_dir()
-    skills.sync(core, ws)
+    migrate_at_startup(core, ws)
     assert not decision.exists() and not fork.exists()
     (tmp_path / "retired").rename(core / "actor")
     assert skills.find_skill_files("actor", ws, ws, core) == [core / "actor/SKILL.md"]
@@ -306,11 +309,11 @@ def test_retired_fork_archives_without_interrupting_active_turns(tmp_path):
 def test_bad_entry_and_bad_metadata_leave_other_skills_available(tmp_path):
     core = make_core(tmp_path)
     ws = tmp_path / "ws"
-    (ws / ".agents/skills/actor").mkdir(parents=True)
     fork = skills.manage("fork", "actor", ws, core)
+    (ws / ".agents/skills/actor").mkdir(parents=True)
     (fork / skills.BASE).write_bytes(b"\xff")
     shutil.copytree(core / "actor", core / "sender")
-    skills.sync(core, ws)
+    migrate_at_startup(core, ws)
     report = skills.status(core, ws)
     assert report["pending"] == [".agents/skills/actor"]
     assert report["forks"]["actor"] == "needs review" and report["problems"]
@@ -325,7 +328,57 @@ def test_concurrent_legacy_migration_keeps_a_single_complete_fork(tmp_path):
     shutil.copytree(core / "actor", legacy)
     (legacy / "helper.py").write_text("my helper")
     with ThreadPoolExecutor(max_workers=4) as pool:
-        results = list(pool.map(lambda _: skills.sync(core, ws), range(8)))
+        results = list(pool.map(lambda _: migrate_at_startup(core, ws), range(8)))
     assert any(results) and not legacy.exists()
     assert (ws / skills.FORKS / "actor/helper.py").read_text() == "my helper"
     assert not skills.status(core, ws)["review"]
+
+
+def test_manual_sync_and_adopt_leave_running_legacy_worker_files_in_place(tmp_path):
+    ws = tmp_path / "legacy"
+    helper = ws / ".agents/skills/setup/helper.py"
+    helper.parent.mkdir(parents=True)
+    helper.write_text("worker still needs this")
+    (helper.parent / "SKILL.md").write_text("old worker")
+    config = ws / ".roosta"
+    config.mkdir()
+    model = config / "operating-model.md"
+    model.write_text("existing operating model")
+    # A 0.16 worker already running has never created or acquired an ownership lock.
+    assert cli.main(["skills", "sync", "--workspace", str(ws)]) == 0
+    assert cli.init(ws, adopt=True, check=False, initialise_git=False) == 0
+    assert helper.read_text() == "worker still needs this"
+    assert model.read_text() == "existing operating model"
+    assert not (ws / skills.ARCHIVE).exists() and not (ws / skills.FORKS).exists()
+
+
+def test_orphan_archive_decision_does_not_apply_to_restored_legacy_tree(tmp_path):
+    core = make_core(tmp_path)
+    ws = tmp_path / "ws"
+    original = skills.manage("fork", "actor", ws, core)
+    (original / "local.md").write_text("original")
+    archived = skills.manage("use-core", "actor", ws, core)
+    # Crash after archiving, before removing the old decision.
+    decision = ws / ".roosta/skill-decisions/actor"
+    decision.parent.mkdir()
+    decision.touch()
+    restored = ws / ".agents/skills/actor"
+    restored.mkdir(parents=True)
+    (restored / "SKILL.md").write_text("restored custom instructions")
+    migrate_at_startup(core, ws)
+    assert (original / "SKILL.md").read_text() == "restored custom instructions"
+    assert (archived / "local.md").read_text() == "original"
+    assert not decision.exists()
+    assert migrate_at_startup(core, ws) == []
+
+
+def test_pointer_symlink_loop_only_blocks_pointer_migration(tmp_path):
+    core = make_core(tmp_path)
+    ws = tmp_path / "ws"
+    pointer = ws / ".roosta/operating-model.md"
+    pointer.parent.mkdir(parents=True)
+    pointer.symlink_to(pointer.name)
+    migrate_at_startup(core, ws)
+    assert pointer.is_symlink()
+    assert any("operating-model.md" in issue for issue in skills.status(core, ws)["problems"])
+    assert skills.find_skill_files("actor", ws, ws, core) == [core / "actor/SKILL.md"]

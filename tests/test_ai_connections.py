@@ -13,7 +13,7 @@ import threading
 import pytest
 from fastapi.testclient import TestClient
 
-from roosta import scheduler
+from roosta import paths, scheduler, skills
 from roosta import ai_settings
 from roosta import board
 from roosta import task_config
@@ -227,10 +227,12 @@ def test_sender_retains_original_account_when_default_changes(accounts, tmp_path
     for c in (a,b): connections.update(c['id'], tested=True)
     connections.set_default(b['id'])
     router = chat.ChatRouter(None, chat.SessionMap(tmp_path/'sessions.json'), str(tmp_path))
+    extension = skills.manage('extend', 'sender', tmp_path, paths.CORE_SKILLS_DIR)
     router._paused['send'] = {'connection':a['id'], 'item_id':'x', 'persistent':True,
         'action':{'kind':'message','target':'Slack channel C123','draft':'Hello [AI]'}}
     seen = []
     async def stream(run, prompt, **kwargs):
+        assert f"sender: {paths.CORE_SKILLS_DIR / 'sender/SKILL.md'} then read additive instructions at {extension}" in prompt
         seen.append((run.connection['id'], json.loads(run.env['ROOSTA_PI_POLICY'])['unrestricted']))
         yield json.dumps({'type':'message_end','message':{'role':'assistant','content':[{'type':'text','text':'<task-output>{"status":"success","summary":"Sent"}</task-output>'}]}})
     monkeypatch.setattr(ai_backend,'stream',stream)
@@ -246,7 +248,11 @@ def test_pi_chat_progress_is_transient_and_uses_only_tool_identifiers(accounts, 
     history = chat.ConversationHistoryStore(tmp_path / "history.json")
     router = chat.ChatRouter(None, sessions, str(tmp_path), persistent_history=history)
 
+    fork = skills.manage("fork", "actor", tmp_path, paths.CORE_SKILLS_DIR)
+    extension = skills.manage("extend", "actor", tmp_path, paths.CORE_SKILLS_DIR)
+
     async def stream(run, prompt):
+        assert f"actor: {fork / 'SKILL.md'} then read additive instructions at {extension}" in prompt
         assert run.connection["id"] == account["id"]
         yield json.dumps({"type": "message_update", "assistantMessageEvent":
                           {"type": "thinking_delta", "delta": "private thought"}})
@@ -366,7 +372,10 @@ def test_worker_dispatch_uses_connection_and_retains_legacy_model(accounts, tmp_
     c = create(tested=False)
     connections.set_default(c['id'])
     seen = []
+    monkeypatch.setattr(paths, "WORKSPACE", tmp_path)
+    extension = skills.manage("extend", "actor", tmp_path, paths.CORE_SKILLS_DIR)
     async def stream(run, prompt, **kwargs):
+        assert f"actor: {paths.CORE_SKILLS_DIR / 'actor/SKILL.md'} then read additive instructions at {extension}" in prompt
         seen.append(run)
         yield json.dumps({'type':'message_end','message':{'role':'assistant','content':[{'type':'text','text':'<task-output>{"status":"success","summary":"Checked"}</task-output>'}]}})
     monkeypatch.setattr(ai_backend,'stream',stream)

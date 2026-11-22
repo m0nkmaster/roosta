@@ -1504,6 +1504,7 @@ class ChatRouter:
     async def _send_approved(self, run_id: str, paused: dict, sender_action: dict):
         action, item_id = paused["action"], paused["item_id"]
         connection = paused.get("connection", f"legacy:{ai_backend.current()}")
+        prompt = sender_prompt(sender_action, self._vault)
         if not connection.startswith("legacy:"):
             try:
                 model = self._sessions.model(item_id)
@@ -1516,7 +1517,7 @@ class ChatRouter:
                 self._paused[run_id] = paused
                 return {"ok": False, "sent": False, "reason": str(exc)}
             try:
-                output = "".join([line async for line in ai_backend.stream(run, sender_prompt(sender_action, self._vault))])
+                output = "".join([line async for line in ai_backend.stream(run, prompt)])
             except (ValueError, OSError) as exc:
                 return {"ok": False, "sent": False, "reason": str(exc)}
             outcome = sender_outcome(run.text(output))
@@ -1538,7 +1539,7 @@ class ChatRouter:
                 CURSOR_AGENT,
                 self._vault,
                 sid,
-                sender_prompt(sender_action, self._vault),
+                prompt,
                 force=True,
             )
             env = cursor_env(os.environ, safe_config=False)
@@ -1549,7 +1550,7 @@ class ChatRouter:
             limit=16 * 1024 * 1024,
         )
         stdout, _ = await proc.communicate(
-            sender_prompt(sender_action, self._vault).encode() if claude else None)
+            prompt.encode() if claude else None)
         text = (claude_result_text if claude else cursor_result_text)(
             (stdout or b"").decode(errors="replace"))
         outcome = sender_outcome(text)

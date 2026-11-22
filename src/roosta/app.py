@@ -209,12 +209,12 @@ def prune_cursor_session_stores(
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     with skills.ownership_lock(paths.WORKSPACE, "skill-runner", wait=True):
-        async with running_app():
+        async with running_app(app):
             yield
 
 
 @asynccontextmanager
-async def running_app():
+async def running_app(app: FastAPI):
     for move in await asyncio.to_thread(skills.migrate, paths.CORE_SKILLS_DIR, paths.WORKSPACE):
         log.info("Skill migration: %s", move)
     activity.compact()  # before runner.start(), so no spawn is appending

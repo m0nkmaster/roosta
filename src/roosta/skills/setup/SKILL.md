@@ -53,7 +53,7 @@ Read the current `PROFILE.md`, `PRIORITIES.md`, `TOOLS.md` and `.roosta/connecto
 
 ## Reviewing workspace forks
 
-Run `roosta skills status` in the workspace. Compare the installed skill, active fork and every archived alternative listed under `review`, including helper scripts and references. If a fork is retired, explain which workers still use it and offer to keep or archive it. Explain which local behaviour would change. With the user's agreement, capture additive preferences in the file printed by `roosta skills extend NAME`. Check those rules against the installed version before running `roosta skills use-core NAME`. With Roosta open, the switch takes effect on restart so active runs can finish. The archive keeps the full tree. Keep the fork active if the user still needs replacement behaviour.
+Run `roosta skills status` in the workspace. Compare the installed skill, active fork and every archived alternative listed under `review`, including helper scripts and references. If a fork is retired, explain which workers still use it and offer to retain it or archive it with `roosta skills use-core NAME`. A retired skill has no installed version for an extension to follow. Explain which local behaviour would change. With the user's agreement, capture additive preferences in the file printed by `roosta skills extend NAME`. Check those rules against the installed version before running `roosta skills use-core NAME`. With Roosta open, the switch takes effect on restart so active runs can finish. The archive keeps the full tree. Keep the fork active if the user still needs replacement behaviour.
 
 ## Related
 

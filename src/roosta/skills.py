@@ -165,12 +165,20 @@ def refresh_pointer(workspace: Path) -> None:
         if hashlib.sha256(old).hexdigest() not in LEGACY_MODELS:
             raise ValueError("Review customised .roosta/operating-model.md; use roosta skills instructions.")
         archive(target, workspace, "model")
+    install_pointer(workspace)
+
+
+def install_pointer(workspace: Path) -> None:
+    """Publish fresh standalone instructions only where no operating model exists."""
+    target = local(workspace, ".roosta/operating-model.md")
     # A crash between the archive and publication leaves the backup and is retried at startup.
     with tempfile.NamedTemporaryFile(dir=target.parent, delete=False) as stream:
         tmp = Path(stream.name)
         stream.write(POINTER.encode())
     try:
         os.link(tmp, target)  # publish without replacing a file created meanwhile
+    except FileExistsError:
+        pass
     finally:
         tmp.unlink()
 
@@ -204,8 +212,25 @@ def migrate(core: Path, workspace: Path) -> list[str]:
     with ownership_lock(workspace, "skill-ownership", wait=True):
         try:
             refresh_pointer(workspace)
-        except (OSError, ValueError) as exc:
+        except (OSError, ValueError, RuntimeError) as exc:
             changes.append(str(exc))
+        # Decisions belong to forks present before migration. A restored legacy tree is a new fork.
+        for decision in owned_entries(workspace, ".roosta/skill-decisions", changes):
+            name = decision.name
+            if not valid_name(name):
+                continue
+            try:
+                pending = local(workspace, decision.relative_to(workspace))
+                if not pending.is_file():
+                    continue
+                if not local(workspace, Path(FORKS) / name).is_dir():
+                    pending.unlink()
+                    continue
+                group = "forks" if name in names(core) else "retired"
+                changes.append(str(archive(local(workspace, Path(FORKS) / name), workspace, group)))
+                pending.unlink()
+            except (OSError, ValueError, RuntimeError) as exc:
+                changes.append(f"Review {decision}: {exc}")
         records = legacy_records(workspace)
         candidates = set(names(core)) | {key for key in records if valid_name(key)}
         for group in (".agents", ".claude"):
@@ -224,31 +249,7 @@ def migrate(core: Path, workspace: Path) -> list[str]:
                     change = f"Review {folder / name}: {exc}"
                 if change:
                     changes.append(change)
-        for decision in owned_entries(workspace, ".roosta/skill-decisions", changes):
-            name = decision.name
-            if not valid_name(name):
-                continue
-            try:
-                pending = local(workspace, decision.relative_to(workspace))
-                if not pending.is_file():
-                    continue
-                if not local(workspace, Path(FORKS) / name).is_dir():
-                    pending.unlink()
-                    continue
-                group = "forks" if name in names(core) else "retired"
-                changes.append(str(archive(local(workspace, Path(FORKS) / name), workspace, group)))
-                pending.unlink()
-            except (OSError, ValueError, RuntimeError) as exc:
-                changes.append(f"Review {decision}: {exc}")
     return changes
-
-
-def sync(core: Path, workspace: Path) -> list[str]:
-    try:
-        with ownership_lock(workspace, "skill-runner", wait=False):
-            return migrate(core, workspace)
-    except BlockingIOError:
-        return ["Skill migration runs before workers and chats start. Restart Roosta to apply pending changes."]
 
 
 def _manage(action: str, name: str, workspace: Path, core: Path) -> Path:
@@ -277,6 +278,8 @@ def _manage(action: str, name: str, workspace: Path, core: Path) -> Path:
         return extension
     if action != "fork" or fork.exists():
         raise ValueError(f"Fork already exists or invalid action: {name}")
+    if any((workspace / group / "skills" / name).exists() for group in (".agents", ".claude")):
+        raise ValueError(f"Review the legacy {name} copies before creating a new fork.")
     fork.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(dir=fork.parent, prefix=".fork-") as staging:
         copy = Path(staging) / name
@@ -297,6 +300,7 @@ def fork_status(name: str, core: Path, workspace: Path, records: dict) -> str:
     folder = local(workspace, Path(FORKS) / name)
     if not local(folder, "SKILL.md").is_file():
         raise ValueError(f"Missing SKILL.md in {folder}")
+    tree_files(folder)
     if local(workspace, Path(".roosta/skill-decisions") / name).exists():
         return "will be archived on restart"
     if not (core / name / "SKILL.md").is_file():
@@ -354,9 +358,9 @@ def status(core: Path, workspace: Path) -> dict:
             for entry in owned_entries(workspace, Path(ARCHIVE) / location, problems):
                 if group != "retired" or entry.name in installed:
                     review.setdefault(entry.name, []).append(str(entry.relative_to(workspace)))
-    pointer = workspace / ".roosta/operating-model.md"
     try:
-        if pointer.exists() and read_small(local(workspace, ".roosta/operating-model.md")) != POINTER.encode():
+        pointer = local(workspace, ".roosta/operating-model.md")
+        if pointer.exists() and read_small(pointer) != POINTER.encode():
             problems.append("Review .roosta/operating-model.md and move local preferences into AGENTS.md.")
     except (ValueError, OSError, RuntimeError) as exc:
         problems.append(str(exc))
@@ -423,6 +427,8 @@ def instructions(skill: str, working_dir: str | Path, workspace: Path) -> str:
             f"{task}For every listed skill use the exact file below "
             "with the file reader, including on resumed turns. Resolve its scripts and references "
             "beside that file, including when legacy text points into .agents/skills. "
+            "Treat installed package files as read-only. For ownership reviews, follow the Reviewing "
+            f"workspace forks section of {core / 'setup/SKILL.md'}, including when setup is pinned. "
             "Use the installed operating model in place of any workspace copy. "
             f"Use {core / 'assistant/references/board-contract.md'} for the board protocol. "
             f"For actor and sender the protocols in {core / 'actor/SKILL.md'} and "

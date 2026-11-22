@@ -189,7 +189,6 @@ def test_malformed_worker_connectors_accounts(workspace, capsys):
 
 def test_doctor_account_and_lock_drift(workspace, capsys):
     cfg = workspace / ".roosta"
-    skills.sync(paths.CORE_SKILLS_DIR, workspace)
     skills.manage("fork", "setup", workspace, paths.CORE_SKILLS_DIR)
     state = cfg / "state"
     state.mkdir(exist_ok=True)

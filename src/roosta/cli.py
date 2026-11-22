@@ -152,7 +152,8 @@ def init(target: Path, adopt: bool = False, check: bool = True, initialise_git: 
         return 1
     target.mkdir(parents=True, exist_ok=True)
     created = copy_skeleton(paths.SKELETON_DIR, target)
-    report = skills.sync(paths.CORE_SKILLS_DIR, target)
+    if not os.path.lexists(target / ".roosta/operating-model.md"):
+        skills.install_pointer(target)
     ensure_gitignore(target)
     notes = ensure_links(target)
     if initialise_git and not (target / ".git").exists() and shutil.which("git"):
@@ -168,8 +169,6 @@ def init(target: Path, adopt: bool = False, check: bool = True, initialise_git: 
     remember_workspace(target)
     print(f"Roosta {__version__} workspace ready at {target}")
     print(f"  {len(created)} starter files. Core skills run from the installed package.")
-    for move in report:
-        print(f"  {move}")
     for note in notes:
         print(f"  note: {note}")
     print(f"\nNext: roosta start --workspace {target}")
@@ -359,7 +358,7 @@ def main(argv: list[str] | None = None) -> int:
     for action, help_text in (
         ("instructions", "print the installed operating model and effective skill routes"),
         ("status", "show installed skills, extensions and pinned forks"),
-        ("sync", "migrate legacy workspace copies"),
+        ("sync", "show skill ownership and restart guidance for legacy copies"),
         ("extend", "create or locate additive instructions"),
         ("fork", "pin an editable copy of the installed skill"),
         ("use-core", "archive the fork and resume installed core plus extensions"),
@@ -416,8 +415,7 @@ def main(argv: list[str] | None = None) -> int:
                 print(skills.instructions(args.name, workspace, workspace))
                 return 0
             if args.action == "sync":
-                for move in skills.sync(paths.CORE_SKILLS_DIR, workspace):
-                    print(move)
+                print("Legacy skills migrate on the next Roosta startup. Finish active runs before restarting.")
             if args.action in {"sync", "status"}:
                 print(json.dumps(skills.status(paths.CORE_SKILLS_DIR, workspace), indent=2))
             else:
