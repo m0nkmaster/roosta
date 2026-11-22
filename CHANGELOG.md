@@ -2,6 +2,11 @@
 
 Record each release newest first. Bump minor for features and visible behaviour, patch for fixes and polish.
 
+## 0.15.0 - 2026-11-22
+
+- Use roosta update to check for and install a compatible stable release in the current Python installation.
+- Use roosta doctor to diagnose installation, workspace and runner issues with offline and JSON reporting options.
+
 ## 0.14.0 - 2026-11-22
 
 - Code blocks in chats and item discussions have a Copy code button that copies the code with its spacing and line breaks.
