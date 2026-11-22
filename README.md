@@ -36,7 +36,7 @@ workspace setup, or adopt a folder of documents. Cancelling leaves the folder un
 
 ### Set up your office
 
-1. **Connect your AI.** On a fresh workspace, the board offers **Connect your AI**, or **Check your Claude Code connection** if Claude Code is already installed. Open 'AI settings' to check that login or connect another account and install its software. The first account that passes the check becomes the default.
+1. **Connect your AI.** On a fresh workspace, the board offers **Connect your AI**, or **Choose your Claude Code account** if Claude Code is already installed. Open AI settings to select **Use as default** on that account, or connect another account and install its software.
 2. **Tell Roosta about your work.** Choose **Continue workspace setup**, then open **Set up your workspace** on the board. Roosta helps you describe your priorities, projects and tools, sets up a starter schedule and creates your first board card.
 3. **Build your team.** Open Workers and choose **New worker** to describe a job. Each worker runs a named skill on a schedule; chat with it to refine the job, and see it in the Office.
 
@@ -137,8 +137,8 @@ model and its supported reasoning effort, or **Change AI or manage accounts** to
 account. Each account records its provider and billing route; model choice is saved separately.
 API keys live in the OS credential store (Keychain on macOS). Account sign-in credentials stay in
 Claude Code's or Pi's authentication storage; Roosta can also use your existing Claude Code login.
-The connection test makes one small billable request and proves a safe local file read before an
-account can become the default.
+Choose **Use as default** on any connected account. The optional connection test makes one small
+billable request to check that the model can read a temporary file. Choose **Cancel test** to stop it.
 
 Anthropic models run through the unmodified Claude Code runtime. OpenAI, non-Anthropic OpenRouter
 models and local Ollama models run through Pi. Anthropic models on OpenRouter are rejected: choose

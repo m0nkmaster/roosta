@@ -516,12 +516,12 @@ def setup_item(router=None) -> dict | None:
         return {
             "id": AI_SETUP_ITEM_ID,
             "project_ref": None,
-            "title": "Choose your AI model" if needs_model else "Check your Claude Code connection" if existing else "Connect your AI",
+            "title": "Choose your AI model" if needs_model else "Choose your Claude Code account" if existing else "Connect your AI",
             "why": "Connect AI before setting up your workspace so Roosta can help you.",
-            "situation": ("Your account passed its connection check. Choose a model in Settings to finish connecting AI."
+            "situation": ("Choose a model in Settings to finish connecting AI."
                           if needs_model else "Claude Code was found on this computer. Roosta can use its existing login; no separate account or API key is needed."
                           if existing else "Choose Claude, ChatGPT or another supported service in Settings."),
-            "opening_move": "Choose a model in Settings, then return here to set up your workspace." if needs_model else "Open AI settings and check the connection. The check sends a small model request and reads a harmless temporary file; usage may be billable. Then return here to set up your workspace.",
+            "opening_move": "Choose a model in Settings, then return here to set up your workspace." if needs_model else "Open AI settings, choose your default account and install its software if needed. Then return here to set up your workspace.",
             "action_type": "task", "action_owner": "user", "action_label": "Open AI settings",
             "links": [], "documents": [], "new": True,
         }

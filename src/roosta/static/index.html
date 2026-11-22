@@ -676,7 +676,7 @@
                             <label for="connection-${id}">Connection</label>
                             <select class="form-select form-select-sm" id="connection-${id}" name="connection" ${busy ? 'disabled' : ''}>
                               <option value="" ${t.connection ? '' : 'selected'}>Default${defaultConnection ? ` · ${esc(defaultConnection.label)}` : ' · choose one in Settings'}</option>
-                              ${(runtimeOptions.connections || []).map(c => `<option value="${esc(c.id)}" ${c.id === t.connection ? 'selected' : ''} ${!c.connected || !c.tested ? 'disabled' : ''}>${esc(c.label)} · ${esc(c.billing)}${!c.connected ? ' (disconnected)' : !c.tested ? ' (test first)' : ''}</option>`).join('')}
+                              ${(runtimeOptions.connections || []).map(c => `<option value="${esc(c.id)}" ${c.id === t.connection ? 'selected' : ''} ${!c.connected ? 'disabled' : ''}>${esc(c.label)} · ${esc(c.billing)}${!c.connected ? ' (disconnected)' : ''}</option>`).join('')}
                             </select>
                             <span class="hint" title="Choosing an account pins this worker to it">Default follows Settings and adds nothing to tasks.yaml. <a href="/settings">Manage connections</a></span>
                         </div>

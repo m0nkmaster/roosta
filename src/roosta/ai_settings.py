@@ -8,7 +8,6 @@ import os
 import re
 import ssl
 import urllib.error
-from collections.abc import Awaitable, Callable
 
 from roosta import ai_backend, ai_connections, ai_runtime
 from roosta.claude_code import claude_model
@@ -40,7 +39,7 @@ def runtime_unavailable_message(task: TaskConfig) -> str:
             ai_connections.get(task.connection)
         except ValueError as exc:
             return str(exc)
-        return "Test or repair this worker's AI connection in Settings"
+        return "Install or repair the software for this worker’s AI connection in Settings"
     if task.harness == OPENCODE_OLLAMA_HARNESS:
         if not opencode_model_compatible(task.model):
             return f"{task.model} cannot execute OpenCode tool calls; choose another Ollama model"
@@ -144,7 +143,7 @@ async def ollama_model_ids() -> list[str]:
 
 
 async def provider_models(provider: str, general: bool = False, key: str = "", refresh: bool = False) -> dict:
-    default = ai_connections.default_model(provider, general=general)
+    default = await asyncio.to_thread(ai_connections.default_model, provider, general=general)
     if provider == "anthropic":
         listing = await ai_backend.claude_models(key or "legacy:claude", refresh=refresh)
         models = [ai_backend.claude_model_choice(entry) for entry in listing["models"]]
@@ -200,18 +199,19 @@ async def model_efforts(connection: dict, model: str) -> list[str]:
     return await asyncio.to_thread(ai_runtime.model_efforts, connection["provider"], model)
 
 
-async def run_operation(key: str, operation: str,
-                        on_tested: Callable[[], Awaitable[object]] | None = None) -> None:
+async def run_operation(key: str, operation: str) -> None:
     """Install a runtime, test a connection or sign an account in, recording the outcome in `jobs`."""
+    job = jobs.setdefault(key, {"operation": operation})
     proc = None
     terminal = None
     try:
         if operation == "install":
             await asyncio.to_thread(ai_runtime.install, key)
         elif operation == "test":
+            if job.get("cancelling"):
+                raise asyncio.CancelledError
+            job["started"] = True
             await ai_backend.test_connection(key)
-            if on_tested:
-                await on_tested()
         else:
             connection = ai_connections.get(key)
             if connection["provider"] not in {"anthropic", "openai"} or connection["auth"] != "cli":
@@ -250,9 +250,9 @@ async def run_operation(key: str, operation: str,
                 raise ValueError("Sign-in timed out; retry in a browser on this computer and close any other pending AI sign-in") from None
             if proc.returncode:
                 raise ValueError("Sign-in did not complete; close other pending AI sign-ins, retry and check your organisation's account access")
-        jobs[key] = {"status": "success", "operation": operation}
+        job.update(status="success")
     except asyncio.CancelledError:
-        jobs[key] = {"status": "interrupted", "operation": operation}
+        job.update(status="interrupted")
         raise
     except Exception as exc:
         log.exception("AI %s operation failed", operation)
@@ -266,8 +266,10 @@ async def run_operation(key: str, operation: str,
             reason = f"Download failed: {exc}"
         else:
             reason = "Operation failed; check network access and the OS credential store, then retry"
-        jobs[key] = {"status": "error", "operation": operation, "error": reason}
+        job.update(status="error", error=reason)
     finally:
+        job.pop("started", None)
+        job.pop("cancelling", None)
         if operation == "install":
             ai_runtime.INSTALLING.discard(key)
         await ai_backend.terminate(proc)
