@@ -153,7 +153,8 @@ See [Assistant contracts](assistant.md) and [Office rendering](office.md) for pa
 - **Distance measures attention.** The drawer names its date source. Use the latest valid
   substantive update or verification date, falling back to that page's mtime. Rings, search,
   status, verification due, board links, related links and zoomed supporting pages share these
-  signals. Review prioritises board attention, drift and verification. Confirmation records
+  signals. A board item can flag a selected source through its document links or its existing project reference.
+  Review prioritises board attention, drift and verification. Confirmation records
   the profile reviewer and renews the verification window. Status changes date the update.
   The drawer, `?focus=` and the detail/review API all use the same star id.
 
@@ -183,8 +184,10 @@ For collection QA run the static interaction probes from the checkout on a host 
 
 Use a fresh temporary directory for each run. Pytest replaces its base directory.
 The probes use the shipped page, styles and scripts, a synthetic Markdown vault, and
-in-memory API responses. They remove remote scripts, stub the Markdown parser, and
-turn off intervals and animation scheduling. At 1440 and 480 pixels they click
+in-memory API responses. Set `ROOSTA_QA_MARKED` to a trusted local copy of
+`marked/lib/marked.umd.js` for visual QA. Each fixture copies it alongside its HTML.
+Without the variable, the interaction probe uses a text-only parser. The fixture
+removes remote scripts and turns off intervals and animation scheduling. At 1440 and 480 pixels they click
 through collections, section previews, attachments, star search, filters and review.
 Each case leaves a standalone `workspace.html` or `pulse.html` beside its mock vault.
 For a screenshot, open that generated file at its test width or pass its file URL

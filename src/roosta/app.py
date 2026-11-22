@@ -1731,8 +1731,9 @@ async def api_pulse():
         running_activity=activity.running(),
         chat_items=chat_items,
         active_project_items=[
-            {"id": item["id"], "title": item.get("title", ""), "project_ref": item["project_ref"]}
-            for item in active_items if item.get("project_ref")
+            {"id": item["id"], "title": item.get("title", ""), "project_ref": item.get("project_ref"),
+             "documents": item.get("documents", [])}
+            for item in active_items if item.get("project_ref") or item.get("documents")
         ],
     ))
 

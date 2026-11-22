@@ -1,6 +1,8 @@
 """Offline page fixtures for collection navigation and mixed-star reviews."""
 import json
+import os
 import re
+import shutil
 
 import pytest
 
@@ -24,7 +26,6 @@ def fixture_page(directory, name):
     setup = """
 window.setInterval = window.requestAnimationFrame = () => 0;
 history.replaceState = () => {};
-window.marked = {parse: text => text};
 let confirmed = false;
 window.fetch = async (url, options) => {
   let value;
@@ -54,27 +55,49 @@ click('[data-preview]');await settle();
 const preview=q('#preview article').textContent;
 check(preview.includes('Pilot first.') && !preview.includes('Unrelated history.'),'Source section');
 check(new URL(q('#open-document').href).searchParams.get('path')===sample.path,'Canonical source');
-click('[data-select]');check(new URL(q('#open-chat').href).searchParams.getAll('file').includes(sample.path),'Attachment');
+click('[data-select]');
+const attachments=new URL(q('#open-chat').href).searchParams.getAll('file');
+check(attachments.length===1 && attachments.includes(sample.path),'Attachment');
 """
     pulse_probe = """
 const search=q('#constellation-search');search.value='Clients Coast';search.dispatchEvent(new Event('input'));
 check(q('#constellation-detail').textContent.includes('1 of 3 stars match'),'Mixed collection search');
-click('[data-filter="stale"]');click('[data-project]');await settle();
-check(q('#constellation-detail').textContent.includes('Coast account'),'Select star');
-check(q('#constellation-detail').textContent.includes('verified'),'Date source');
-click('[data-zoom="in"]');click('#review-start');click('[data-review-action="confirm"]');await settle();
-check(confirmed,'Confirm selected page');
-click('[data-review-nav="exit"]');search.dispatchEvent(new Event('input'));
-click('[data-project]');await settle();
-check(q('#constellation-detail').textContent.includes('Human-checked'),'Updated drawer');
+const drawer=q('#constellation-detail');
+click('[data-filter="stale"]');
+check(q('[data-filter="stale"]').getAttribute('aria-pressed')==='true','Drifting filter selected');
+click('#constellation-detail [data-project="'+sample.client+'"]');await settle();
+check(drawer.dataset.shown===sample.client && drawer.textContent.includes('Coast account'),'Select matching star');
+check(drawer.textContent.includes('verified'),'Date source');
+click('[data-zoom="in"]');
+search.value='';search.dispatchEvent(new Event('input'));
+click('[data-filter="all"]');click('#review-start');
+check(drawer.textContent.includes('Review 1 of 2'),'Review starts at the drifting client');
+click('[data-review-action="confirm"]');await settle();
+check(confirmed && drawer.textContent.includes('Review 2 of 2') && drawer.textContent.includes('Partner account'),
+      'Confirmation advances review to the partner');
+click('[data-review-nav="prev"]');await settle();
+check(drawer.dataset.shown===sample.client && drawer.textContent.includes('Human-checked'),'Return to verified client');
+click('[data-review-nav="exit"]');
+check(drawer.dataset.shown===sample.client && !q('[data-review-nav="exit"]'),'Exit review with client selected');
 """
     source = (STATIC / f"{name}.html").read_text()
     source = re.sub(r'<script src="(?:https://[^"]+|/static/nav-count.js)"[^>]*></script>', '', source)
     source = source.replace('/static/', STATIC.as_uri() + '/')
     setup = 'const sample=' + json.dumps(data).replace('<', r'\u003c') + ';' + setup
-    source = source.replace('<head>', '<head><script>' + setup + '</script>')
+    marked = os.environ.get("ROOSTA_QA_MARKED")
+    if marked:
+        shutil.copyfile(marked, directory / "marked.umd.js")
+        renderer = '<script src="marked.umd.js"></script>'
+    else:
+        renderer = '<script>window.marked={parse:text=>text};</script>'
+    source = source.replace('<head>', '<head><style>#collection-result{display:none}</style>' + renderer + '<script>' + setup + '</script>')
     probe = """
-const q=s=>document.querySelector(s),click=s=>q(s).click(),check=(ok,hint)=>{if(!ok)throw Error(hint);};
+const q=s=>document.querySelector(s),check=(ok,hint)=>{if(!ok)throw Error(hint);};
+function click(selector){
+  const element=q(selector);
+  check(element && !element.disabled,'Expected enabled control '+selector);
+  element.click();
+}
 const rows=()=>Array.from(document.querySelectorAll('[data-preview]'),b=>b.dataset.preview);
 const settle=async()=>{for(let i=0;i<20;i++)await Promise.resolve();};
 window.addEventListener('load',async()=>{
@@ -84,7 +107,7 @@ window.addEventListener('load',async()=>{
     PROBE
     check(document.documentElement.scrollWidth<=document.documentElement.clientWidth,'Horizontal overflow');
   } catch(e){error=e.message;}
-  const out=document.createElement('pre');out.id='collection-result';out.hidden=true;
+  const out=document.createElement('pre');out.id='collection-result';
   out.textContent=JSON.stringify({error});document.body.appendChild(out);
 });
 """.replace('PROBE', workspace_probe if name == 'workspace' else pulse_probe)

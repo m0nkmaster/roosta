@@ -150,14 +150,16 @@ def test_nested_relationships_and_fenced_examples(tmp_path):
     seed(tmp_path)
     with (tmp_path / CLIENT).open("a") as f:
         f.write("\n## Related\n| [Partner](../../Partners/Acme.md) | Shared renewal |\n")
+    plan = ("## Plan\n\n```sh\ncat <<'NOTES'\n```~\n## Decisions\n- [Example](notes.md)\nNOTES\n"
+            "python -m pytest -q\n```\nShip on Tuesday.")
     with (tmp_path / PROJECT).open("a") as f:
-        f.write("\n## Plan\n\n```md\n## Decisions\nExample only.\n```\nShip on Tuesday.\n")
+        f.write("\n" + plan + "\n\n## Background\nUnrelated history.\n")
     data = pulse.scan_vault(tmp_path)
     signals = {s["path"]: s for s in data["project_signals"]}
     assert signals[CLIENT]["related"] == [signals[OTHER]["name"]]
     assert signals[OTHER]["related"] == [signals[CLIENT]["name"]]
     groups = {c["id"]: c for c in workspace.build_catalogue(tmp_path)["collections"]}
-    assert "Example only." in groups["work:plans"]["sections"][PROJECT]
+    assert groups["work:plans"]["sections"][PROJECT] == plan
     assert PROJECT not in groups["work:decisions"]["paths"]
 
 
@@ -168,3 +170,15 @@ def test_symlinked_index_does_not_restore_unselected_projects(tmp_path):
     assert not pulse.scan_vault(tmp_path)["project_signals"]
     with pytest.raises(FileNotFoundError):
         pulse.project_brief(tmp_path, "launch")
+
+
+def test_board_attention_follows_explicit_source_documents(tmp_path):
+    seed(tmp_path)
+    item = {"id": "review", "title": "Check pilot", "project_ref": "projects/launch",
+            "documents": [{"path": CLIENT}, {"path": PROJECT}, {"path": CLIENT}]}
+    data = pulse.build_pulse(tmp_path, [], {}, 1, 0, {}, active_project_items=[item])
+    signals = {s["path"]: s for s in data["vault"]["project_signals"]}
+    for path in [PROJECT, CLIENT]:
+        assert signals[path]["board_items"] == [{"id": "review", "title": "Check pilot"}]
+        assert signals[path]["active_board_items"] == 1
+    assert signals[OTHER]["active_board_items"] == 0

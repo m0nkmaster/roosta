@@ -167,6 +167,8 @@ harness rejects any other `status` value (including `completed`).
 <task-output>{"summary":"<one line>","status":"success","details":{"commit":"<hash or none>","garden_log":"notes/garden-log.md"}}</task-output>
 ```
 
+For a collection proposal awaiting a choice, add one entry to `details.items` with a stable id, title, reason (`why`), a concrete `opening_move` and relative Markdown sources in `documents`. Record the decision before changing membership.
+
 Use `status: "error"` only when the pass could not read checkpoints or commit workspace changes.
 
 ## Related

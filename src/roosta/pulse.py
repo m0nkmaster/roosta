@@ -615,11 +615,15 @@ def build_pulse(
     ]
     project_items: dict[str, list[dict]] = {}
     for item in items:
-        project_items.setdefault(item.get("project_ref", ""), []).append(item)
+        refs = {doc["path"] for doc in (item.get("documents") or [])
+                if isinstance(doc, dict) and isinstance(doc.get("path"), str)}
+        ref = item.get("project_ref")
+        if isinstance(ref, str) and ref:
+            refs.add(ref + "/README.md" if re.fullmatch(r"projects/[a-z0-9-]+", ref) else ref)
+        for ref in refs:
+            project_items.setdefault(ref, []).append(item)
     for project in vault["project_signals"]:
         linked = project_items.get(project["path"], [])
-        if PROJECT_SLUG.fullmatch(project["name"]):
-            linked = linked + project_items.get(f"projects/{project['name']}", [])
         project["active_board_items"] = len(linked)
         project["board_items"] = [
             {"id": str(item["id"]), "title": str(item.get("title") or "Board item")}
