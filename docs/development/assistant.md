@@ -37,7 +37,7 @@ starting `assistant/` are under the workspace's `.roosta/state/`. Also see
 
 - **✕ archives a chat, never deletes it.** `POST /api/chats/archive` records the close time and displayed
   title in `assistant/archived-chats.json` for chats with history. The Chats tab offers Undo for
-  ten seconds. Settings lists the latest 50 still-closed chats by close time
+  ten seconds. Settings previews the newest 10 still-closed chats and can expand to the latest 50 by close time
   (`GET /api/chats/archived`), including legacy timestamp-only records. A newer message brings
   a chat back automatically. Undo and Settings both call `POST /api/chats/restore {item_id}` and
   open the original thread. Its restore time ranks it among recent chats even if its last message

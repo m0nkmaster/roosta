@@ -131,6 +131,9 @@
   <section class="card mb-3" aria-labelledby="closed-chats-title">
     <div class="card-header"><h2 class="card-title" id="closed-chats-title">Recently closed chats</h2></div>
     <div class="list-group list-group-flush" id="closed-chats"></div>
+    <div class="card-footer" id="closed-chats-footer" hidden>
+      <button type="button" class="btn btn-sm" id="closed-chats-toggle" aria-controls="closed-chats" aria-expanded="false">Show more</button>
+    </div>
     <div class="card-body text-secondary" id="closed-chats-status" role="status">Loading chats…</div>
   </section>
   <section class="card">
@@ -154,12 +157,19 @@
 async function loadClosedChats(){
   const list=document.getElementById('closed-chats');
   const status=document.getElementById('closed-chats-status');
+  const footer=document.getElementById('closed-chats-footer');
+  const toggle=document.getElementById('closed-chats-toggle');
+  const previewLimit=10;
+  list.replaceChildren();
+  footer.hidden=true;
+  toggle.textContent='Show more';
+  toggle.setAttribute('aria-expanded','false');
+  status.hidden=false; status.textContent='Loading chats…';
   try{
     const response=await fetch('/api/chats/archived');
     if(!response.ok) throw new Error();
-    const chats=await response.json();
-    list.replaceChildren();
-    for(const chat of chats){
+    const chats=(await response.json()).slice(0,50);
+    const rows=chats.map(chat=>{
       const row=document.createElement('div');
       row.className='list-group-item d-flex align-items-center justify-content-between gap-3';
       const name=document.createElement('span'); name.className='text-break'; name.textContent=chat.title;
@@ -178,8 +188,17 @@ async function loadClosedChats(){
           button.disabled=false;
         }
       };
-      row.append(name,button); list.appendChild(row);
-    }
+      row.append(name,button);
+      return row;
+    });
+    list.replaceChildren(...rows.slice(0,previewLimit));
+    footer.hidden=rows.length<=previewLimit;
+    toggle.onclick=()=>{
+      const expand=toggle.getAttribute('aria-expanded')==='false';
+      list.replaceChildren(...(expand?rows:rows.slice(0,previewLimit)));
+      toggle.textContent=expand?'Show less':'Show more';
+      toggle.setAttribute('aria-expanded',String(expand));
+    };
     status.textContent=chats.length?'':'No recently closed chats.';
     status.hidden=chats.length>0;
   }catch{

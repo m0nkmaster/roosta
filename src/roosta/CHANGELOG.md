@@ -2,6 +2,10 @@
 
 Record each release newest first. Bump minor for features and visible behaviour, patch for fixes and polish.
 
+## 0.13.0 - 2026-11-22
+
+- Settings shows the 10 most recently closed chats first. Use Show more to see up to 50 or Show less to return to 10.
+
 ## 0.12.0 - 2026-11-21
 
 - Assistant chats show live reply status and available tool activity, including when you reopen a running chat. Progress clears when the reply ends.
