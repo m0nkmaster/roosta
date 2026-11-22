@@ -54,7 +54,7 @@ ASSISTANT_HISTORY = os.environ.get(
 
 # Distinctive phrases in the first user message of a Roosta runner session.
 BG_PHRASES = (
-    "running as an unattended background task. Load the",
+    "running as an unattended background task.",
     "running as an unattended scheduled background task.",
     "triggered Run now on the skill runner.",
 )

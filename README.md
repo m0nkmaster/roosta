@@ -52,11 +52,11 @@ roosta init ~/workspace
 roosta start                      # http://127.0.0.1:7667/assistant (7667: R-O-O-S on a phone keypad)
 ```
 
-Connect your AI and follow the setup steps above. Run Roosta in the background with `roosta service install` (launchd on macOS, systemd on Linux). Settings also covers the workspace, address, background service and core-skills sync, without a terminal. Converting a folder of notes you already have? `roosta init --adopt <folder>` adds Roosta without touching your files.
+Connect your AI and follow the setup steps above. Run Roosta in the background with `roosta service install` (launchd on macOS, systemd on Linux). Settings also covers the workspace, address, background service and core skill ownership, without a terminal. Converting a folder of notes you already have? `roosta init --adopt <folder>` adds Roosta without touching your files.
 
 ### Updating and diagnosing Python installations
 
-Run `roosta update --check` to preview the latest stable GitHub release. Run `roosta update` to install it in the environment that supplied this CLI. Python upgrades require a matching, non-yanked wheel on PyPI for your Python version. A current or newer CLI stays in place. Roosta uses the owning uv tool or pipx installation, or the original pip or uv installer in a standalone virtual environment. Source checkouts, bundled apps and installations whose owner cannot be identified receive manual update instructions. After an upgrade, restart the runner serving your workspace and run `roosta skills sync --workspace <folder>` to refresh its core skills.
+Run `roosta update --check` to preview the latest stable GitHub release. Run `roosta update` to install it in the environment that supplied this CLI. Python upgrades require a matching, non-yanked wheel on PyPI for your Python version. A current or newer CLI stays in place. Roosta uses the owning uv tool or pipx installation, or the original pip or uv installer in a standalone virtual environment. Source checkouts, bundled apps and installations whose owner cannot be identified receive manual update instructions. After an upgrade, restart the runner serving your workspace to use the new core skills.
 
 Run `roosta doctor` for a read-only report. Workspace selection follows `--workspace <folder>`, `ROOSTA_WORKSPACE`, the saved configuration, then the current directory. Use `--offline` to skip the public release and local runner requests, and `--json` for structured checks and counts.
 
@@ -93,13 +93,21 @@ A skill is the backbone of Roosta's workers, there are a set of instructions for
 | `workspace-learner` | Learns from your AI chats and connected tools |
 | `skill-auditor` | Reviews and improves the skill set |
 | `workspace-new-project` | Scaffolds a project |
-| `setup` | First-run and re-runnable setup; merges skill updates |
+| `setup` | First-run setup and guided fork review |
 | `connectors` | Connects a tool safely, with a catalogue of common ones |
 | `page-builder` | Builds custom pages |
 | `write-a-skill` | Writes and sharpens skills |
 | `roosta-engineer` | Evolves your pages, tasks and skills from how you use them |
 
-Core skills are copied into your workspace and become yours. `roosta skills sync` updates the ones you haven't edited; the `setup` skill helps merge updates into ones you have.
+Workers and chats read core skills, their scripts and references, and the operating model directly from the installed package. In Settings → Workspace and runner, **Review customisations** opens an unsent chat draft comparing your local behaviour with installed core. You choose which preferences to keep. For terminal use, run the following commands from your workspace (or pass `--workspace <folder>` to workspace commands).
+
+- **Add a preference.** `roosta skills extend NAME` prints the editable file at `.roosta/skill-extensions/NAME.md`. Roosta reads it after the skill on each turn. The installed instructions keep improving on upgrade. Additions cannot change approval, tool or output protocols.
+- **Replace a skill.** `roosta skills fork NAME` pins a complete editable tree under `.roosta/skill-forks/NAME/`. Settings and `roosta skills status` identify forks and flag when the installed tree has changed since the fork was created.
+- **Return to core.** Compare the fork with `NAME/` under the folder printed by `roosta skills path`. Move the preferences you want into an extension, then run `roosta skills use-core NAME`. With the runner open, the switch takes effect on restart so active turns can finish. The complete fork moves into `.roosta/skill-archive/forks/` for recovery. The same command archives a retired skill under `retired/`. Setup can help review scripts, references and behavioural differences before you switch.
+
+On startup, Roosta moves verified generated copies into `.roosta/skill-archive/` and uses installed core. A missing copy also uses installed core. An edited or unverifiable tree becomes an active fork for review. An independent Claude copy is checked separately. A verified clean Agents copy continues to follow core even if the Claude copy differs. When both contain changes, the Agents copy stays active and the Claude copy is archived under `review-claude/` inside the archive and listed for review. Retired skills present in the old lock survive as workspace forks. Other custom skills remain in place. The compatibility command `roosta skills sync` reports pending changes. Restart after active runs finish to apply migration. Roosta keeps the old lock and archives recognised generated operating models before installing a small pointer. Edited operating models and workspace instructions stay in place. Linked or incomplete skill trees stay available for review in Settings while other skills migrate.
+
+For standalone agent sessions, run `roosta skills instructions [NAME]` in the workspace. It prints the same operating model and effective file routes as dashboard turns. A same-named project or global skill cannot shadow installed core.
 
 ### Shared knowledge you own
 
@@ -107,14 +115,15 @@ Your office's knowledge lives in a local folder of Markdown files: your profile,
 
 ```
 ~/workspace/
-  AGENTS.md            # your rules; links the operating model (CLAUDE.md points here)
+  AGENTS.md            # your rules and standalone skill routing (CLAUDE.md points here)
   PROFILE.md           # who you are and how the assistant should sound
   PRIORITIES.md        # what matters now
   CONTEXT.md TOOLS.md  # your domain and your tools
   projects/ notes/ drafts/ analysis/ templates/
-  .agents/skills/      # core skills, then yours (.claude/skills points here)
+  .agents/skills/      # your custom skills (.claude/skills points here)
   .roosta/
-    operating-model.md # Roosta's rules, replaced on update
+    skill-extensions/  # additive instructions for installed skills
+    skill-forks/       # explicitly pinned skill trees
     tasks.yaml         # the schedule
     connectors.yaml    # tool sign-in checks and write denials
     pages/             # your custom pages
@@ -213,7 +222,7 @@ npm start                         # run the app from source, no install
 npm run setup:signing && npm run install:mac   # or install it into /Applications
 ```
 
-With the editable install, dashboard HTML and CSS changes show on reload, Python changes after **Restart Roosta**, and core skill changes after `roosta skills sync`; none needs a rebuild. Only changes under `desktop/` need `npm start` again or a fresh `npm run install:mac`. Notifications, signing and troubleshooting: [desktop/README.md](desktop/README.md).
+With the editable install, dashboard HTML and CSS changes show on reload, Python changes after **Restart Roosta**, and core skill changes on the next turn; none needs a rebuild. Only changes under `desktop/` need `npm start` again or a fresh `npm run install:mac`. Notifications, signing and troubleshooting: [desktop/README.md](desktop/README.md).
 
 Run checks from the repository root:
 

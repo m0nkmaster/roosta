@@ -42,7 +42,7 @@ def copy_skeleton(source: Path, target: Path) -> list[str]:
             continue
         if "__pycache__" in relative.parts:
             continue
-        destination = target / relative
+        destination = skills.local(target, relative)
         if path.is_dir():
             destination.mkdir(parents=True, exist_ok=True)
         elif not destination.exists():
@@ -64,7 +64,7 @@ def ensure_gitignore(root: Path) -> None:
 def ensure_links(root: Path) -> list[str]:
     """CLAUDE.md -> AGENTS.md and .claude/skills -> .agents/skills, where nothing is there yet.
 
-    Windows cannot be relied on for symlinks, so it gets a copy of the skills instead.
+    On platforms without symlinks Claude gets its own folder.
     """
     notes = []
     claude_md = root / "CLAUDE.md"
@@ -80,8 +80,8 @@ def ensure_links(root: Path) -> list[str]:
         try:
             claude_skills.symlink_to(Path("..") / ".agents" / "skills", target_is_directory=True)
         except OSError:
-            shutil.copytree(root / ".agents" / "skills", claude_skills)
-            notes.append(".claude/skills is a copy of .agents/skills; re-run `roosta skills sync` after edits.")
+            claude_skills.mkdir()
+            notes.append("Claude has an independent skills folder. Roosta reads workspace skills from .agents/skills.")
     return notes
 
 
@@ -152,7 +152,8 @@ def init(target: Path, adopt: bool = False, check: bool = True, initialise_git: 
         return 1
     target.mkdir(parents=True, exist_ok=True)
     created = copy_skeleton(paths.SKELETON_DIR, target)
-    report = skills.sync(paths.CORE_SKILLS_DIR, target)
+    if not os.path.lexists(target / ".roosta/operating-model.md"):
+        skills.install_pointer(target)
     ensure_gitignore(target)
     notes = ensure_links(target)
     if initialise_git and not (target / ".git").exists() and shutil.which("git"):
@@ -167,9 +168,7 @@ def init(target: Path, adopt: bool = False, check: bool = True, initialise_git: 
                 notes.append("could not make the first commit (is git's user.name set?); commit it yourself")
     remember_workspace(target)
     print(f"Roosta {__version__} workspace ready at {target}")
-    print(f"  {len(created)} starter files, {len(report.installed)} core skills installed")
-    for name in report.modified:
-        print(f"  kept your edited skill {name}; run the setup skill to merge Roosta's update")
+    print(f"  {len(created)} starter files. Core skills run from the installed package.")
     for note in notes:
         print(f"  note: {note}")
     print(f"\nNext: roosta start --workspace {target}")
@@ -356,8 +355,20 @@ def main(argv: list[str] | None = None) -> int:
 
     p_skills = sub.add_parser("skills", help="manage the core skills Roosta ships")
     skills_sub = p_skills.add_subparsers(dest="action", required=True)
-    p_sync = skills_sub.add_parser("sync", help="update unmodified core skills")
-    p_sync.add_argument("--workspace", default=".")
+    for action, help_text in (
+        ("instructions", "print the installed operating model and effective skill routes"),
+        ("status", "show installed skills, extensions and pinned forks"),
+        ("sync", "show skill ownership and restart guidance for legacy copies"),
+        ("extend", "create or locate additive instructions"),
+        ("fork", "pin an editable copy of the installed skill"),
+        ("use-core", "archive the fork and resume installed core plus extensions"),
+    ):
+        command = skills_sub.add_parser(action, help=help_text)
+        command.add_argument("--workspace", default=".")
+        if action == "instructions":
+            command.add_argument("name", nargs="?", default="")
+        if action in {"extend", "fork", "use-core"}:
+            command.add_argument("name")
     skills_sub.add_parser("path", help="print the folder holding Roosta's shipped core skills")
 
     p_usage = sub.add_parser("usage", help="summarise local Assistant usage (for the roosta-engineer)")
@@ -395,8 +406,27 @@ def main(argv: list[str] | None = None) -> int:
         if args.action == "path":
             print(paths.CORE_SKILLS_DIR)
             return 0
-        report = skills.sync(paths.CORE_SKILLS_DIR, Path(args.workspace).expanduser().resolve())
-        print(report.summary())
+        workspace = Path(args.workspace).expanduser().resolve()
+        if not (workspace / ".roosta").is_dir():
+            print("Choose a Roosta workspace with --workspace.")
+            return 1
+        try:
+            if args.action == "instructions":
+                print(skills.instructions(args.name, workspace, workspace))
+                return 0
+            if args.action == "sync":
+                print("Legacy skills migrate on the next Roosta startup. Finish active runs before restarting.")
+            if args.action in {"sync", "status"}:
+                print(json.dumps(skills.status(paths.CORE_SKILLS_DIR, workspace), indent=2))
+            else:
+                result = skills.manage(args.action, args.name, workspace, paths.CORE_SKILLS_DIR)
+                if result.parent.name == "skill-decisions":
+                    print(f"{args.name} will be archived the next time Roosta starts.")
+                else:
+                    print(result)
+        except (OSError, ValueError) as exc:
+            print(exc)
+            return 1
         return 0
     return 2
 

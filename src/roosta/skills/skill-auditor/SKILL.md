@@ -48,7 +48,7 @@ it there, not by bolting narrative onto a skill.
   in `## Related`). A skill may link to other skills, never to vault project
   files as a dependency. **Vault-management carve-out:** skills that manage this
   workspace's own structure legitimately depend on its canonical convention docs
-  (`.roosta/operating-model.md`, `PROFILE.md`). Treat these as
+  (the installed operating model, `PROFILE.md`). Treat these as
   compliant - do **not** re-flag them each pass. The strict rule applies only to
   transferable/domain skills.
 - **Commit only files you changed** - never `git add -A`.

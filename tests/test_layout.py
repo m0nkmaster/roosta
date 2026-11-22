@@ -140,3 +140,35 @@ def test_settings_account_controls_during_model_discovery(chrome, tmp_path, widt
     page.write_text(source.replace('</body>', ''.join('<script>' + js + '</script>' for js in scripts) + '</body>'))
     result = run_probe(chrome, page, width, 800, 'account-result')
     assert result == {'ok': True}, result
+
+
+def test_workspace_settings_explains_pinned_core_and_recovery(chrome, tmp_path):
+    source = (STATIC / 'settings.html').read_text()
+    source = re.sub(r'<script\b[^>]*>[\s\S]*?</script>', '', source, flags=re.I)
+    source = source.replace('/static/', STATIC.as_uri() + '/')
+    # Network-free fixture. Only the Workspace settings script runs.
+    probe = """
+window.fetch = async () => ({ok: true, json: async () => ({
+  managed_by: 'desktop', workspace: '/example', version: '0.17.0',
+  skills: {core: ['setup'], extensions: ['setup'], pending: [], problems: [], installed_path: '/installed/skills',
+           review: {actor: ['.roosta/skill-archive/review-claude/actor']},
+           forks: {actor: 'legacy copy, review against installed core', sender: 'core update available'}, archive: true}
+})});
+new MutationObserver((_, observer) => {
+  observer.disconnect();
+  const result = document.createElement('pre');
+  result.id = 'ownership-result';
+  result.textContent = JSON.stringify({text: document.querySelector('[data-row="skills"]').innerText,
+    ask: new URL(document.querySelector('[data-row="skills"] a').href).searchParams.get('ask')});
+  document.body.appendChild(result);
+}).observe(document.querySelector('#ws-rows'), {childList:true});
+"""
+    script = (STATIC / 'workspace-settings.js').read_text()
+    page = tmp_path / 'ownership.html'
+    page.write_text(source.replace('</body>', f'<script>{probe}\n{script}</script></body>'))
+    copy = run_probe(chrome, page, 800, 900, "ownership-result")
+    for expected in ('0.17.0', 'Workspace extensions: setup', 'Fork · actor', 'core update available',
+                     'Review customisations', 'skill-archive'):
+        assert expected in copy["text"]
+    assert "/installed/skills/setup/SKILL.md" in copy["ask"]
+    assert "review-claude/actor" in copy["ask"] and ".roosta/skill-forks/sender" in copy["ask"]

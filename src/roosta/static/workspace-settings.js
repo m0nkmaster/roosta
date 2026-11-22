@@ -94,11 +94,29 @@
     }
     return '';
   }
-  function skillsStatus() {
+  function skillsRow() {
     const s = state.skills;
-    if (notes.skillsResult) return notes.skillsResult;
-    if (s.roosta && s.roosta === state.version) return `<small class="text-success">Up to date with Roosta ${esc(state.version)}</small>`;
-    return `<small class="text-secondary">${s.roosta ? `Last updated with Roosta ${esc(s.roosta)}` : 'Not updated yet'}</small>`;
+    const lines = [`${s.core.length} skills follow the installed Roosta ${esc(state.version)}.`];
+    if (s.extensions.length) lines.push(`Workspace extensions: ${esc(s.extensions.join(', '))}.`);
+    for (const [name, reason] of Object.entries(s.forks)) lines.push(`Fork · ${esc(name)} · ${esc(reason)}`);
+    for (const [name, locations] of Object.entries(s.review)) lines.push(`Review ${esc(name)} copies in ${locations.map(code).join(', ')}.`);
+    if (s.pending.length) lines.push(`Review unmigrated paths: ${s.pending.map(code).join(', ')}.`);
+    lines.push(...s.problems.map(esc));
+    if (s.archive) lines.push('Recovery copies: ' + code('.roosta/skill-archive/') + '.');
+    const names = [...new Set([...Object.keys(s.forks), ...Object.keys(s.review)])];
+    const review = names.length || s.pending.length || s.problems.length;
+    let action = '';
+    if (review) {
+      const ask = [`Review my skill customisations with the installed review procedure at ${s.installed_path}/setup/SKILL.md (Reviewing workspace forks), even if setup itself is pinned.`,
+        `Installed core: Roosta ${state.version} in ${s.installed_path}.`,
+        ...names.map(name => [name, s.forks[name] && `active fork .roosta/skill-forks/${name} (${s.forks[name]})`,
+          ...(s.review[name] || [])].filter(Boolean).join(' · ')),
+        ...s.pending, ...s.problems,
+        'Compare local additions, scripts and references. Show what can follow installed core through an extension. Ask before applying changes.'].join('\n');
+      action = `<a class="btn" href="/assistant?item=new&amp;ask=${esc(encodeURIComponent(ask))}">Review customisations</a>`;
+    }
+    if (Object.values(s.forks).includes('retired from core')) lines.push('Review retired forks to keep or archive them.');
+    return row('skills', 'Roosta’s skills', lines, action);
   }
   function serviceRow() {
     const v = state.service;
@@ -136,9 +154,7 @@
       row('folder', 'Workspace folder',
         [`${code(s.workspace)} Your notes, skills and schedule live here.`].concat(remembered ? [`Opens ${code(s.remembered)} after Roosta restarts.`] : []),
         panel === 'open' || panel === 'new' ? '' : button('open', 'Open another folder') + button('new', 'New workspace'), folderPanel()),
-      row('skills', 'Roosta’s skills', ['The skills that come with Roosta. Updating keeps any you have edited.', skillsStatus()]
-        .concat(s.skills.modified.length ? [`Edited by you: ${esc(s.skills.modified.join(', '))}. <a href="/assistant">Ask Roosta</a> to run setup to merge updates.`] : []),
-        button('skills', 'Update skills')),
+      skillsRow(),
     ];
     if (!desktop()) rows.push(serviceRow(), addressRow());
     $('ws-rows').innerHTML = rows.join('');
@@ -186,13 +202,6 @@
         const result = await request('/api/settings/service', {});
         state.service = result.service;
         notes.service = {html: `Almost done. Run this in a terminal: ${code(result.service.activate)}`};
-      } else if (name === 'skills') {
-        const r = await request('/api/settings/skills-sync', {});
-        const text = [r.installed.length ? `Installed: ${r.installed.join(', ')}.` : '', r.updated.length ? `Updated: ${r.updated.join(', ')}.` : '']
-          .filter(Boolean).join(' ') || 'Already up to date.';
-        state = await request('/api/settings/workspace');
-        notes.skillsResult = `<small class="text-success">${esc(text)}</small>`;
-        notes.skills = null;
       }
     } catch (error) { notes[key] = {html: esc(error.message), error: true}; }
     busy.delete(name); render();

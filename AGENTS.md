@@ -63,7 +63,7 @@ Paths below are relative to `src/roosta/` unless stated otherwise.
 | `chat_items.py` | Open, document, worker 1:1 and new-worker chat items |
 | `ai_backend.py`, `ai_connections.py`, `ai_runtime.py` | AI dispatch, named accounts, credential references and managed runtimes |
 | `ai_settings.py` | Worker runtime checks and options, model lists and validation, Settings setup jobs |
-| `workspace_settings.py` | How Roosta is run, the skills lock and the workspace folder browser |
+| `workspace_settings.py` | How Roosta is run, skill ownership and the workspace folder browser |
 | `pi_agent.py`, `pi_guard.mjs` | Pi RPC transport and permission hook |
 | `cursor_agent.py`, `cursor_sessions.py` | Cursor invocation, environment, transcript reading |
 | `claude_code.py`, `claude_guard.py` | Claude invocation, stream parsing, permission settings/hook |
@@ -83,10 +83,10 @@ Runtime data is gitignored under `.roosta/state/`: task outputs in `cache/{id}.j
 chat/board stores in `assistant/`, custom-page data in `pages/<name>/`.
 
 `roosta init` copies the skeleton without overwriting and links `CLAUDE.md` to `AGENTS.md`
-and `.claude/skills` to `.agents/skills` (copies on Windows). It records the workspace in
-`~/.config/roosta/config.json` for the desktop app and bare `roosta start`. `roosta skills sync` uses
-`.roosta/skills.lock.json` to update untouched skills, preserves edited skills for `setup`
-to merge, and replaces `.roosta/operating-model.md` on every sync.
+and `.claude/skills` to `.agents/skills` (independent folders when links are unavailable). It records the workspace in
+`~/.config/roosta/config.json` for the desktop app and bare `roosta start`. Core skills and the operating model run directly from the package.
+Startup migrates legacy trees before workers and chats start. Workspace additions and pinned forks
+live under `.roosta/skill-extensions/` and `.roosta/skill-forks/` (see README).
 
 ## Regression traps
 
@@ -126,8 +126,7 @@ Tests are grouped by subsystem: `test_runner.py`, `test_board.py`, `test_claude_
 `test_sessions.py`, `test_pulse.py`, `test_office.py`, `test_usage.py`, `test_uploads.py`, `test_changelog.py`.
 Board and Office tests also run extracted JavaScript helpers under Node.
 
-HTML/CSS changes load on refresh; Python changes need a runner restart; core skill changes
-need `roosta skills sync`; only `desktop/` changes need an Electron rebuild. Task YAML reloads
+HTML/CSS changes load on refresh; Python changes need a runner restart; core skill edits apply on the next turn; only `desktop/` changes need an Electron rebuild. Task YAML reloads
 without a restart.
 
 ## Keeping this guide useful

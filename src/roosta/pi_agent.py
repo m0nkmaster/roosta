@@ -5,7 +5,7 @@ import json
 import re
 from pathlib import Path
 
-from roosta import paths
+from roosta import paths, skills
 
 
 def pi_args(binary: str, connection: dict, model: str, directory: Path, session_id: str, workspace: str) -> list[str]:
@@ -16,9 +16,13 @@ def pi_args(binary: str, connection: dict, model: str, directory: Path, session_
             "--no-prompt-templates", "--no-themes", "--no-skills",
             "--tools", "read,bash,edit,write,tool_search,mcp__*",
             "--offline"]
-    for root in (Path(workspace) / ".agents/skills", Path.home() / ".agents/skills", paths.CORE_SKILLS_DIR):
-        if root.is_dir():
-            args.extend(["--skill", str(root)])
+    # Roosta supplies core and fork paths in the prompt. Native discovery adds custom skills only.
+    seen = set(skills.names(paths.CORE_SKILLS_DIR)) | set(skills.names(skills.local(paths.WORKSPACE, skills.FORKS)))
+    for root in (Path(workspace) / ".agents/skills", paths.WORKSPACE / ".agents/skills", Path.home() / ".agents/skills"):
+        for name in skills.names(root):
+            if name not in seen:
+                args.extend(["--skill", str(root / name / "SKILL.md")])
+                seen.add(name)
     return args
 
 

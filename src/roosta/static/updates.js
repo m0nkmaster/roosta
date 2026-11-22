@@ -42,7 +42,7 @@
           if (data.command) line('').appendChild(document.createElement('code')).textContent = data.command;
           if (data.installer) link('Download the installer for this Mac', data.installer);
           if (data.restart) line(data.restart);
-          line('Confirm the running version here. Your workspace, chats and settings stay in place. To update core skills separately, use Sync core skills in Settings. Sync updates untouched skills, preserves your edits for merging in setup and refreshes the managed operating model.');
+          line('Confirm the running version here. Your workspace, chats and settings stay in place. Installed core skills update with Roosta. Review pinned forks in Workspace settings.');
         }
       } else {
         status.textContent = data.state === 'current' ? 'Roosta is up to date.' : data.error;

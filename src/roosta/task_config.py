@@ -105,10 +105,15 @@ def skill_files(skill: str, working_dir: str | Path) -> list[Path]:
 
 def skill_description(skill: str, working_dir: str | Path) -> str:
     """Read a skill's description from the first matching SKILL.md."""
-    for candidate in skill_files(skill, working_dir):
+    from roosta.workspace import read_document
+    try:
+        files = skill_files(skill, working_dir)
+    except (ValueError, OSError, RuntimeError):
+        return ""
+    for candidate in files:
         try:
-            text = candidate.read_text()
-        except (FileNotFoundError, OSError):
+            _, text, _ = read_document(candidate.parent.parent, f"{skill}/SKILL.md")
+        except (ValueError, OSError):
             continue
         frontmatter = re.match(r"\A---\s*\n(.*?)\n---(?:\s*\n|$)", text, re.DOTALL)
         if not frontmatter:
@@ -137,7 +142,8 @@ def workspace_skills() -> list[str]:
     """Names of the skills this workspace holds, from its own skill roots only."""
     names: set[str] = set()
     for root in (paths.WORKSPACE / ".agents" / "skills", paths.WORKSPACE / ".claude" / "skills",
-                 paths.WORKSPACE / ".cursor" / "skills"):
+                 paths.WORKSPACE / ".cursor" / "skills", paths.CORE_SKILLS_DIR,
+                 paths.WORKSPACE / ".roosta/skill-forks"):
         try:
             entries = list(root.iterdir())
         except OSError:
@@ -462,7 +468,7 @@ def load_tasks() -> list[TaskConfig]:
         if t.get("script"):
             log.warning("Task %s has a 'script:' key; script tasks are no longer supported", t.get("id"))
             continue
-        working_dir = t.get("dir", str(paths.WORKSPACE))
+        working_dir = str((paths.WORKSPACE / Path(t.get("dir", ".")).expanduser()).resolve())
         custom_description = str(t.get("description", "") or "").strip()
         connection = str(t.get("connection") or "")
         if connection == "default":  # Read old files without keeping the sentinel alive.

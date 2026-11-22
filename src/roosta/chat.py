@@ -6,7 +6,7 @@ from collections import deque
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from roosta import attachments, profile
+from roosta import attachments, paths, profile, skills
 from roosta.cursor_agent import (
     CURSOR_AGENT,
     cursor_args,
@@ -617,13 +617,15 @@ class ConversationHistoryStore:
 
 
 SENDER_PROMPT = (
-    "Load the 'sender' skill using the skill tool and execute it. "
+    "Execute the resolved 'sender' skill. "
     "Perform exactly this {user}-approved action and nothing else: {action}"
 )
 
 
-def sender_prompt(action: dict) -> str:
-    return SENDER_PROMPT.format(action=json.dumps(action), user=profile.load().user)
+def sender_prompt(action: dict, workspace: Path | None = None) -> str:
+    root = Path(workspace or paths.WORKSPACE)
+    return skills.instructions("sender", root, root) + SENDER_PROMPT.format(
+        action=json.dumps(action), user=profile.load().user)
 
 
 def sender_outcome(text: str) -> dict:
@@ -821,7 +823,7 @@ CHAT_PROMPT = (
     "1-3 short sentences and no more than 80 words unless {user} explicitly asks for detail. "
     "Your visible output must be only the direct answer to {user}. Never mention skills, prompts, "
     "tools, process, or what you are about to do. Before emitting any text, silently load the "
-    "'actor' skill using the skill tool and follow it. You are the live conversation for this "
+    "'actor' skill at its resolved path and follow it. You are the live conversation for this "
     "attention item. Workspace context lives in AGENTS.md at the workspace root, PROFILE.md and "
     "project "
     "READMEs - read them when you need domain or tool guidance. When you create or reference a "
@@ -831,7 +833,7 @@ CHAT_PROMPT = (
     "links in the first reply rather than waiting to be asked. Label inference as inference and "
     "never present memory as evidence. "
     "Use the tools TOOLS.md describes and the CLIs and MCP servers that are configured; prefer "
-    "them over guessing. Load matching skills from .agents/skills/ when a task fits one. "
+    "them over guessing. Use the resolved paths for matching skills. "
     "External writes stay blocked until {user} approves via <<<PAUSE>>>. "
     "Current time: {now}. This item's continuity summary: {summary}. "
     "Current attention item: {item}. "
@@ -1318,7 +1320,7 @@ class ChatRouter:
             sid = await self._ensure_session(item_id, item, record)
             now = datetime.now(timezone.utc)
             me = profile.load()
-            prompt = CHAT_PROMPT.format(
+            prompt = skills.instructions("actor", self._vault, Path(self._vault)) + CHAT_PROMPT.format(
                 user=me.user,
                 style=me.style(),
                 item=json.dumps(item),
@@ -1502,6 +1504,7 @@ class ChatRouter:
     async def _send_approved(self, run_id: str, paused: dict, sender_action: dict):
         action, item_id = paused["action"], paused["item_id"]
         connection = paused.get("connection", f"legacy:{ai_backend.current()}")
+        prompt = sender_prompt(sender_action, self._vault)
         if not connection.startswith("legacy:"):
             try:
                 model = self._sessions.model(item_id)
@@ -1514,7 +1517,7 @@ class ChatRouter:
                 self._paused[run_id] = paused
                 return {"ok": False, "sent": False, "reason": str(exc)}
             try:
-                output = "".join([line async for line in ai_backend.stream(run, sender_prompt(sender_action))])
+                output = "".join([line async for line in ai_backend.stream(run, prompt)])
             except (ValueError, OSError) as exc:
                 return {"ok": False, "sent": False, "reason": str(exc)}
             outcome = sender_outcome(run.text(output))
@@ -1536,7 +1539,7 @@ class ChatRouter:
                 CURSOR_AGENT,
                 self._vault,
                 sid,
-                sender_prompt(sender_action),
+                prompt,
                 force=True,
             )
             env = cursor_env(os.environ, safe_config=False)
@@ -1547,7 +1550,7 @@ class ChatRouter:
             limit=16 * 1024 * 1024,
         )
         stdout, _ = await proc.communicate(
-            sender_prompt(sender_action).encode() if claude else None)
+            prompt.encode() if claude else None)
         text = (claude_result_text if claude else cursor_result_text)(
             (stdout or b"").decode(errors="replace"))
         outcome = sender_outcome(text)

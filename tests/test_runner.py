@@ -722,7 +722,7 @@ def test_worker_skill_preview_uses_runner_lookup_order(monkeypatch, tmp_path):
         skill = root / task.skill / "SKILL.md"
         skill.parent.mkdir(parents=True)
         skill.write_text(f"---\nname: daily-brief\n---\n# {root}\n")
-    for root in roots:
+    for root in (roots[2], roots[0], roots[1]):
         response = asyncio.run(appmod.api_task_skill(task.id))
         assert response.status_code == 200
         assert response.headers["cache-control"] == "no-store"
@@ -756,13 +756,14 @@ def test_unscheduled_skills_lists_workspace_skills_no_worker_runs(monkeypatch, t
 
     assert response.headers["cache-control"] == "no-store"
     assert json.loads(response.body) == {"skills": [
+        {"skill": "core-only", "description": "Does core-only."},
         {"skill": "Skill-Auditor", "description": "Does Skill-Auditor."},
         {"skill": "write-a-skill", "description": "Does write-a-skill."},
     ]}
     preview = asyncio.run(appmod.api_workspace_skill("write-a-skill"))
     assert preview.status_code == 200
     assert json.loads(preview.body)["content"].startswith("---\nname: write-a-skill")
-    for refused in ("global-only", "core-only", "no-skill-file", "../vault", ".hidden"):
+    for refused in ("global-only", "no-skill-file", "../vault", ".hidden"):
         assert asyncio.run(appmod.api_workspace_skill(refused)).status_code == 404
 
 
@@ -866,6 +867,7 @@ def test_opencode_env_seeds_highest_precedence_safety_config(tmp_path, monkeypat
     preferred_opencode = tmp_path / "current" / "opencode"
     workspace_skills = tmp_path / "workspace" / ".claude" / "skills" / "test-skill"
     workspace_skills.mkdir(parents=True)
+    (workspace_skills / "SKILL.md").write_text("workspace skill")
     monkeypatch.setattr(opencode_ollama, "SAFE_CONFIG", template)
     monkeypatch.setattr(opencode_ollama, "SAFE_CONFIG_DIR", config_dir)
     monkeypatch.setattr(opencode_ollama, "OPENCODE", str(preferred_opencode))
@@ -876,8 +878,9 @@ def test_opencode_env_seeds_highest_precedence_safety_config(tmp_path, monkeypat
         skill="test-skill",
     )
 
-    assert env["OPENCODE_CONFIG_DIR"] == str(config_dir)
-    runtime_config = json.loads((config_dir / "opencode.json").read_text())
+    directory = Path(env["OPENCODE_CONFIG_DIR"])
+    assert directory.parent == config_dir
+    runtime_config = json.loads((directory / "opencode.json").read_text())
     assert runtime_config["permission"] == {"*": "allow"}
     assert str(workspace_skills) in runtime_config["skills"]["paths"]
     assert env["PATH"].split(appmod.os.pathsep)[0] == str(preferred_opencode.parent)

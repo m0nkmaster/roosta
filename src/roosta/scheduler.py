@@ -16,7 +16,7 @@ from dataclasses import asdict, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from roosta import ai_backend, ai_connections, github_issues, paths, profile
+from roosta import ai_backend, ai_connections, github_issues, paths, profile, skills
 from roosta import connectors as connectors_mod
 from roosta.activity_log import ActivityLog
 from roosta.ai_settings import check_task_runtime, runtime_unavailable_message
@@ -76,7 +76,7 @@ OPENCODE_OLLAMA_IDLE_TIMEOUT = 1800  # local inference may be silent for up to 3
 
 PROMPT_TEMPLATE = (
     "You are running as an unattended background task. "
-    "Load the '{skill}' skill using the skill tool and execute it. "
+    "Execute the '{skill}' skill from its resolved instructions below. "
     "Do not ask questions - make autonomous decisions. "
     "Never create or modify external content or state, including chat messages, tickets, "
     "wiki pages, email, GitHub, deployments or jobs. "
@@ -87,7 +87,7 @@ PROMPT_TEMPLATE = (
     "with keys: summary, status, details."
 )
 GIT_PUSH_PROMPT_COMMON = (
-    "Load the '{skill}' skill using the skill tool and execute it. "
+    "Execute the '{skill}' skill from its resolved instructions below. "
     "Do not ask questions - make autonomous decisions. "
     "Never push another repository or create any other external content or state, "
     "including chat messages, tickets, wiki pages, email, GitHub API changes, deployments or "
@@ -202,6 +202,7 @@ def task_idle_timeout(task: TaskConfig, override: float | None = None) -> float:
 
 def task_prompt(task: TaskConfig, *, run_source: str = "scheduled") -> str:
     """Build the harness prompt, distinguishing manual Run now from the timer."""
+    template = PROMPT_TEMPLATE
     if task.allow_git_push:
         template = (
             GIT_PUSH_MANUAL_PROMPT_TEMPLATE
@@ -210,8 +211,8 @@ def task_prompt(task: TaskConfig, *, run_source: str = "scheduled") -> str:
             if task.push_on_schedule
             else GIT_PUSH_SCHEDULED_PROMPT_TEMPLATE
         )
-        return template.format(skill=task.skill, user=profile.load().user)
-    return PROMPT_TEMPLATE.format(skill=task.skill, user=profile.load().user)
+    return (template.format(skill=task.skill, user=profile.load().user) + "\n"
+            + skills.instructions(task.skill, task.dir, paths.WORKSPACE))
 
 
 async def run_task(

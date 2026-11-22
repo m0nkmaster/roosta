@@ -29,7 +29,7 @@ Read through active project READMEs and recent notes. Clarify durable documents 
 `PRIORITIES.md`; those must be rewritten in place.
 
 **Start from the provenance queue.** Run the two commands under *Provenance* in
-``.roosta/operating-model.md`` and work expired docs first, then `active` projects with no
+the installed operating model and work expired docs first, then `active` projects with no
 `verified` entry. Each doc you check gets a new
 `{ by: workspace-gardener/<your model ID>, at: <today> }` entry at the top of `verified`
 and a fresh `stale_after`. Fix or flag any claim that failed the check; never
@@ -54,7 +54,7 @@ code, tickets or docs before treating them as current. Prioritise:
 ## Phase 4: Connect - strengthen the web
 
 This is where the vault's "web of mind" gets built, not just implied. See
-Linking in `.roosta/operating-model.md` for the
+Linking in the installed operating model for the
 full convention - the summary for gardener purposes:
 
 - For every project, note, or analysis doc you touched this pass, ask: does this

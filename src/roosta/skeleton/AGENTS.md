@@ -1,6 +1,6 @@
 # AGENTS.md
 
-Read **[.roosta/operating-model.md](.roosta/operating-model.md)** first: the rules every agent follows in this workspace. This file is yours. Add your own rules and one-line routes below; where they differ from the operating model, yours win.
+Read the installed operating model first. Roosta supplies its exact path in each turn. In a standalone terminal, run `roosta skills instructions` and follow the listed paths for the operating model, skills and extensions. Put workspace preferences and one-line routes here. The app's approval, tool and output rules always apply.
 
 ## Context
 

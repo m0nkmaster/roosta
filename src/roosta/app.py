@@ -77,7 +77,7 @@ from roosta.chat_items import (
 )
 from roosta.ai_settings import (available_runtime_options, model_efforts, provider_models,
                                 validate_model)
-from roosta.workspace_settings import captured, list_folders, skills_lock, workspace_managed_by, workspace_target
+from roosta.workspace_settings import captured, list_folders, workspace_managed_by, workspace_target
 from roosta.scheduler import TaskRunner, outcome_summary, parse_task_output
 from roosta.task_config import (
     CLAUDE_HARNESS,
@@ -208,6 +208,15 @@ def prune_cursor_session_stores(
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    with skills.ownership_lock(paths.WORKSPACE, "skill-runner", wait=True):
+        async with running_app(app):
+            yield
+
+
+@asynccontextmanager
+async def running_app(app: FastAPI):
+    for move in await asyncio.to_thread(skills.migrate, paths.CORE_SKILLS_DIR, paths.WORKSPACE):
+        log.info("Skill migration: %s", move)
     activity.compact()  # before runner.start(), so no spawn is appending
     prune_cursor_session_stores()    # reclaim unread Cursor CLI scratch, same timing
     try:
@@ -337,8 +346,6 @@ async def api_check_updates():
 async def api_settings_workspace():
     config = cli.read_config()
     port = config.get("port")
-    lock = skills_lock()
-    entries = lock.get("skills") if isinstance(lock.get("skills"), dict) else {}
     service = await asyncio.to_thread(cli.service_status, paths.WORKSPACE)
     return ai_settings_result({
         "version": __version__, "workspace": str(paths.WORKSPACE),
@@ -347,8 +354,7 @@ async def api_settings_workspace():
         "saved_host": config.get("host") if isinstance(config.get("host"), str) else "",
         "saved_port": port if isinstance(port, int) and not isinstance(port, bool) else None,
         "managed_by": workspace_managed_by(), "service": service,
-        "skills": {"modified": sorted(n for n, e in entries.items() if isinstance(e, dict) and e.get("modified")),
-                   "roosta": str(lock.get("roosta") or "")}})
+        "skills": await asyncio.to_thread(skills.status, paths.CORE_SKILLS_DIR, paths.WORKSPACE)})
 
 
 @app.get("/api/settings/folders", dependencies=[Depends(local_ai_settings)])
@@ -445,9 +451,7 @@ async def api_settings_notifications_set(body: dict):
 
 @app.post("/api/settings/skills-sync", dependencies=[Depends(local_ai_settings)])
 async def api_settings_skills_sync():
-    report = await asyncio.to_thread(skills.sync, paths.CORE_SKILLS_DIR, paths.WORKSPACE)
-    return ai_settings_result({"installed": report.installed, "updated": report.updated,
-                               "current": report.current, "modified": report.modified})
+    return ai_settings_result({"error": "Legacy skills migrate on restart, before workers and chats start."}, 409)
 
 
 @app.get("/api/ai/connections", dependencies=[Depends(local_ai_settings)])
@@ -738,12 +742,15 @@ async def api_task_skill(task_id: str):
 
 
 def skill_preview(skill: str, working_dir) -> JSONResponse:
-    files = skill_files(skill, working_dir)
-    if not files:
-        return JSONResponse({"error": "SKILL.md not found"}, status_code=404)
-    candidate = files[0]
     try:
+        files = skill_files(skill, working_dir)
+        if not files:
+            return JSONResponse({"error": "SKILL.md not found"}, status_code=404)
+        candidate = files[0]
         _, content, _ = read_document(candidate.parent.parent, f"{skill}/SKILL.md")
+        extension = skills.extension_file(skill, paths.WORKSPACE, paths.CORE_SKILLS_DIR)
+        if extension:
+            content += "\n\n## Workspace extension\n\n" + skills.read_small(extension).decode("utf-8")
     except (OSError, ValueError):
         return JSONResponse({"error": "SKILL.md could not be previewed; it must be UTF-8 Markdown within its skill root and under 2 MB"}, status_code=400)
     return JSONResponse({"skill": skill, "content": content}, headers={"Cache-Control": "no-store"})
