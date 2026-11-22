@@ -35,8 +35,11 @@ def preflight() -> list[str]:
 def copy_skeleton(source: Path, target: Path) -> list[str]:
     """Copy the starter workspace without overwriting anything that exists."""
     created = []
+    existing = any(target.iterdir())
     for path in sorted(source.rglob("*")):
         relative = path.relative_to(source)
+        if existing and relative.as_posix() in {"WORKSPACE.md", "Working context.md"}:
+            continue
         if "__pycache__" in relative.parts:
             continue
         destination = target / relative

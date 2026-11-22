@@ -118,7 +118,7 @@ See [Assistant contracts](assistant.md) and [Office rendering](office.md) for pa
   from Assistant items
 
 - **`static/workspace.html` / `workspace.js`** - Fluid Tabler document navigator; in-memory literal
-  search over `/api/workspace`, project/topic/decision collections, highlighted previews and
+  search over `/api/workspace`, ordered Markdown collections, topics and decision/plan sections, highlighted previews and
   up to eight selected files; collection names, descriptions and membership come from vault metadata.
   Open folder posts to local-only `/api/workspace/reveal`, which opens the active workspace (never a
   request-supplied path) in the OS file browser
@@ -137,40 +137,26 @@ See [Assistant contracts](assistant.md) and [Office rendering](office.md) for pa
   chat, and `api_board_chat` reads full contents afresh (eight files / 192 KB total, no truncation).
   Queued turns retain their own item/context snapshot. Navigator links prefill, never auto-send.
   Collections use README titles/overviews/status, shared tags (inherited by supporting project
-  documents), and the People roster's name aliases. People attribution uses explicit metadata or
-  unambiguous document names; a passing mention or ambiguous first name does not assign a document.
+  documents), and optional topic reading lists.
 
 ## Pulse and constellation
 
-- **`static/pulse.html`** - Vault Pulse telemetry page (project constellation first, then
+- **`static/pulse.html`** - Vault Pulse telemetry page (workspace constellation first, then
   AI activity, live vault stats and hot files); polls `/api/pulse`. `/constellation` serves the same file, which hides
   everything but the constellation when it sees that path
 
-- **Project constellation uses explicit signals, and its geometry means something.** Distance
-  from the centre is time since anything in the project folder last changed, so rings read
-  `today / 7 days / 30 days / dormant` outward and neglect is literally visible as drift. Lines
-  are the documented `## Related` links between project READMEs (drawn even when only one side
-  wrote the pair), and projects are ordered so each connected group holds one contiguous arc.
-  Colour is state: amber for active Assistant board items linked by `project_ref`, coral for a
-  project still marked `active`/`blocked` after `STALE_AFTER_DAYS` untouched, cyan for edits in
-  the last seven days, hollow for `paused`/`completed`. Size is board attention; brightness is
-  recency. The search box hides every star that does not match all typed terms against the slug,
-  title or any front-matter value (`keywords` in `/api/pulse`, flattened by `frontmatter_text`).
-  Keep these proxies transparent rather than introducing an opaque AI-generated
-  importance score.
-
-- **The constellation shows projects only, and moons stay on explicit links.** Zooming past `MOON_SCALE` shows each
-  on-screen project's own pages (`pages`, newest 40) as clickable moons. Label text, ring labels
-  and link widths divide by `view.scale`, so zooming enlarges the space, not the type.
-
-- **The constellation drawer is a briefing, and review writes only frontmatter.** Selecting a star
-  fetches `/api/constellation/<slug>` (`project_brief`): Overview, Current state, provenance,
-  linked artefacts (capped per kind so tickets cannot crowd out docs) and recently changed files.
-  **Review** walks board-linked, then drifting, then unverified projects (`reviewQueue`). Its
-  buttons POST `/api/constellation/<slug>/review` (`review_project`): a status change bumps
-  `last_updated`, while "I've read it, it's right" adds the profile's `reviewer` (`human:<slug>`) to `verified` and
-  sets `stale_after` per the projects provenance spec. Neither touches the README body. `?focus=<slug>`
-  deep-links a star; keys are `/`, `r`, `f`, `j`/`k`, `c` and `Esc`.
+- **Workspace and Constellation share selected pages.** See the [portable index examples and fallback rules](../../README.md#choose-your-workspace-collections).
+  `workspace.selected_collections` operates on the bounded visible catalogue. Workspace keeps
+  source paths for search, previews and attachments. Constellation keeps legacy project slugs and
+  uses a URL-safe encoding of the complete path for other stars. A review resolves the id against
+  current membership. Topics and Decisions & plans are independent views onto the same sources.
+- **Distance measures attention.** The drawer names its date source. Use the latest valid
+  substantive update or verification date, falling back to that page's mtime. Rings, search,
+  status, verification due, board links, related links and zoomed supporting pages share these
+  signals. A board item can flag a selected source through its document links or its existing project reference.
+  Review prioritises board attention, drift and verification. Confirmation records
+  the profile reviewer and renews the verification window. Status changes date the update.
+  The drawer, `?focus=` and the detail/review API all use the same star id.
 
 - **Ring radii scale with occupancy, and labels are rationed.** A busy "today" would otherwise
   collapse into a few pixels at the centre, so band edges are part evenly spaced and part
@@ -189,6 +175,24 @@ connection and polling intervals, so the page never reaches a quiet network stat
 `--virtual-time-budget` never settles and the capture hangs until killed - leaving orphaned Chrome
 processes and a temporary profile directory behind. Build a throwaway static harness that imports
 the real `shell.css` and the page's own styles, screenshot that, then delete it.
+
+For collection QA run the static interaction probes from the checkout on a host with Chrome:
+
+```sh
+.venv/bin/python -m pytest -q tests/test_collection_ui.py --basetemp=/tmp/roosta-collection-qa
+```
+
+Use a fresh temporary directory for each run. Pytest replaces its base directory.
+The probes use the shipped page, styles and scripts, a synthetic Markdown vault, and
+in-memory API responses. Set `ROOSTA_QA_MARKED` to a trusted local copy of
+`marked/lib/marked.umd.js` for visual QA. Each fixture copies it alongside its HTML.
+Without the variable, the interaction probe uses a text-only parser. The fixture
+removes remote scripts and turns off intervals and animation scheduling. At 1440 and 480 pixels they click
+through collections, section previews, attachments, star search, filters and review.
+Each case leaves a standalone `workspace.html` or `pulse.html` beside its mock vault.
+For a screenshot, open that generated file at its test width or pass its file URL
+to Chrome with `--headless=new --allow-file-access-from-files --window-size=1440,900
+--screenshot=/tmp/roosta-collection.png`.
 
 The Assistant **More** menu opens a local handoff preview or a Start fresh confirmation.
 Cancel and Escape dismiss the preview. After acceptance, each previous segment is

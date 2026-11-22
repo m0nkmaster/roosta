@@ -2,12 +2,18 @@
 
 Record each release newest first. Bump minor for features and visible behaviour, patch for fixes and polish.
 
+## 0.16.0 - 2026-11-22
+
+- Choose Workspace collections and Constellation stars through ordered Markdown links in WORKSPACE.md and collection overviews.
+- Browse topic reading lists and source-linked decisions and plans. Review stars by their last substantive update or verification date.
+
 ## 0.15.0 - 2026-11-22
 
 - Use roosta update to check for and install a compatible stable release in the current Python installation.
 - Use roosta doctor to diagnose installation, workspace and runner issues with offline and JSON reporting options.
 - Skip cmux terminal-specific Claude wrappers when finding AI software, so Roosta uses a direct Claude installation instead.
 - Choose a connected AI account as default immediately, including while its optional connection test runs. Settings lets you cancel the test and keeps account controls available while model choices load.
+- Workspace Learner reports actions queued for the workspace user under `queued_for_user`.
 
 ## 0.14.0 - 2026-11-22
 

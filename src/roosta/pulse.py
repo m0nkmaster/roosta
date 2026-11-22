@@ -2,41 +2,23 @@
 
 from __future__ import annotations
 
+import base64
+import os
 import re
-from datetime import datetime, timedelta, timezone
+import tempfile
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
+from threading import Lock
 
-SKIP_PARTS = {
-    ".git", ".obsidian", "node_modules", ".venv", "cache", ".roosta", ".cursor",
-    # The gitignored private tree holds secrets, Workday reviews and the Teams
-    # backups (teams-archive, teams-digest) - none of it belongs on the Pulse.
-    "private",
-}
+from roosta.workspace import (catalogue_files, index_links, index_members, markdown_title, metadata,
+                              read_document, selected_collections)
 
-# A project claiming to be live while nothing in its folder has changed for this
-# long is worth a second look - either it restarts or its status is wrong.
 STALE_AFTER_DAYS = 30
 LIVE_STATUSES = {"active", "blocked"}
 
 RELATED_SECTION = re.compile(r"^##\s+Related\s*$(.*?)(?=^##\s|\Z)", re.MULTILINE | re.DOTALL)
 WIKILINK = re.compile(r"\[\[([^\]|#]+)")
 README_LINK = re.compile(r"\]\(\s*(?:\.\./|/)?(?:projects/)?([a-z0-9][a-z0-9-]*)/README\.md")
-
-
-def markdown_title(content: str, stem: str) -> str:
-    """Resolve a display title from frontmatter, first heading, or filename."""
-    if content.startswith("---"):
-        end = content.find("\n---", 3)
-        if end != -1:
-            for line in content[3:end].splitlines():
-                if line.strip().startswith("title:"):
-                    title = line.split(":", 1)[1].strip().strip("\"'")
-                    if title:
-                        return title
-    heading = re.search(r"^#\s+(.+)$", content, re.MULTILINE)
-    if heading:
-        return heading.group(1).strip()
-    return stem.replace("-", " ").title()
 
 
 def frontmatter_field(content: str, field: str) -> str:
@@ -68,24 +50,29 @@ def frontmatter_text(content: str) -> str:
     return " ".join(v for v in values if v)
 
 
-def related_projects(content: str, known: set[str]) -> list[str]:
+def related_projects(content: str, known: set[str], path: str = "", by_path: dict | None = None) -> list[str]:
     """Project slugs linked from a README's `## Related` section."""
     section = RELATED_SECTION.search(content)
     if not section:
         return []
     body = section.group(1)
     found: list[str] = []
-    for raw in WIKILINK.findall(body) + README_LINK.findall(body):
+    legacy = README_LINK.findall(body) if by_path is None else []
+    for raw in WIKILINK.findall(body) + legacy:
         slug = raw.strip().strip("/").split("/")[-1].removesuffix(".md")
         if slug in known and slug not in found:
             found.append(slug)
+    if by_path is not None:
+        for target, _ in index_links({"path": path, "text": body}, by_path, list_only=False):
+            peer = by_path[target]
+            if peer in known and peer not in found:
+                found.append(peer)
     return found
 
 
 PROJECT_SLUG = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
 REVIEW_STATUSES = ("active", "blocked", "paused", "completed")
 REVIEWER = "human:user"  # default; callers pass the profile's reviewer
-VERIFIED_ENTRY = re.compile(r"by:\s*([^,}]+?)\s*,\s*at:\s*([0-9]{4}-[0-9]{2}-[0-9]{2})")
 JIRA_KEY = re.compile(r"\b([A-Z][A-Z0-9]{1,9}-[0-9]{1,6})\b")
 URL = re.compile(r"https?://[^\s)\]>\"'|]+")
 LINK_KINDS = (
@@ -99,33 +86,25 @@ LINK_KINDS = (
 )
 
 
-def _frontmatter_lines(content: str) -> tuple[list[str], int] | None:
-    """Split a document into lines and return the index of the closing `---`."""
-    lines = content.split("\n")
-    if not lines or lines[0].strip() != "---":
-        return None
-    for i in range(1, len(lines)):
-        if lines[i].strip() == "---":
-            return lines, i
-    return None
+def iso_day(value) -> str:
+    if not isinstance(value, (str, date)):
+        return ""
+    try:
+        return datetime.fromisoformat(str(value)).date().isoformat()
+    except ValueError:
+        return ""
 
 
 def provenance(content: str, today: str) -> dict:
     """Read `verified` / `stale_after` and say whether the doc is due a check."""
-    entries: list[dict] = []
-    split = _frontmatter_lines(content)
-    if split:
-        lines, end = split
-        for i in range(1, end):
-            if lines[i].split(":", 1)[0].strip() != "verified" or lines[i][:1].isspace():
-                continue
-            for j in range(i, end):
-                if j > i and lines[j][:1] not in (" ", "\t", "-"):
-                    break
-                entries += [{"by": by, "at": at} for by, at in VERIFIED_ENTRY.findall(lines[j])]
-            break
-    status = frontmatter_field(content, "status") or "unknown"
-    stale_after = frontmatter_field(content, "stale_after")[:10]
+    front = metadata(content)
+    raw = front.get("verified")
+    entries = [{"by": entry["by"], "at": iso_day(entry.get("at"))}
+               for entry in (raw if isinstance(raw, list) else [])
+               if isinstance(entry, dict) and isinstance(entry.get("by"), str) and iso_day(entry.get("at"))]
+    entries.sort(key=lambda entry: entry["at"], reverse=True)
+    status = front.get("status")
+    stale_after = iso_day(front.get("stale_after"))
     human = any(entry["by"].startswith("human:") for entry in entries)
     expired = bool(stale_after) and stale_after <= today
     return {
@@ -172,48 +151,60 @@ def artefact_links(content: str, limit: int = 20, per_kind: int = 6) -> list[dic
     return sorted(kept, key=lambda link: order.get(link["kind"], 99))[:limit]
 
 
-def _project_readme(root: Path, slug: str) -> Path:
-    """Resolve `projects/<slug>/README.md` without permitting vault escape."""
-    if not PROJECT_SLUG.fullmatch(slug or ""):
-        raise ValueError("invalid project")
-    projects = (root / "projects").resolve()
-    readme = (projects / slug / "README.md").resolve()
-    if readme.parent.parent != projects:
-        raise ValueError("invalid project")
-    if not readme.is_file():
-        raise FileNotFoundError(slug)
-    return readme
+def entity_id(path: str) -> str:
+    parts = Path(path).parts
+    if len(parts) == 3 and parts[0] == "projects" and parts[2] == "README.md" and PROJECT_SLUG.fullmatch(parts[1]):
+        return parts[1]
+    return "page." + base64.urlsafe_b64encode(path.encode()).decode().rstrip("=")
+
+
+def constellation_pages(root: Path):
+    files, _ = catalogue_files(root)
+    known = {file["path"]: file for file in files}
+    groups = selected_collections(known, os.path.lexists(root / "WORKSPACE.md"))
+    entities = {}
+    for group in groups:
+        for path in group["paths"]:
+            entities.setdefault(path, []).append(group["title"])
+    return known, entities
+
+
+def supporting_paths(page, known, entities):
+    path = Path(page["path"])
+    if path.name.lower() == "readme.md" and path.parent != Path("."):
+        candidates = [p for p in known if p.startswith(path.parent.as_posix() + "/")]
+    else:
+        candidates = index_members(page, known)
+    return [p for p in candidates if p not in entities]
+
+
+def selected_page(root: Path, slug: str):
+    if not (PROJECT_SLUG.fullmatch(slug) or re.fullmatch(r"page\.[A-Za-z0-9_-]+", slug)):
+        raise ValueError("invalid page")
+    known, entities = constellation_pages(root)
+    for path in entities:
+        if entity_id(path) == slug:
+            return known[path], known, entities
+    raise FileNotFoundError(slug)
 
 
 def project_brief(root: Path, slug: str, now: datetime | None = None) -> dict:
-    """Everything the constellation drawer shows about one project."""
     now = now or datetime.now(timezone.utc)
-    readme = _project_readme(root.resolve(), slug)
-    content = readme.read_text(encoding="utf-8", errors="ignore")
-    files = []
-    for path in readme.parent.rglob("*"):
-        if path.is_file() and not any(p.startswith(".") for p in path.relative_to(readme.parent).parts):
-            files.append((path.stat().st_mtime, path))
-    files.sort(reverse=True)
-    vault = root.resolve()
-    overview = markdown_section(content, "Overview")
+    page, known, entities = selected_page(root, slug)
+    content = page["text"]
+    paths = [page["path"], *supporting_paths(page, known, entities)]
     return {
-        "name": slug,
-        "title": markdown_title(content, slug),
-        "status": frontmatter_field(content, "status") or "unknown",
-        "last_updated": frontmatter_field(content, "last_updated"),
-        "overview": overview.split("\n\n")[0][:900],
+        "name": slug, "path": page["path"], "title": page["title"],
+        "status": page["status"] or "unknown",
+        "last_updated": iso_day(metadata(content).get("last_updated")),
+        "overview": (markdown_section(content, "Overview").split("\n\n")[0] or page["summary"])[:900],
         "current_state": markdown_section(content, "Current state")[:12000],
         "provenance": provenance(content, now.date().isoformat()),
         "links": artefact_links(content),
-        "recent_files": [
-            {
-                "path": path.relative_to(vault).as_posix(),
-                "name": path.relative_to(readme.parent).as_posix(),
-                "mtime": datetime.fromtimestamp(mtime, tz=timezone.utc).isoformat(),
-            }
-            for mtime, path in files[:8]
-        ],
+        "linked_paths": list(dict.fromkeys(p for p, _ in index_links(page, known, list_only=False))),
+        "recent_files": [{"path": p, "name": os.path.relpath(p, Path(page["path"]).parent),
+                          "mtime": known[p]["modified"]}
+                         for p in sorted(paths, key=lambda p: known[p]["modified"], reverse=True)[:8]],
     }
 
 
@@ -232,29 +223,54 @@ def _set_key(lines: list[str], end: int, key: str, value: str | None) -> int:
     return end + 1
 
 
+_review_lock = Lock()
+
+
 def review_project(root: Path, slug: str, action: str, status: str = "",
                    now: datetime | None = None, reviewer: str = REVIEWER) -> dict:
-    """Apply one weekly-review decision to a project README's frontmatter.
+    with _review_lock:
+        return _review_page(root, slug, action, status, now, reviewer)
+
+
+def _review_page(root: Path, slug: str, action: str, status: str,
+                 now: datetime | None, reviewer: str) -> dict:
+    """Apply one review decision to a selected page's frontmatter.
 
     `status` changes the lifecycle state (an edit, so `last_updated` moves);
-    `confirm` records the user's word that the README is right (a verification, so
+    `confirm` records the user's word that the page is right (a verification, so
     only `verified` and `stale_after` move). Nothing below the frontmatter changes.
     """
     now = now or datetime.now(timezone.utc)
     today = now.date().isoformat()
-    readme = _project_readme(root.resolve(), slug)
-    content = readme.read_text(encoding="utf-8")
-    split = _frontmatter_lines(content)
-    if not split:
-        raise ValueError("README has no frontmatter")
-    lines, end = split
-    current = frontmatter_field(content, "status") or "unknown"
+    page, _, _ = selected_page(root, slug)
+    path = page["path"]
+    canonical, original, _ = read_document(root, path)
+    if canonical.as_posix() != path:
+        raise ValueError("Page path changed")
+    readme = root.resolve() / canonical
+    newline = "\r\n" if original.startswith("---\r\n") else "\n"
+    header = re.match(r"\A---[ \t]*\r?\n(.*?)^---[ \t]*(?=\r?$)", original, re.M | re.S)
+    if not header and re.match(r"\A---[ \t]*(?:\r?\n|$)", original):
+        raise ValueError("Page has incomplete frontmatter")
+    suffix = original[header.end():] if header else newline + original
+    lines = ["---", *(header[1].splitlines() if header else []), "---"]
+    end = len(lines) - 1
+    content = "\n".join(lines)
+    front = metadata(content)
+    if not front and any(line.partition("#")[0].strip() for line in lines[1:end]):
+        raise ValueError("Page requires valid mapping frontmatter")
+    expected = dict(front)
+    current = front.get("status")
     if action == "status":
         if status not in REVIEW_STATUSES:
             raise ValueError("invalid status")
+        if current == status:
+            return project_brief(root, slug, now)
         end = _set_key(lines, end, "status", status)
         end = _set_key(lines, end, "last_updated", today)
+        expected.update(status=status, last_updated=now.date())
         if status == "completed":
+            expected.pop("stale_after", None)
             end = _set_key(lines, end, "stale_after", None)
     elif action == "confirm":
         entry = f"  - {{ by: {reviewer}, at: {today} }}"
@@ -263,22 +279,55 @@ def review_project(root: Path, slug: str, action: str, status: str = "",
         if at is None:
             lines.insert(end, "verified:")
             at, end = end, end + 1
-        elif lines[at].split(":", 1)[1].strip() not in ("", "[]"):
-            raise ValueError("verified is not a block list")
-        lines[at] = "verified:"
-        if lines[at + 1].strip() != entry.strip():
-            lines.insert(at + 1, entry)
-            end += 1
-        days = 30 if current == "active" else 90
-        end = _set_key(lines, end, "stale_after",
-                       None if current == "completed" else (now + timedelta(days=days)).date().isoformat())
+        previous = front.get("verified") or []
+        if not isinstance(previous, list):
+            raise ValueError("verified must be a list")
+        if {"by": reviewer, "at": today} not in provenance(content, today)["verified"]:
+            expected["verified"] = [{"by": reviewer, "at": now.date()}, *previous]
+            value = lines[at].split(":", 1)[1].partition("#")[0].strip()
+            if value.startswith("[") and value != "[]":
+                pos = lines[at].index("[") + 1
+                lines[at] = lines[at][:pos] + entry.split("- ", 1)[1] + ", " + lines[at][pos:]
+            elif value in ("", "[]"):
+                if value:
+                    lines[at] = lines[at].replace("[]", "", 1).rstrip()
+                if previous:
+                    for line in lines[at + 1:end]:
+                        if indent := re.match(r"^( *)-", line):
+                            entry = indent[1] + entry.lstrip()
+                            break
+                lines.insert(at + 1, entry)
+                end += 1
+            else:
+                raise ValueError("verified must be a list")
+        deadline = None
+        if current in ("active", "blocked", "paused") or (current != "completed" and iso_day(front.get("stale_after"))):
+            days = 30 if current == "active" else 90
+            deadline = (now + timedelta(days=days)).date()
+            expected["stale_after"] = deadline
+        else:
+            expected.pop("stale_after", None)
+        _set_key(lines, end, "stale_after", deadline.isoformat() if deadline else None)
     else:
         raise ValueError("invalid action")
-    updated = "\n".join(lines)
-    if updated != content:
-        temp = readme.with_name(f".{readme.name}.review")
-        temp.write_text(updated, encoding="utf-8")
-        temp.replace(readme)
+    updated = newline.join(lines) + suffix
+    if updated != original:
+        if metadata(updated) != expected:
+            raise ValueError("Page has incompatible frontmatter")
+        with tempfile.NamedTemporaryFile(dir=readme.parent, delete=False) as stream:
+            temp = Path(stream.name)
+            try:
+                stream.write(updated.encode())
+                temp.chmod(readme.stat().st_mode & 0o777)
+            except OSError:
+                temp.unlink(missing_ok=True)
+                raise
+        try:
+            if readme.resolve() != readme or readme.read_bytes() != original.encode():
+                raise ValueError("Page changed during review")
+            temp.replace(readme)
+        finally:
+            temp.unlink(missing_ok=True)
     return project_brief(root, slug, now)
 
 
@@ -288,8 +337,9 @@ PAGES_PER_PROJECT = 40
 def link_projects(signals: dict[str, dict], readmes: dict[str, str]) -> None:
     """Attach the documented relationship graph to each project signal."""
     names = set(signals)
+    by_path = {signal["path"]: name for name, signal in signals.items()}
     for name, signal in signals.items():
-        signal["related"] = related_projects(readmes.get(name, ""), names - {name})
+        signal["related"] = related_projects(readmes.get(name, ""), names - {name}, signal["path"], by_path)
     # `## Related` is meant to be bidirectional; draw a half-written pair anyway.
     for name, signal in signals.items():
         for peer in signal["related"]:
@@ -302,92 +352,40 @@ def link_projects(signals: dict[str, dict], readmes: dict[str, str]) -> None:
 def scan_vault(root: Path) -> dict:
     """Count vault artefacts without touching secrets or dashboard internals."""
     root = root.resolve()
-    projects_dir = root / "projects"
-    project_names: list[str] = []
-    if projects_dir.is_dir():
-        project_names = sorted(
-            p.name for p in projects_dir.iterdir()
-            if p.is_dir() and not p.name.startswith(".")
-        )
-    project_signals = {
-        name: {
-            "name": name,
-            "title": name.replace("-", " ").title(),
-            "status": "unknown",
-            "owner": "",
-            "keywords": "",
-            "related": [],
-            "recent_edits": 0,
-            "last_activity": None,
-            "age_days": None,
-            "stale": False,
-            "provenance": "unverified",
-            "verification_due": False,
-            "pages": [],
-        }
-        for name in project_names
-    }
-    project_readmes: dict[str, str] = {}
-
-    md_files = 0
-    words = 0
-    recent_edits: list[dict] = []
+    known, entities = constellation_pages(root)
     now = datetime.now(timezone.utc)
-    week_ago = now - timedelta(days=7)
-
-    for path in root.rglob("*.md"):
-        rel = path.relative_to(root)
-        if any(part in SKIP_PARTS or part.startswith(".") for part in rel.parts):
-            continue
-        md_files += 1
-        try:
-            text = path.read_text(encoding="utf-8", errors="ignore")
-            words += len(re.findall(r"\b\w+\b", text))
-            mtime = datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc)
-            if len(rel.parts) >= 3 and rel.parts[0] == "projects":
-                project = project_signals.get(rel.parts[1])
-                if project is not None:
-                    if rel.parts[2:] == ("README.md",):
-                        project["title"] = markdown_title(text, rel.parts[1])
-                        project["status"] = frontmatter_field(text, "status") or "unknown"
-                        project["owner"] = frontmatter_field(text, "owner")
-                        project["keywords"] = frontmatter_text(text)
-                        check = provenance(text, now.date().isoformat())
-                        project["provenance"] = check["state"]
-                        project["verification_due"] = check["due"]
-                        project_readmes[rel.parts[1]] = text
-                    last_activity = project["last_activity"]
-                    if last_activity is None or mtime.isoformat() > last_activity:
-                        project["last_activity"] = mtime.isoformat()
-                    if mtime >= week_ago:
-                        project["recent_edits"] += 1
-                    if rel.parts[2:] != ("README.md",):
-                        project["pages"].append({
-                            "path": rel.as_posix(),
-                            "title": markdown_title(text, path.stem),
-                            "mtime": mtime.isoformat(),
-                        })
-            if mtime >= week_ago:
-                recent_edits.append({
-                    "path": rel.as_posix(),
-                    "title": markdown_title(text, path.stem),
-                    "mtime": mtime.isoformat(),
-                })
-        except OSError:
-            continue
-
+    week_ago = (now - timedelta(days=7)).isoformat()
+    recent_edits = [{"path": p, "title": f["title"], "mtime": f["modified"]}
+                    for p, f in known.items() if f["modified"] >= week_ago]
+    project_signals = {}
+    project_readmes = {}
+    for path, groups in entities.items():
+        page = known[path]
+        text = page["text"]
+        slug = entity_id(path)
+        front = metadata(text)
+        check = provenance(text, now.date().isoformat())
+        dates = [(entry["at"], "verified") for entry in check["verified"]]
+        if updated := iso_day(front.get("last_updated")):
+            dates.append((updated, "last_updated"))
+        attention, basis = max(dates) if dates else (page["modified"], "file modification")
+        instant = datetime.fromisoformat(attention)
+        if instant.tzinfo is None:
+            instant = instant.replace(tzinfo=timezone.utc)
+        age = max(0, (now - instant).total_seconds() / 86400)
+        supporting = supporting_paths(page, known, entities)
+        project_signals[slug] = {
+            "name": slug, "path": path, "collections": groups, "title": page["title"],
+            "owner": frontmatter_field(text, "owner"), "status": page["status"] or "unknown",
+            "keywords": frontmatter_text(text), "last_activity": instant.isoformat(), "attention_basis": basis,
+            "age_days": round(age, 2), "stale": page["status"] in LIVE_STATUSES and age >= STALE_AFTER_DAYS,
+            "provenance": check["state"], "verification_due": check["due"], "expired": check["expired"],
+            "recent_edits": sum(known[p]["modified"] >= week_ago for p in [path, *supporting]),
+            "pages": [{"path": p, "title": known[p]["title"], "mtime": known[p]["modified"]}
+                      for p in sorted(supporting, key=lambda p: known[p]["modified"], reverse=True)[:PAGES_PER_PROJECT]],
+        }
+        project_readmes[slug] = text
     link_projects(project_signals, project_readmes)
-    for signal in project_signals.values():
-        signal["pages"] = sorted(signal["pages"], key=lambda page: page["mtime"], reverse=True)[:PAGES_PER_PROJECT]
-    for signal in project_signals.values():
-        if signal["last_activity"]:
-            age = (now - datetime.fromisoformat(signal["last_activity"])).total_seconds()
-            signal["age_days"] = round(max(0.0, age / 86400), 2)
-        signal["stale"] = bool(
-            signal["age_days"] is not None
-            and signal["age_days"] >= STALE_AFTER_DAYS
-            and signal["status"] in LIVE_STATUSES
-        )
 
     skill_names = set()
     for skills_dir in (root / ".agents" / "skills", root / ".claude" / "skills"):
@@ -400,13 +398,13 @@ def scan_vault(root: Path) -> dict:
 
     recent_edits.sort(key=lambda item: item["mtime"], reverse=True)
     return {
-        "projects": len(project_names),
-        "project_names": project_names[:48],
+        "projects": sum(1 for p in known if re.fullmatch(r"projects/[^/]+/README\.md", p)),
+        "project_names": list(project_signals)[:48],
         "project_signals": list(project_signals.values()),
         "stale_projects": sum(1 for s in project_signals.values() if s["stale"]),
         "stale_after_days": STALE_AFTER_DAYS,
-        "markdown_files": md_files,
-        "words": words,
+        "markdown_files": len(known),
+        "words": sum(len(re.findall(r"\b\w+\b", f["text"])) for f in known.values()),
         "skills": skills,
         "recent_files_7d": len(recent_edits),
         "hot_files": recent_edits[:6],
@@ -617,9 +615,15 @@ def build_pulse(
     ]
     project_items: dict[str, list[dict]] = {}
     for item in items:
-        project_items.setdefault(item.get("project_ref", ""), []).append(item)
+        refs = {doc["path"] for doc in (item.get("documents") or [])
+                if isinstance(doc, dict) and isinstance(doc.get("path"), str)}
+        ref = item.get("project_ref")
+        if isinstance(ref, str) and ref:
+            refs.add(ref + "/README.md" if re.fullmatch(r"projects/[a-z0-9-]+", ref) else ref)
+        for ref in refs:
+            project_items.setdefault(ref, []).append(item)
     for project in vault["project_signals"]:
-        linked = project_items.get(f"projects/{project['name']}", [])
+        linked = project_items.get(project["path"], [])
         project["active_board_items"] = len(linked)
         project["board_items"] = [
             {"id": str(item["id"]), "title": str(item.get("title") or "Board item")}

@@ -30,10 +30,56 @@ verified:                        # newest first
 stale_after: 2026-12-05          # re-verify on or after this date
 ```
 
-- `last_updated` says the file was edited; `verified` says someone checked what it claims and found it current. Never add a `verified` entry for an edit alone.
+- `last_updated` dates the last substantive update; `verified` says someone checked what it claims and found it current. Never add a `verified` entry for an edit alone.
 - Actors follow the [Open Knowledge Format](https://github.com/GoogleCloudPlatform/open-knowledge-format) v0.2: `human:<owner-slug>` only when the owner says in the session that they have read the doc and it is right; `<skill>/<model-id>` when an agent checked it; `process:<name>` for model-free automation.
 - Set `stale_after` with every `verified` entry: 30 days for active projects, 90 for paused or blocked ones, none for completed projects and timeless notes.
 - Treat an unverified or expired doc as a lead to check, not as fact.
+
+### Choose your Workspace collections
+
+In `WORKSPACE.md`, list the collection overviews you want to browse.
+
+```markdown
+# Workspace
+
+- [Clients](Clients/README.md)
+- [Projects](projects/README.md)
+```
+
+In `Clients/README.md`, explain the collection and list its members.
+
+```markdown
+# Clients
+
+Current engagements, in review order.
+
+- [North Coast](North%20Coast.md)
+- [Acme](Enterprise/Acme.md)
+```
+
+Use the first inline Markdown link on each top-level list item. Paths are relative
+to that index and case-sensitive. Encode spaces as `%20` or enclose the destination
+in angle brackets. Headings and paragraphs are yours. The first occurrence sets the
+order. Hidden, private, symlinked, external and missing targets are ignored.
+Only collection members become stars, once per source path. A README's supporting
+folder documents and a single page's list of linked documents can appear as moons.
+
+Without `WORKSPACE.md`, Roosta shows existing `projects/*/README.md` overviews,
+or the existing priorities and context pages if there are no projects. Creating an
+empty index clears that selection. All knowledge still searches visible Markdown.
+
+Use `topics/<tag>.md` for an introduction and a reading list alongside shared tag
+discovery. Decisions and plans surface matching level-two sections from the source.
+Optionally list sources in `Decisions.md` or `Plans.md`, for example
+`- [Delivery sequence](Clients/Enterprise/Acme.md#delivery-sequence)` for a
+`## Delivery sequence` section. Open source reads the whole document.
+
+Constellation rings use the later of the page's valid `last_updated` and dated
+`verified` entries. With neither, the page's own modification time is an estimate
+and formatting that page can move its star. Editing a collection index or a supporting
+file leaves its members' attention dates alone. Active or blocked pages drift after
+30 days. An expired `stale_after` or missing verification brings an unfinished page
+into review. Confirming records your profile reviewer and today's date.
 
 ## Projects
 

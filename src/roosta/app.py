@@ -1538,9 +1538,14 @@ async def api_board_approve(run_id: str, body: dict):
 
 
 @app.get("/api/vault-document")
-async def api_vault_document(path: str = ""):
+async def api_vault_document(path: str = "", visible: bool = False):
     """Return one validated vault document (Markdown, or plain text as source)."""
     try:
+        if visible:
+            canonical, text, _ = read_document(paths.WORKSPACE, path)
+            body, properties = split_front_matter(text)
+            return JSONResponse({"path": canonical.as_posix(), "title": markdown_title(text, canonical.stem),
+                                 "content": body, "properties": properties}, headers={"Cache-Control": "no-store"})
         document = resolve_vault_text(path)
     except ValueError:
         return JSONResponse({"error": "invalid document path"}, status_code=400)
@@ -1715,8 +1720,8 @@ async def api_pulse():
         for item_id in chat_router.active_items():
             known = chat_router.known_item(item_id)
             chat_items.append(known or {"id": item_id, "title": "Conversation"})
-    return JSONResponse(build_pulse(
-        paths.WORKSPACE,
+    return JSONResponse(await asyncio.to_thread(
+        build_pulse, paths.WORKSPACE,
         activity.recent(200),
         handled,
         len(active_items),
@@ -1726,29 +1731,30 @@ async def api_pulse():
         running_activity=activity.running(),
         chat_items=chat_items,
         active_project_items=[
-            {"id": item["id"], "title": item.get("title", ""), "project_ref": item["project_ref"]}
-            for item in active_items if item.get("project_ref")
+            {"id": item["id"], "title": item.get("title", ""), "project_ref": item.get("project_ref"),
+             "documents": item.get("documents", [])}
+            for item in active_items if item.get("project_ref") or item.get("documents")
         ],
     ))
 
 
 @app.get("/api/constellation/{slug}")
 async def api_constellation_project(slug: str):
-    """Briefing for one project star: README excerpts, provenance, links, recent files."""
+    """Briefing for a selected workspace page."""
     try:
         return JSONResponse(await asyncio.to_thread(project_brief, paths.WORKSPACE, slug),
                             headers={"Cache-Control": "no-store"})
     except ValueError:
-        return JSONResponse({"error": "invalid project"}, status_code=400)
+        return JSONResponse({"error": "invalid page"}, status_code=400)
     except FileNotFoundError:
-        return JSONResponse({"error": "project not found"}, status_code=404)
+        return JSONResponse({"error": "page not found"}, status_code=404)
 
 
 @app.post("/api/constellation/{slug}/review")
 async def api_constellation_review(slug: str, body: dict):
     """Weekly-review decision: change status, or record the user's confirmation.
 
-    A local vault write the user makes by clicking; it touches only the README
+    A local vault write the user makes by clicking; it touches only the selected page
     frontmatter keys `status`, `last_updated`, `verified` and `stale_after`.
     """
     if not isinstance(body, dict):
@@ -1762,7 +1768,7 @@ async def api_constellation_review(slug: str, body: dict):
     except ValueError as exc:
         return JSONResponse({"error": str(exc)}, status_code=400)
     except FileNotFoundError:
-        return JSONResponse({"error": "project not found"}, status_code=404)
+        return JSONResponse({"error": "page not found"}, status_code=404)
     return JSONResponse(brief)
 
 

@@ -59,4 +59,4 @@ owner: <name from PROFILE.md>
 
 ## 5. Finish
 
-If the user wants it on their radar, add a row to **Active work** in `PRIORITIES.md`; otherwise mention it once as an option. Tell them the path you created and the first useful edit ("fill in Overview").
+If the user wants it on their radar, add a row to **Active work** in `PRIORITIES.md`; otherwise mention it once as an option. Offer to list the new README in a chosen collection when the workspace uses `WORKSPACE.md`. Append the relative Markdown link if the user wants it included. Tell them the path you created and the first useful edit ("fill in Overview").

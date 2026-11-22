@@ -236,9 +236,9 @@ def test_running_workloads_dedupes_task_and_activity():
     assert "href" not in running[0]
 
 
-def test_build_pulse_includes_running_from_activity_only():
+def test_build_pulse_includes_running_from_activity_only(tmp_path):
     payload = build_pulse(
-        Path("/tmp"),
+        tmp_path,
         activity_entries=[{"status": "success", "kind": "skill", "label": "old"}],
         handled={},
         board_active=0,
@@ -350,15 +350,14 @@ def test_review_confirm_adds_newest_human_entry_once(tmp_path):
     assert "owner: Sam" in readme.read_text()
 
 
-def test_review_confirm_creates_block_and_rejects_no_frontmatter(tmp_path):
+def test_review_confirm_creates_block_and_reviews_plain_markdown(tmp_path):
     readme = _readme(tmp_path, "demo", "---\ntitle: Demo\nstatus: active\n---\n")
     review_project(tmp_path, "demo", "confirm", now=NOW)
     text = readme.read_text()
     assert f"verified:\n  - {{ by: human:user, at: {TODAY} }}" in text
     assert f"stale_after: {(NOW + timedelta(days=30)).date().isoformat()}" in text
     _readme(tmp_path, "bare", "# No frontmatter\n")
-    with pytest.raises(ValueError):
-        review_project(tmp_path, "bare", "confirm", now=NOW)
+    assert review_project(tmp_path, "bare", "confirm", now=NOW)["provenance"]["state"] == "human"
     with pytest.raises(ValueError):
         review_project(tmp_path, "demo", "delete", now=NOW)
 
@@ -421,19 +420,10 @@ def test_full_screen_toggle_links_back_to_pulse_before_any_selection():
     assert out == ["/pulse", "/pulse?focus=a%20b", "/constellation", "/constellation?focus=x"]
 
 
-def test_vault_links_route_relative_markdown_to_document_viewer():
-    import json, shutil, subprocess
-    node = shutil.which("node")
-    if not node:
-        pytest.skip("node not available")
-    source = "See [backlog](../board-assistant/iteration-backlog.md), [[mcp-agentic-data-access]] and [x](https://a.b/c.md)."
-    js = ("const location = { pathname: '/constellation' };"
-          + _pulse_functions("vaultLinks")
-          + f"process.stdout.write(vaultLinks({json.dumps(source)}, 'agentx'));")
-    out = subprocess.run([node, "-e", js], capture_output=True, text=True, check=True).stdout
-    assert "(/document?path=projects%2Fboard-assistant%2Fiteration-backlog.md&from=%2Fconstellation)" in out
-    assert "**mcp-agentic-data-access**" in out
-    assert "(https://a.b/c.md)" in out
+def test_drawer_resolves_relative_links_against_selected_source(tmp_path):
+    _readme(tmp_path, "demo", "## Overview\nSee [notes](notes.md) and [missing](gone.md).")
+    (tmp_path / "projects/demo/notes.md").write_text("Notes")
+    assert project_brief(tmp_path, "demo")["linked_paths"] == ["projects/demo/notes.md"]
 
 
 def test_scan_vault_lists_project_pages_only(tmp_path):

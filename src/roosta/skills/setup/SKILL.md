@@ -17,6 +17,12 @@ Ask for: full name and what to call them, role and team, the assistant's name if
 
 Ask what matters most over the next month or quarter: three to five things, in their words. Write them under `## My priorities` in `PRIORITIES.md`, exactly as said. Ask who they work with most and which systems or products their work touches; seed `CONTEXT.md` with short entries. Offer to create a project for each priority that is really a project (the `workspace-new-project` skill).
 
+Ask how the user groups their knowledge. Offer to adopt the Markdown index convention
+in the operating model using their existing pages. With their agreement, add
+`WORKSPACE.md` and ordered links to collection overviews. Keep existing prose, link
+order and omissions. A workspace without an index already has a read-only fallback.
+
+
 ## 3. Tools
 
 Ask which tools they use day to day: chat (Teams, Slack), tickets (Jira, Linear, GitHub Issues), docs (Confluence, Google Docs, Notion), email and calendar, code (GitHub), data. For each, follow the `connectors` skill: check what is installed, propose the install with its exact command, **wait for approval**, have them sign in, add the connector with its check and write denials, and write the `TOOLS.md` entry. Skip any they don't want now; setup can be re-run.

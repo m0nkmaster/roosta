@@ -2,6 +2,11 @@
 
 Record each release newest first. Bump minor for features and visible behaviour, patch for fixes and polish.
 
+## 0.16.0 - 2026-11-22
+
+- Choose Workspace collections and Constellation stars through ordered Markdown links in WORKSPACE.md and collection overviews.
+- Browse topic reading lists and source-linked decisions and plans. Review stars by their last substantive update or verification date.
+
 ## 0.15.0 - 2026-11-22
 
 - Use roosta update to check for and install a compatible stable release in the current Python installation.

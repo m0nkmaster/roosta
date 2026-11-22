@@ -57,7 +57,7 @@
 </main>
 <script>
 function safeReturnUrl(raw){
-  const allowed=new Set(['/runner','/assistant','/pulse','/document','/workspace']);
+  const allowed=new Set(['/runner','/assistant','/pulse','/constellation','/document','/workspace']);
   if(!raw) return null;
   try{
     const url=new URL(raw,location.origin);
@@ -67,6 +67,7 @@ function safeReturnUrl(raw){
 }
 function backLabel(pathname){
   if(pathname==='/workspace') return '← Back to Workspace';
+  if(pathname==='/constellation') return '← Back to Constellation';
   if(pathname==='/pulse') return '← Back to Pulse';
   if(pathname==='/assistant') return '← Back to Assistant';
   if(pathname==='/runner') return '← Back to Workers';
@@ -118,7 +119,8 @@ async function loadDocument(){
   }
   const article=document.getElementById('document');
   try{
-    const response=await fetch('/api/vault-document?path='+encodeURIComponent(path));
+    const visible=from && ['/workspace','/pulse','/constellation'].includes(new URL(from,location.origin).pathname);
+    const response=await fetch('/api/vault-document?path='+encodeURIComponent(path)+(visible?'&visible=true':''));
     const data=await response.json();
     if(!response.ok) throw new Error(data.error||'Document could not be loaded');
     const version=JSON.stringify([data.content,data.properties]);
@@ -148,7 +150,7 @@ async function loadDocument(){
 // The vault file list is only needed (and fetched once) when a document holds vault links.
 let pathsPromise=null;
 function vaultPaths(content){
-  if(!/\[\[|\.md[)#]/.test(content)) return [];
+  if(!/\[\[|\.md[)>#]/i.test(content)) return [];
   pathsPromise=pathsPromise||fetch('/api/workspace').then(r=>r.json()).then(d=>d.files.map(f=>f.path)).catch(()=>{pathsPromise=null;return [];});
   return pathsPromise;
 }

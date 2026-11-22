@@ -33,18 +33,21 @@ function resolveWikilink(target,paths){
 // Resolve ./x.md or ../x.md against the folder of the document being shown.
 function resolveRelative(target,base){
   const parts=String(base||'').split('/').slice(0,-1);
-  for(const part of decodeURIComponent(target).split('/')){
+  let decoded;
+  try{decoded=decodeURIComponent(target);}catch(error){return '';}
+  for(const part of decoded.split('/')){
     if(part==='..'){ if(!parts.length) return ''; parts.pop(); }
     else if(part&&part!=='.') parts.push(part);
   }
   return parts.join('/');
 }
-function wikiLinks(markdown,paths,base=''){
-  const href=path=>`/document?path=${encodeURIComponent(path)}`;
+function wikiLinks(markdown,paths,base='',from=''){
+  const href=path=>`/document?path=${encodeURIComponent(path)}`+(from?'&from='+encodeURIComponent(from):'');
   return String(markdown||'').replace(/\[\[([^\]|#]+)(?:#[^\]|]*)?(?:\|([^\]]+))?\]\]/g,(_,target,label)=>{
     const path=resolveWikilink(target,paths),text=(label||target).trim();
     return path?`[${text}](${href(path)})`:text;
-  }).replace(/\]\((?!\w+:|\/|#)([^)\s#]+\.md)(?:#[^)\s]*)?\)/g,(link,target)=>{
+  }).replace(/\]\((?!\w+:|\/|#)(?:<([^>\n]+\.md)(?:#[^>]*)?>|([^)\s#]+\.md)(?:#[^)\s]*)?)\)/gi,(link,angle,raw)=>{
+    const target=angle||raw;
     const path=resolveRelative(target,base);
     return paths.includes(path)?`](${href(path)})`:link;
   });
