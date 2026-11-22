@@ -83,20 +83,35 @@ def test_claude_accounts_have_separate_auth_and_sessions(accounts, tmp_path):
     assert all(r.env['CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST'] == '1' for r in runs)
 
 
-def test_claude_workers_keep_workspace_specific_source_permissions(accounts, tmp_path, monkeypatch):
+@pytest.mark.parametrize('profile', ['safe', 'git-push', 'unrestricted'])
+def test_claude_package_and_private_permissions(accounts, tmp_path, monkeypatch, profile):
     account = accounts[0]('anthropic', auth='cli')
-    checkout = tmp_path / 'checkout'
-    package = checkout / 'src/roosta'
-    monkeypatch.setattr(ai_backend.paths, 'APP_ROOT', package)
-    def settings(workspace):
-        args = ai_backend.prepare(account['id'], str(workspace)).args
-        return Path(args[args.index('--settings') + 1])
-    engineer = settings(checkout)
-    other = settings(tmp_path / 'office')
-    for tool in ('Read', 'Edit', 'Write'):
-        rule = f'{tool}(/{package.resolve()}/**)'
-        assert rule not in json.loads(engineer.read_text())['permissions']['deny']
-        assert rule in json.loads(other.read_text())['permissions']['deny']
+    package = tmp_path / 'checkout/src/roosta'
+    package.mkdir(parents=True)
+    alias = tmp_path / 'installed'
+    alias.symlink_to(package)
+    monkeypatch.setattr(paths, 'APP_ROOT', alias)
+    monkeypatch.setattr(ai_runtime, 'RUNTIME_ROOT', tmp_path / 'checkout/.roosta/runtimes')
+    projects = connections.directory(account['id']) / 'claude/projects/test'
+    projects.mkdir(parents=True)
+    settings = {}
+    for editable in (False, True):
+        workspace = package.parents[1] if editable else tmp_path / 'office'
+        sid = ''
+        for flag in ('--session-id', '--resume'):
+            run = ai_backend.prepare(account['id'], str(workspace), profile=profile, session_id=sid)
+            assert run.args[run.args.index(flag) + 1] == run.session_id
+            sid = run.session_id
+            (projects / f'{sid}.jsonl').touch()
+            settings[editable] = Path(run.args[run.args.index('--settings') + 1])
+            permissions = json.loads(settings[editable].read_text())['permissions']
+            assert 'Read' in permissions['allow']
+            for tool in ('Read', 'Edit', 'Write'):
+                rule = f'{tool}(/{package.resolve()}/**)'
+                assert (rule in permissions['deny']) == (not editable and tool != 'Read')
+                for root in (connections.CONNECTIONS_DIR, ai_runtime.RUNTIME_ROOT):
+                    assert f'{tool}(/{root.resolve()}/**)' in permissions['deny']
+    assert settings[False] != settings[True]
 
 
 def test_untested_default_works_and_disconnect_never_falls_back(accounts):
@@ -188,19 +203,61 @@ try {
     subprocess.run([node,'--input-type=module','-e',script], check=True, cwd=Path(__file__).resolve().parents[1])
 
 
-def test_application_source_is_readable_when_it_belongs_to_the_worker_workspace(tmp_path, monkeypatch):
-    workspace = tmp_path / 'roosta'
-    app_root = workspace / 'src' / 'roosta'
-    monkeypatch.setattr(ai_backend.paths, 'APP_ROOT', app_root)
-    monkeypatch.setattr(ai_backend.ai_runtime, 'RUNTIME_ROOT', workspace / '.roosta/state/cache/runtimes')
-    monkeypatch.setattr(ai_backend.connections, 'CONNECTIONS_DIR', workspace / '.roosta/state/ai-connections')
-
-    protected = ai_backend._protected_roots(str(workspace))
-
-    assert app_root not in protected
-    assert ai_backend.ai_runtime.RUNTIME_ROOT.resolve() in protected
-    assert ai_backend.connections.CONNECTIONS_DIR.resolve() in protected
-    assert app_root in ai_backend._protected_roots(str(tmp_path / 'another-workspace'))
+@pytest.mark.parametrize('profile', ['safe', 'git-push', 'unrestricted'])
+@pytest.mark.parametrize('editable', [False, True])
+def test_pi_package_and_private_permissions(accounts, tmp_path, monkeypatch, profile, editable):
+    node = shutil.which('node')
+    if not node:
+        pytest.skip('node not available')
+    account = accounts[0]()
+    checkout = tmp_path / 'checkout'
+    package = checkout / 'src/roosta'
+    package.mkdir(parents=True)
+    (package / 'pi_guard.mjs').symlink_to(paths.APP_ROOT / 'pi_guard.mjs')
+    monkeypatch.setattr(paths, 'APP_ROOT', package)
+    runtime = checkout / '.roosta/runtimes'
+    runtime.mkdir(parents=True)
+    monkeypatch.setattr(ai_runtime, 'RUNTIME_ROOT', runtime)
+    workspace = checkout if editable else tmp_path / 'office'
+    workspace.mkdir(exist_ok=True)
+    (workspace / 'core').symlink_to(package)
+    (package / 'runtime').symlink_to(runtime)
+    (workspace / 'new-file').symlink_to(package / 'missing')
+    script = r'''
+import assert from 'node:assert/strict';
+import {pathToFileURL} from 'node:url';
+const [guard, pkg, accounts, runtime, editable, profile] = process.argv.slice(1);
+const handlers = {};
+(await import(pathToFileURL(guard))).default({on: (name, fn) => handlers[name] = fn});
+function blocked(toolName, value) {
+  const input = toolName === 'bash' ? {command: value} : {path: value};
+  return Boolean(handlers.tool_call({toolName, input})?.block);
+}
+for (const name of ['skills/setup/SKILL.md', 'skills/setup/references/starter-tasks.yaml', 'operating-model.md']) {
+  assert.equal(blocked('read', pkg + '/' + name), false);
+}
+for (const tool of ['read', 'edit', 'write']) {
+  for (const root of [accounts, runtime, 'core/runtime']) assert(blocked(tool, root + '/data'));
+  for (const target of [pkg, 'core/skills/setup/SKILL.md', 'new-file']) {
+    assert.equal(blocked(tool, target), tool !== 'read' && editable === 'False');
+  }
+  assert.equal(blocked(tool, pkg + '-sibling/file'), false);
+}
+for (const root of [accounts, runtime]) assert(blocked('bash', 'cat ' + root + '/data'));
+assert.equal(blocked('bash', 'python3 ' + pkg + '/skills/workspace-learner/sessions.py status'), editable === 'False');
+assert.equal(blocked('bash', 'git push origin main'), profile === 'safe');
+'''
+    fresh = ai_backend.prepare(account['id'], str(workspace), profile=profile)
+    resumed = ai_backend.prepare(account['id'], str(workspace), profile=profile, session_id=fresh.session_id)
+    for run in (fresh, resumed):
+        assert run.args[run.args.index('--session-id') + 1] == fresh.session_id
+        session_dir = run.args[run.args.index('--session-dir') + 1]
+        assert session_dir == str(Path(fresh.env['PI_CODING_AGENT_DIR']) / 'sessions')
+        guard = str(package / 'pi_guard.mjs')
+        assert ('--extension', guard) in zip(run.args, run.args[1:])
+        subprocess.run([node, '--input-type=module', '-e', script, guard, str(package),
+                        str(connections.CONNECTIONS_DIR), str(runtime), str(editable), profile],
+                       cwd=workspace, env=run.env, check=True)
 
 
 def test_settings_reject_remote_and_cross_origin_requests(accounts):
