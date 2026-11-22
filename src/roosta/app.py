@@ -216,7 +216,7 @@ async def lifespan(app: FastAPI):
     activity.compact()  # before runner.start(), so no spawn is appending
     prune_cursor_session_stores()    # reclaim unread Cursor CLI scratch, same timing
     try:
-        await asyncio.to_thread(ai_connections.offer_system)
+        await ai_connections.offer_system()
     except (ValueError, OSError):
         log.warning("Could not detect an existing Claude Code account; open AI settings to continue")
     runner.start()
@@ -458,11 +458,12 @@ async def api_settings_skills_sync():
 @app.get("/api/ai/connections", dependencies=[Depends(local_ai_settings)])
 async def api_ai_connections(item_id: str = ""):
     try:
-        await asyncio.to_thread(ai_connections.offer_system)
-        data = ai_connections.load()
+        await ai_connections.offer_system()
         engines = {name: await asyncio.to_thread(ai_runtime.describe, name) for name in ai_runtime.RUNTIMES}
         runtimes = {name: {"version": engine["version"], "installed": engine["installed"]}
                     for name, engine in engines.items()}
+        onboarding = await asyncio.to_thread(setup_item, chat_router)
+        data = ai_connections.load()
         selected, selected_model = "", ""
         if item_id and chat_router:
             sessions = chat_router._sessions
@@ -470,7 +471,6 @@ async def api_ai_connections(item_id: str = ""):
                 f"legacy:{ai_backend.current()}" if sessions.get(item_id) else ai_backend.default_connection())
             selected_model = sessions.model(item_id)
         data = {**data, "connections": [{**c, "signed_in": ai_backend.signed_in(c)} for c in data["connections"]]}
-        onboarding = setup_item(chat_router)
         missing = setup_gaps() if (onboarding and onboarding["id"] == SETUP_ITEM_ID
                                    and SETUP_ITEM_ID not in (chat_router.handled() if chat_router else {})) else []
         return ai_settings_result({**data, "providers": ai_connections.PROVIDERS, "runtimes": runtimes,
@@ -557,8 +557,6 @@ async def api_ai_chat_connection(body: dict):
         return ai_settings_result({"error": "Finish this turn or its pending approval before changing connection"}, 409)
     try:
         selected = ai_connections.get(connection_id)
-        if not selected.get("tested"):
-            raise ValueError("Test this connection first")
         chat_router._sessions.bind(item_id, selected["id"])
         return ai_settings_result({"ok": True, "message": "Connection changed. Visible history and summary are retained; execution starts a new session."})
     except ValueError as exc:
@@ -608,6 +606,7 @@ async def api_ai_operation(body: dict):
                 raise ValueError("Wait for current AI turns to finish before repairing a runtime")
         elif operation in {"test", "login"}:
             connection = ai_connections.get(key)
+            key = connection["id"]
             if operation == "login" and connection["auth"] == "system":
                 raise ValueError("This connection uses your own Claude Code sign-in; run `claude` in a terminal to sign in")
             if operation == "login" and (ai_backend.ACTIVE_CONNECTIONS[key] or connection_affected(key)["pending_approvals"]):
@@ -625,11 +624,29 @@ async def api_ai_operation(body: dict):
             ai_runtime.INSTALLING.add(key)
         elif operation == "login":
             ai_connections.update(key, tested=False)
-        ai_settings.jobs[key] = {"status": "running", "operation": operation}
-        ai_settings.job_tasks[key] = asyncio.create_task(ai_settings.run_operation(key, operation, ensure_chat_router))
+        ai_settings.jobs[key] = {"status": "running", "operation": operation, "run_id": uuid.uuid4().hex}
+        ai_settings.job_tasks[key] = asyncio.create_task(ai_settings.run_operation(key, operation))
         return ai_settings_result({"status": "running"}, 202)
     except ValueError as exc:
         return ai_settings_result({"error": str(exc)}, 400)
+
+
+@app.post("/api/ai/operations/{key}/cancel", dependencies=[Depends(local_ai_settings)])
+async def api_ai_cancel_test(key: str, body: dict):
+    job = ai_settings.jobs.get(key)
+    if not job or job["operation"] != "test":
+        return ai_settings_result({"error": "Only connection tests can be cancelled"}, 409)
+    if job.get("run_id") != body.get("run_id"):
+        return ai_settings_result({"error": "This test has been replaced"}, 409)
+    if job["status"] == "running":
+        task = ai_settings.job_tasks[key]
+        if not job.get("cancelling"):
+            job["cancelling"] = True
+            if job.get("started"):
+                task.cancel()
+        # A disconnected caller must not interrupt cleanup.
+        await asyncio.wait({task})
+    return ai_settings_result({"ok": True})
 
 
 @app.post("/api/ai/terminal", dependencies=[Depends(local_ai_settings)])
@@ -661,7 +678,9 @@ async def api_ai_change(connection_id: str, body: dict):
             ai_settings.jobs.get(connection_id, {}).get("status") == "running"):
         return ai_settings_result({"error": "Finish current turns, setup operations and pending approvals before changing this connection"}, 409)
     try:
-        return ai_settings_result(ai_connections.change(connection_id, body))
+        changed = ai_connections.change(connection_id, body)
+        ai_settings.jobs.pop(connection_id, None)
+        return ai_settings_result(changed)
     except ValueError as exc:
         return ai_settings_result({"error": str(exc)}, 400)
     except Exception:
@@ -693,6 +712,7 @@ async def api_ai_disconnect(connection_id: str):
             finally:
                 await ai_backend.terminate(proc)
         ai_connections.update(connection_id, connected=False, tested=False)
+        ai_settings.jobs.pop(connection_id, None)
         return ai_settings_result({"ok": True, "affected": affected})
     except ValueError as exc:
         return ai_settings_result({"error": str(exc)}, 400)
@@ -1329,7 +1349,7 @@ async def api_board_chat(body: dict):
         (setup_item(chat_router) or {}).get("id") == AI_SETUP_ITEM_ID
         and (item_id == SETUP_ITEM_ID or not chat_router._sessions.get(item_id))
     ):
-        return JSONResponse({"error": "Connect and check your AI in Settings before starting workspace setup or a new chat.",
+        return JSONResponse({"error": "Choose a default AI account in Settings and finish its software and model setup.",
                              "settings_url": "/settings#account-setup"}, status_code=503)
     if is_general_chat_id(item_id):
         item = {**GENERAL_CHAT_ITEM, "id": item_id}

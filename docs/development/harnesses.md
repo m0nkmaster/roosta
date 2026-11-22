@@ -15,7 +15,7 @@ resolves Pi's GitHub latest-release asset digest or Claude's latest channel and 
 validates version/checksum metadata, then verifies SHA-256 and the downloaded binary's version before
 replacing a managed copy. No versions or hashes are pinned in Roosta. `find()` chooses the newest
 working managed or user-installed binary, preferring the user's copy on a tie; old managed directories
-remain usable. Version probes are cached against resolved path, modification time and size so external
+remain usable. Discovery skips known cmux terminal-specific shims and Claude wrappers (including symlink targets), then considers the first ordinary executable on PATH, the standard user install and managed copies. This keeps unattended runs and Open in Terminal off cmux session wrappers without rejecting other user wrappers. Version probes are cached against resolved path, modification time and size so external
 CLI updates are recognised without restarting. No network lookup happens during discovery: downloads
 are explicit Settings actions and wait for active turns. `describe()` reports the selected version and
 whether Roosta or the user installed it. Downloads use the default SSL context with a fallback to
@@ -47,7 +47,7 @@ sign-in/logout subprocess ever runs for them — disconnect only marks the recor
 the login operation is rejected. At server startup (before workers start), and when `/api/ai/connections` is loaded, if no `system` connection
 exists, one is auto-provisioned ("Claude Code") if `find("claude")` succeeds; a top-level
 `system_offered` flag in the connections file makes this happen once, so deleting it never
-re-creates it. The first connection whose test succeeds becomes the default automatically.
+re-creates it. Choose any connected account as default with `POST /api/ai/default {connection}`. This does not list models or run a test. The first successful test sets the default only if none has been chosen.
 
 A connection is an account (provider plus sign-in or key) and carries no model; any legacy `model`
 key in the file is ignored on load. Settings stores a top-level `model_choice: {provider, model, effort}` alongside the default account via
@@ -107,8 +107,9 @@ moves an existing chat or approval. Explicit chat migration retains rendered his
 rotates execution context, and is rejected during a live turn or pending approval. Worker YAML omits
 `connection` to follow the current default and stores a stable id only for an explicit account pin. The
 runner resolves the default once after waiting for its writer slot and stores the concrete connection
-id on activity. An old `connection: default` is read as omitted. Disconnected or untested accounts do
-not fall back to another account.
+id on activity. An old `connection: default` is read as omitted. Disconnected accounts fail on their original binding. Untested accounts and accounts with a failed check can run.
+
+The local-only `POST /api/ai/operations/{key}/cancel` accepts the running test’s `run_id`. Cancellation targets that test alone and waits for its process group cleanup before publishing `interrupted` and allowing retry. It preserves the previous test metadata.
 
 The disclosed setup probe uses a temporary file with a random value and requires both a successful
 read-tool result and an assistant response containing it. It does not load workspace MCP or skills.

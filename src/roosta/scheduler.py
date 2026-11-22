@@ -661,9 +661,7 @@ class TaskRunner:
             if not isinstance(connection_id, str):
                 raise ValueError("Choose an AI connection")
             if connection_id:
-                selected = ai_connections.get("" if connection_id == "default" else connection_id)
-                if not selected.get("tested"):
-                    raise ValueError("Test the connection in Settings first")
+                ai_connections.get(connection_id)
                 values["connection"] = connection_id
             else:
                 remove.add("connection")

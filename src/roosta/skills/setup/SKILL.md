@@ -25,7 +25,7 @@ Where they keep their task list (Notion, Things, Jira) goes in `AGENTS.md` as a 
 
 ## 4. Starter schedule
 
-Copy the tasks in [references/starter-tasks.yaml](references/starter-tasks.yaml) into `.roosta/tasks.yaml`: the assistant conductor (every 15 minutes), the workspace gardener, chat ideas (weekly, the ideas a new chat offers) and the workspace learner. Explain each in one line. If they connected a chat tool, offer a watcher skill for it (written with `write-a-skill`, returning board cards per the board contract, `sensor: true` and `requires: [<connector>]`). New workers omit `connection` and follow the tested default in Settings → AI connections. Add a tested named connection id only when the user explicitly pins that worker to an account.
+Copy the tasks in [references/starter-tasks.yaml](references/starter-tasks.yaml) into `.roosta/tasks.yaml`: the assistant conductor (every 15 minutes), the workspace gardener, chat ideas (weekly, the ideas a new chat offers) and the workspace learner. Explain each in one line. If they connected a chat tool, offer a watcher skill for it (written with `write-a-skill`, returning board cards per the board contract, `sensor: true` and `requires: [<connector>]`). New workers omit `connection` and follow the selected default in Settings → AI connections. Add a connected named connection id only when the user explicitly pins that worker to an account.
 
 ## 5. A first real card
 

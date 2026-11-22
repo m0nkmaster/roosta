@@ -125,3 +125,18 @@ document.body.append(output);
         'copied': ['  <x> & `v`\\n\t  \n\n' + 'x' * 200 + '\n', 'second', '  <x'],
         'nativeInput': True, 'fits': True,
     }
+
+
+@pytest.mark.parametrize('width', [1280, 390])
+def test_settings_account_controls_during_model_discovery(chrome, tmp_path, width):
+    # Only the AI panel talks to this in-memory API. Keep the page and its styles intact.
+    source = (STATIC / 'settings.html').read_text()
+    source = re.sub(r'<script\b[^>]*>[\s\S]*?</script>', '', source, flags=re.I)
+    source = source.replace('/static/', STATIC.as_uri() + '/')
+    fixture = Path(__file__).with_name('settings_account_probe.js').read_text()
+    setup, interactions = fixture.split('// Run after the actual Settings script.')
+    scripts = (setup, (STATIC / 'ai-settings.js').read_text(), interactions)
+    page = tmp_path / 'settings.html'
+    page.write_text(source.replace('</body>', ''.join('<script>' + js + '</script>' for js in scripts) + '</body>'))
+    result = run_probe(chrome, page, width, 800, 'account-result')
+    assert result == {'ok': True}, result
