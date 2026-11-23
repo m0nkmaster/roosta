@@ -834,6 +834,7 @@ class TaskRunner:
                     weekdays_only=task.weekdays_only,
                     days_of_week=task.days_of_week,
                     writer=task.writer,
+                    unrestricted=task.unrestricted,
                     sensor=task.sensor,
                     requires=list(task.requires),
                     status=data.get("status", "idle"),
@@ -866,6 +867,7 @@ class TaskRunner:
             weekdays_only=task.weekdays_only,
             days_of_week=task.days_of_week,
             writer=task.writer,
+            unrestricted=task.unrestricted,
             sensor=task.sensor,
             requires=list(task.requires),
         )
@@ -895,6 +897,7 @@ class TaskRunner:
             state.run_at = task.run_at
             state.weekdays_only = task.weekdays_only
             state.days_of_week = task.days_of_week
+            state.unrestricted = task.unrestricted
             state.writer = task.writer
             state.sensor = task.sensor
             state.requires = list(task.requires)

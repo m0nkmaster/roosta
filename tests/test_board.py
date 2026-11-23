@@ -2451,6 +2451,9 @@ def test_skill_runner_selects_connection_per_task():
     assert 'name="connection"' in html
     assert 'name="harness"' not in html
     assert "fetch('/api/runtime-options')" in html
+    assert 'name="unrestricted"' in html
+    assert "${t.unrestricted === true ? 'checked' : ''}" in html
+    assert "if (f.unrestricted.checked !== f.unrestricted.defaultChecked) body.unrestricted = f.unrestricted.checked" in html
     assert "body.connection = f.connection.value" in html
     assert "Keep existing setup" not in html
     assert "Use previous setup" not in html

@@ -664,6 +664,8 @@
                             <div class="flag-picks">
                                 <label class="flag-pick"><input class="form-check-input" type="checkbox" name="writer"
                                     ${t.writer ? 'checked' : ''}><span>Edits the workspace <span class="hint">- waits for other writers to finish</span></span></label>
+                                <label class="flag-pick"><input class="form-check-input" type="checkbox" name="unrestricted"
+                                    ${t.unrestricted === true ? 'checked' : ''}><span>Unrestricted <span class="hint">- Standing approval for external actions explicitly directed by this worker’s instructions, subject to user and workspace restrictions. Running or queued work keeps its permissions.</span></span></label>
                                 ${(t.requires || []).length ? `<span class="hint">Waits, shown as blocked, while the ${esc(t.requires.join(', '))} sign-in is down (<code>requires</code> in tasks.yaml)</span>` : ''}
                             </div>
                         </div>
@@ -767,6 +769,7 @@
                     days_of_week: [...form.querySelectorAll('input[name="day"]:checked')].map(box => box.value),
                 },
             };
+            if (f.unrestricted.checked !== f.unrestricted.defaultChecked) body.unrestricted = f.unrestricted.checked;
             if (f.connection && !f.connection.disabled && f.connection.value !== form.dataset.connection) {
                 body.connection = f.connection.value;
             }
@@ -791,7 +794,7 @@
                     body: JSON.stringify(settingsBody(form)),
                 });
                 const data = await res.json();
-                if (!res.ok) throw new Error(data.error || 'save failed');
+                if (!res.ok) throw new Error(data.error || data.detail || 'save failed');
                 latestTasks = latestTasks.map(t => t.id === data.id ? data : t);
                 dirtySettings.delete(form.dataset.taskId);
                 renderTasks(latestTasks, true);
