@@ -2,6 +2,11 @@
 
 Record each release newest first. Bump minor for features and visible behaviour, patch for fixes and polish.
 
+## 0.18.1 - 2026-11-23
+
+- Settings now shows `roosta update` for supported Python installations.
+- Getting-started and release instructions lead with Python in the browser, with the macOS app alongside it as the second option.
+
 ## 0.18.0 - 2026-11-23
 
 - Workers settings now let you grant or revoke Unrestricted standing approval from the next run.

@@ -36,12 +36,12 @@ test('Settings retries a failed check and shows the verified command and release
   const button = nodes['check-updates'];
   assert.equal(nodes['running-version'].textContent, 'Running version 1.0.0');
   assert.match(button.textContent, /retry/i);
-  state = {state: 'available', latest: '1.1.0', notes: 'release', command: 'pipx upgrade roosta'};
+  state = {state: 'available', latest: '1.1.0', notes: 'release', command: 'roosta update'};
   await button.onclick();
   assert.match(nodes['update-status'].textContent, /1\.1\.0/);
   const children = nodes['update-details'].children.flatMap(el => el.children);
   assert.ok(children.some(el => el.href === 'release'));
-  assert.ok(children.some(el => el.textContent === 'pipx upgrade roosta'));
+  assert.ok(children.some(el => el.textContent === 'roosta update'));
   state = {state: 'current'};
   await button.onclick();
   assert.match(nodes['update-status'].textContent, /up to date/);

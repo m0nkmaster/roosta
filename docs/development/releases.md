@@ -96,4 +96,7 @@ The backend checks GitHub's latest stable release at startup and every six hours
 desktop shell displays the same dashboard, including when attached to a separate Python
 runner. Guidance uses the backend's own version, frozen status and Python installation.
 Python package commands require a matching, non-yanked universal wheel on PyPI that
-supports the running interpreter. Checks keep state in memory and updates are manual.
+supports the running interpreter. Supported Python installations show `roosta update`,
+with the serving environment identified and runner restart instructions. Source checkouts,
+unknown installations and bundled Macs keep their installation-specific guidance.
+Checks keep state in memory and updates are manual.

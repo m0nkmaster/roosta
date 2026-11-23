@@ -1,10 +1,10 @@
 # Roosta for macOS
 
-**Your agentic office.** Roosta is a desktop app where a team of AI workers shares knowledge of your work, handles recurring jobs and improves its skills with your feedback.
+Roosta gives your AI workers a shared workspace and an Assistant board. The recommended way to get started is [Python in your browser](../README.md#run-in-the-browser-with-python).
 
-This directory contains the Electron macOS shell. Release builds bundle Python and the Roosta backend; development
-with `npm start` uses the installed `roosta` command. Packaged apps initialise a missing workspace
-without requiring Git or Python, and never automatically adopt a non-empty unrelated folder.
+This directory contains the optional Electron shell for macOS. It adds a Dock icon, menu bar controls and native notifications. [Download the macOS app](../README.md#download-the-macos-app).
+
+Release builds bundle Python and the Roosta backend. They can initialise a workspace without a separate Git or Python installation. Development builds use the installed `roosta` command.
 
 ## Behaviour
 
@@ -83,7 +83,7 @@ version and changelog are already committed, use `python3 scripts/release.py shi
 The workflow tests and builds native Apple Silicon and Intel apps plus the Python wheel/source
 archive. It verifies DMGs and packaged backends, publishes PyPI, then publishes the GitHub release
 with matching downloads and changelog notes. A failed check prevents publication. Published files
-are never replaced. **Run workflow** on `main` builds downloadable test artifacts without publishing.
+are never replaced. **Run workflow** on `main` builds downloadable test artefacts without publishing.
 See [release setup and recovery](../docs/development/releases.md), including the one-time PyPI
 trusted-publisher setup; no PyPI API token is required.
 
@@ -96,9 +96,9 @@ it into a temporary keychain and deletes that keychain after the build. A certif
 this way is still self-signed; it does not enable notarisation.
 
 For changes affecting first launch or sign-in, use a non-publishing workflow run to check the
-artifacts on a clean Mac before tagging. CI validates the backend and bundle signature; it cannot
+artefacts on a clean Mac before tagging. CI validates the backend and bundle signature; it cannot
 validate Gatekeeper interaction, notification delivery or real enterprise account access.
-Updates are manual app replacements; workspace files are preserved.
+To update the bundled app, quit Roosta and replace it in Applications. Your workspace stays in its own folder.
 
 `npm run icons` resizes `../assets/roosta-app.png` into every macOS Dock icon size
 up to 1024px using macOS `sips`, then compiles the `.icns` with `iconutil`. It also copies

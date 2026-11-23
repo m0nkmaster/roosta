@@ -2,69 +2,77 @@
 
 <img src="assets/roosta-pixel.png" alt="Roosta, an orange-hooded pixel character with glowing eyes and goggles" width="160" align="right">
 
-**Your agentic office.**
+**Your agentic office. Tiny desks. Proper work.**
 
-Hi, I'm Roosta - I help you run a team of AI workers that get to know your work and then get on with it - all on your computer.
+Give your AI team jobs: research a topic, organise project notes, build something useful or keep an eye on what matters. Workers share knowledge of your priorities, learn from your feedback and bring findings and decisions to your Assistant board.
 
-Give your workers jobs. They research, organise, build and keep your projects moving, drawing on shared knowledge of your priorities, projects and preferences stored in simple, readable, markdown files. Your team learn from your feedback, improve their skills and bring you the decisions that need your attention.
-
-Watch them work in your pixel-art office, talk to them directly, and shape the team around what you need. You set the direction, hire and fire. Your agents get to work.
-
-- **A team that knows your work.** Workers share a workspace of project knowledge, priorities and preferences, so each job can build on what came before.
-- **Work that keeps moving.** Give recurring jobs to workers that run on a schedule, from researching a topic to keeping project notes current.
-- **An office that gets better.** Workers maintain shared knowledge, learn from your conversations, refine skills and improve your setup.
-- **Stay connected.** Roosta manages your AI connections and the tools your workers use, helping you connect the services you work with and keep sign-ins working.
-- **You stay in charge.** Review findings, guide workers and approve messages or other external actions before they happen.
-
-Named after a resourceful, unconventional problem-solver, Roosta is about taking initiative and finding a way through the chaos. 
+Your office runs on your computer, with its knowledge in readable Markdown files. Chat with the team, shape their jobs and watch them at work in the pixel-art Office. You set the direction. Roosta keeps the desks busy.
 
 ![Roosta's pixel-art Office, with AI workers at desks, in meeting rooms and around shared spaces](assets/office.png)
 
 ## Get started
 
+Choose how to open your office. [Python in your browser](#run-in-the-browser-with-python) is the quickest way in. The [macOS app](#download-the-macos-app) gives you the same office with a Dock icon, menu bar controls and native notifications.
+
+<a id="altenatively-run-in-the-browser-with-python"></a>
+
+### Run in the browser with Python
+
+On macOS or Linux, you'll need [Git](https://git-scm.com/downloads) and either [uv](https://docs.astral.sh/uv/getting-started/installation/) or [pipx](https://pipx.pypa.io/stable/installation/). Roosta needs Python 3.11 or newer. If you have **uv**, it can download Python for you:
+
+```sh
+uv tool install --python 3.11 roosta
+```
+
+If you use **pipx** instead, install a compatible Python first and select it by name (here, Python 3.11):
+
+```sh
+pipx install --python python3.11 roosta
+```
+
+Create your workspace and start Roosta. To use an existing folder of notes, substitute `roosta init --adopt <folder>` for the first command.
+
+```sh
+roosta init ~/workspace
+roosta start
+```
+
+Leave that terminal open and visit [your Assistant board](http://127.0.0.1:7667/assistant). The default port is 7667, or ROOS on a phone keypad.
+
 ### Download the macOS app
 
-Download the dmg for your Mac from [GitHub Releases](https://github.com/m0nkmaster/roosta/releases):
-**arm64** for Apple Silicon, **x64** for Intel. Drag Roosta into Applications, eject the disk
-image, then open it.
+Download the DMG for your Mac from [GitHub Releases](https://github.com/m0nkmaster/roosta/releases). Choose **arm64** for Apple Silicon (M-series) or **x64** for Intel. Drag Roosta into Applications, eject the disk image and open Roosta from Applications. Python comes bundled.
 
-Roosta releases are **self-signed and not notarised**. If macOS blocks the first launch, use
-**System Settings → Privacy & Security → Open Anyway** for Roosta and confirm.
-The first launch creates `~/workspace` (or uses your previously configured workspace).
-If the folder already contains files, Roosta asks before changing it: migrate a compatible
-workspace setup, or adopt a folder of documents. Cancelling leaves the folder untouched.
+Releases are **self-signed and not notarised by Apple**. If macOS blocks a download you trust, go to **System Settings → Privacy & Security → Open Anyway** for Roosta and confirm.
+
+On first launch, Roosta uses your configured workspace or creates `~/workspace`. If it finds an existing folder of documents or a compatible older setup there, it asks before adopting or migrating it. To update, quit Roosta and replace the app in Applications with the new copy. Your workspace lives outside the app.
 
 ### Set up your office
 
 1. **Connect your AI.** On a fresh workspace, the board offers **Connect your AI**, or **Choose your Claude Code account** if Claude Code is already installed. Open AI settings to select **Use as default** on that account, or connect another account and install its software.
 2. **Tell Roosta about your work.** Choose **Continue workspace setup**, then open **Set up your workspace** on the board. Roosta helps you describe your priorities, projects and tools, sets up a starter schedule and creates your first board card.
-3. **Build your team.** Open Workers and choose **New worker** to describe a job. Each worker runs a named skill on a schedule; chat with it to refine the job, and see it in the Office.
+3. **Build your team.** Open Workers and choose **New worker** to describe a job. Each worker runs a named skill on a schedule. Visit the Office to find its desk and chat about the job.
 
 Bring your own AI accounts. Use an OpenAI or Anthropic subscription, or pay separately for API usage. OpenAI models run through the [Pi](https://pi.dev/) agent harness.
 
-### Altenatively, run in the browser with Python
-
-You can also run Roosta in a browser on macOS or Linux. Python installs need Python 3.11+ and git; no separately installed agent CLI is required.
-
-```bash
-uv tool install roosta            # or: pipx install roosta
-roosta init ~/workspace
-roosta start                      # http://127.0.0.1:7667/assistant (7667: R-O-O-S on a phone keypad)
-```
-
-Connect your AI and follow the setup steps above. Run Roosta in the background with `roosta service install` (launchd on macOS, systemd on Linux). Settings also covers the workspace, address, background service and core skill ownership, without a terminal. Converting a folder of notes you already have? `roosta init --adopt <folder>` adds Roosta without touching your files.
-
 ### Updating and diagnosing Python installations
 
-Run `roosta update --check` to preview the latest stable GitHub release. Run `roosta update` to install it in the environment that supplied this CLI. Python upgrades require a matching, non-yanked wheel on PyPI for your Python version. A current or newer CLI stays in place. Roosta uses the owning uv tool or pipx installation, or the original pip or uv installer in a standalone virtual environment. Source checkouts, bundled apps and installations whose owner cannot be identified receive manual update instructions. After an upgrade, restart the runner serving your workspace to use the new core skills.
+Let active workers and chats finish, then run `roosta update` from the installation serving your workspace. Restart the runner (Ctrl+C and `roosta start` for the foreground setup above) or restart its existing service, then reload the dashboard. To preview the upgrade, use `roosta update --check`.
 
-Run `roosta doctor` for a read-only report. Workspace selection follows `--workspace <folder>`, `ROOSTA_WORKSPACE`, the saved configuration, then the current directory. Use `--offline` to skip the public release and local runner requests, and `--json` for structured checks and counts.
+For a read-only health report, run `roosta doctor`.
 
-```sh
-roosta doctor --workspace ~/workspace --offline --json
-```
+To run Roosta in the background, open **Settings → Workspace and runner**. From a terminal, stop the foreground runner, run `roosta service install --workspace ~/workspace` with your workspace path, then follow the printed activation command for launchd on macOS or systemd on Linux.
 
-Doctor checks installation and runtime availability, configuration, worker skills and directories, core skill drift, and the local runner. Account and connector checks inspect configuration only. To verify sign-in, use AI Settings or the connector's own login check. Warnings and skipped optional features leave the exit status at zero. A blocking failure returns 1.
+<details>
+<summary>Upgrade compatibility and diagnostic options</summary>
+
+The updater looks for the latest stable GitHub release and a compatible, non-yanked wheel on PyPI. It keeps a current or newer version. It uses the original uv or pipx tool installation, or pip or uv in a standalone virtual environment. Source checkouts, bundled apps and installations with an unknown owner receive manual instructions.
+
+Doctor checks the installation, runtimes, configuration, worker skills and directories, changes to core skills, and the local runner. It uses the workspace from `--workspace <folder>`, then `ROOSTA_WORKSPACE`, saved configuration or the current directory, in that order. Use `--offline` to skip release and local runner requests and `--json` for structured results. A blocking failure returns 1. Warnings and skipped optional features leave the exit status at zero.
+
+Account and connector checks inspect configuration. To verify sign-in, use AI Settings or the connector's own login check.
+
+</details>
 
 ## Inside your office
 
@@ -81,13 +89,13 @@ The Assistant board brings together what needs you now. Workers handle recurring
 
 ### Skills give your workers their jobs
 
-A skill is the backbone of Roosta's workers, there are a set of instructions for a job. Roosta has built-in skills for keeping knowledge current, learning from feedback, improving the office and handling work that needs your approval. Add your own as your team grows.
+A skill is a set of instructions for one job. Roosta has built-in skills for keeping knowledge current, learning from feedback, improving the office and handling work that needs your approval. Add your own as your team grows.
 
 | Skill | Job |
 |-------|-----|
-| `assistant` | Conductor: ranks what needs you into board cards |
+| `assistant` | Ranks findings and turns them into board cards |
 | `chat-ideas` | Suggests useful new chats from your priorities, projects and tools |
-| `actor` | The live chat on a card; drafts actions, never sends them |
+| `actor` | Handles the chat on a card and drafts actions for approval |
 | `sender` | Performs one action you approved |
 | `workspace-gardener` | Digests, verifies, connects and tidies the workspace |
 | `workspace-learner` | Learns from your AI chats and connected tools |
@@ -105,13 +113,18 @@ Workers and chats read core skills, their scripts and references, and the operat
 - **Replace a skill.** `roosta skills fork NAME` pins a complete editable tree under `.roosta/skill-forks/NAME/`. Settings and `roosta skills status` identify forks and flag when the installed tree has changed since the fork was created.
 - **Return to core.** Compare the fork with `NAME/` under the folder printed by `roosta skills path`. Move the preferences you want into an extension, then run `roosta skills use-core NAME`. With the runner open, the switch takes effect on restart so active turns can finish. The complete fork moves into `.roosta/skill-archive/forks/` for recovery. The same command archives a retired skill under `retired/`. Setup can help review scripts, references and behavioural differences before you switch.
 
-On startup, Roosta moves verified generated copies into `.roosta/skill-archive/` and uses installed core. A missing copy also uses installed core. An edited or unverifiable tree becomes an active fork for review. An independent Claude copy is checked separately. A verified clean Agents copy continues to follow core even if the Claude copy differs. When both contain changes, the Agents copy stays active and the Claude copy is archived under `review-claude/` inside the archive and listed for review. Retired skills present in the old lock survive as workspace forks. Other custom skills remain in place. The compatibility command `roosta skills sync` reports pending changes. Restart after active runs finish to apply migration. Roosta keeps the old lock and archives recognised generated operating models before installing a small pointer. Edited operating models and workspace instructions stay in place. Linked or incomplete skill trees stay available for review in Settings while other skills migrate.
+**Upgrading an older workspace.** Run `roosta skills sync` to see pending changes. Let active runs finish, then restart to apply them.
+
+- Roosta archives verified generated copies in `.roosta/skill-archive/`. Clean or missing copies use installed core. Edited or unverifiable trees become active forks for review.
+- Roosta checks independent Claude and Agents copies separately. A clean Agents copy follows core even if the Claude copy differs. If both have edits, the Agents copy stays active and the Claude copy goes into the archive's `review-claude/` folder for review.
+- Retired skills in the old lock survive as workspace forks. Other custom skills stay in place. Linked or incomplete trees remain available for review in Settings while other skills migrate.
+- Roosta keeps the old lock and archives recognised generated operating models before installing a small pointer. Edited operating models and workspace instructions stay in place.
 
 For standalone agent sessions, run `roosta skills instructions [NAME]` in the workspace. It prints the same operating model and effective file routes as dashboard turns. A same-named project or global skill cannot shadow installed core.
 
 ### Shared knowledge you own
 
-Your office's knowledge lives in a local folder of Markdown files: your profile, priorities, project notes and skills. You can read and edit them yourself, or work with them directly from Claude Code, Codex, Cursor or pi. The operating model is the set of conventions that helps agents use that knowledge consistently.
+Your office's knowledge lives in a local folder of Markdown files: your profile, priorities, project notes and skills. You can read and edit them yourself, or work with them directly from Claude Code, Codex, Cursor or Pi. The operating model is the set of conventions that helps agents use that knowledge consistently.
 
 ```
 ~/workspace/
@@ -178,7 +191,7 @@ into review. Confirming records your profile reviewer and today's date.
 
 ## Safety
 
-- External writes (messages, tickets, pages, email) pause for **Send/Cancel** on the board. Only then does the `sender` skill run. A worker can have standing approval to comment on open `ready` issues and add `in review` in one repository. See [worker grants](docs/development/runner.md#standing-approval-for-issue-updates). A separately approved task may run exactly `git push origin main` in one named repository; scheduled pushes also require `push_on_schedule`.
+- By default, external writes (messages, tickets, pages, email) pause for **Send/Cancel** on the board. Only then does the `sender` skill run. A worker can have standing approval to comment on open `ready` issues and add `in review` in one repository. See [worker grants](docs/development/runner.md#standing-approval-for-issue-updates). A separately approved task may run exactly `git push origin main` in one named repository; scheduled pushes also require `push_on_schedule`.
 - In **Workers**, expand a worker and open **Settings → Unrestricted** to grant standing approval for external actions explicitly directed by its instructions, subject to user and workspace restrictions. Clear the checkbox to revoke approval. Choose **Save** to apply the change to future runs. A worker already executing or waiting for another writer keeps its current permissions.
 - Standard runs use permission guardrails that block secret access, destructive git, write-shaped MCP tools and configured connector write commands. These are tool policies, not an OS sandbox; explicitly unrestricted tasks bypass them.
 - Tasks marked as writers run one at a time; other tasks may run concurrently.
@@ -218,12 +231,10 @@ Linux on Apple/ARM64 and x64; Windows runtime installation is not implemented ye
 git clone https://github.com/m0nkmaster/roosta.git && cd roosta
 uv tool install --editable .      # `roosta` now runs this checkout
 roosta init ~/workspace
-cd desktop && npm install
-npm start                         # run the app from source, no install
-npm run setup:signing && npm run install:mac   # or install it into /Applications
+roosta start
 ```
 
-With the editable install, dashboard HTML and CSS changes show on reload, Python changes after **Restart Roosta**, and core skill changes on the next turn; none needs a rebuild. Only changes under `desktop/` need `npm start` again or a fresh `npm run install:mac`. Notifications, signing and troubleshooting: [desktop/README.md](desktop/README.md).
+With an editable install, refresh the dashboard for HTML and CSS changes, restart the runner for Python changes, and start a new turn for core skill changes. For the optional macOS shell, including how to run it from source, build it, sign it and troubleshoot notifications, see the [desktop README](desktop/README.md).
 
 Run checks from the repository root:
 

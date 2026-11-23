@@ -1,6 +1,6 @@
 {
   "name": "roosta-desktop",
-  "version": "0.18.0",
+  "version": "0.18.1",
   "private": true,
   "description": "Your agentic office: a desktop app for a team of AI workers that learns your work",
   "main": "src/main.js",
