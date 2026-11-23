@@ -794,11 +794,11 @@ async def api_task_runtime(task_id: str, body: dict):
 
 
 @app.post("/api/tasks/{task_id}/settings")
-async def api_task_settings(task_id: str, body: dict, request: Request = None):
-    """Persist a task's name, nickname, description, schedule, harness and model."""
+async def api_task_settings(task_id: str, body: dict, request: Request):
+    """Persist changes from the worker settings form."""
     if not isinstance(body, dict):
         return JSONResponse({"error": "invalid request"}, status_code=400)
-    if "connection" in body and request is not None:
+    if "connection" in body or "unrestricted" in body:
         local_ai_settings(request)
     try:
         await validate_claude_task_model(task_id, str(body.get("harness", "") or "").strip(),

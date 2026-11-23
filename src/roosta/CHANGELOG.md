@@ -2,6 +2,10 @@
 
 Record each release newest first. Bump minor for features and visible behaviour, patch for fixes and polish.
 
+## 0.18.0 - 2026-11-23
+
+- Workers settings now let you grant or revoke Unrestricted standing approval from the next run.
+
 ## 0.17.3 - 2026-11-23
 
 - Workers configured with `unrestricted: true` can carry out external actions explicitly directed by their instructions on both Run now and scheduled runs.

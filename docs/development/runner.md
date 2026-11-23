@@ -216,6 +216,9 @@ git-push prompts described above. All branches return `<task-output>` JSON with 
 - **Tasks are configured from the Workers page.** Each task's drawer holds one settings form - name,
   Office nickname, description, schedule (every N minutes/hours/days or daily at HH:MM; every
   day, weekdays or specific days), and AI connection - saved with `POST /api/tasks/{id}/settings`.
+  The Unrestricted checkbox sends `unrestricted` only when changed. Like connection changes,
+  this write requires a local, same-origin request. JSON `true` enables the grant, `false`
+  removes it, and omission preserves it. The poll loop reads the grant before waiting for the writer lock, so a run already waiting there or executing keeps its original permissions.
   `update_task_fields` rewrites only those keys in `tasks.yaml`, keeping other lines and comments;
   a trailing comment survives only while its value is unchanged, so `interval: 3600  # 1 hour`
   does not keep a wrong note. Empty name, nickname or description removes the key (fallback: id,

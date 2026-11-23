@@ -83,6 +83,7 @@ class TaskState:
     weekdays_only: bool = False
     days_of_week: list[str] = field(default_factory=list)
     writer: bool = False
+    unrestricted: bool = False
     sensor: bool = False
     requires: list[str] = field(default_factory=list)
     status: str = "idle"  # idle, running, success, error, auth-failed, blocked
@@ -226,9 +227,9 @@ def update_task_runtime(
 EDITABLE_TASK_FIELDS = {
     "name", "nickname", "description", "harness", "model", "claude_model", "connection",
     "interval", "run_at", "weekdays_only", "days_of_week",
-    "writer",
+    "writer", "unrestricted",
 }
-TASK_SETTING_FLAGS = ("writer",)
+TASK_SETTING_FLAGS = ("writer", "unrestricted")
 DAY_NAMES = ("monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday")
 TASK_NAME_MAX = 60
 TASK_NICKNAME_MAX = 24

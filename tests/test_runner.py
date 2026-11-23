@@ -8,6 +8,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
+from fastapi.testclient import TestClient
 
 from roosta import scheduler
 from roosta import ai_settings
@@ -1056,6 +1057,54 @@ def test_settings_toggle_writer(tmp_path, monkeypatch):
     assert tasks_file.read_text() == "tasks:\n  - id: local\n    skill: skill\n"
     monkeypatch.setattr(appmod.paths, "TASKS_FILE", tasks_file)
     assert task_config.load_tasks_map()["local"].writer is False
+
+
+def test_settings_unrestricted_api(tmp_path, monkeypatch):
+    tasks_file = tmp_path / "tasks.yaml"
+    tasks_file.write_text("tasks:\n  - id: local\n    skill: skill  # keep\n")
+    monkeypatch.setattr(appmod.paths, "TASKS_FILE", tasks_file)
+    task = task_config.load_tasks_map()["local"]
+    runner = make_runner(tmp_path, [task], lambda _task: None)
+    runner._states[task.id] = runner._load_state(task)
+    runner._states[task.id].status = "running"
+    monkeypatch.setattr(appmod, "runner", runner)
+    url = "/api/tasks/local/settings"
+    client = TestClient(appmod.app, base_url="http://localhost", client=("127.0.0.1", 1234))
+    remote = TestClient(appmod.app, base_url="http://localhost", client=("192.0.2.1", 1234))
+    assert remote.post(url, json={"unrestricted": True}).status_code == 403
+    assert client.post(url, json={"unrestricted": True}, headers={"Origin": "https://other.invalid"}).status_code == 403
+    assert client.get("/api/tasks").json()[0]["unrestricted"] is False
+    assert client.post(url, json={"unrestricted": True}).json()["unrestricted"] is True
+    assert task_config.load_tasks_map()["local"].unrestricted is True
+    assert task.unrestricted is False  # executing run keeps its config
+    assert remote.post(url, json={"nickname": "Helper"}).json()["unrestricted"] is True
+    saved = tasks_file.read_bytes()
+    for invalid in ("true", "false", 1, 0, None, {}, []):
+        assert client.post(url, json={"unrestricted": invalid}).status_code == 400
+    assert tasks_file.read_bytes() == saved
+    assert client.post(url, json={"unrestricted": False}).json()["unrestricted"] is False
+    assert task_config.load_tasks_map()["local"].unrestricted is False
+    assert "skill: skill  # keep" in tasks_file.read_text()
+
+
+def test_unrestricted_state_uses_config_at_startup_and_on_poll(tmp_path):
+    task = task_config.TaskConfig(id="local", skill="skill", unrestricted=True)
+    runner = make_runner(tmp_path, [task], lambda _task: pytest.fail("unexpected run"))
+    assert runner._load_state(task).unrestricted is True
+    cached_state(tmp_path / "cache", task.id)
+    cache = tmp_path / "cache" / "local.json"
+    cache.write_text(json.dumps({**json.loads(cache.read_text()), "unrestricted": False}))
+
+    async def scenario():
+        runner.start()
+        try:
+            assert runner.get_states()[0]["unrestricted"] is True
+            task.unrestricted = False
+            await wait_until(lambda: runner.get_states()[0]["unrestricted"] is False)
+        finally:
+            await runner.stop()
+
+    asyncio.run(scenario())
 
 
 def test_settings_reject_bad_input(tmp_path):
