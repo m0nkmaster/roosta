@@ -169,7 +169,7 @@
                     <span><i class="dot" style="--c:var(--st-locked)"></i>meeting room - frozen call, a sign-in is down</span>
                     <span><i class="dot" style="--c:var(--st-hurt)"></i>sick bay - errored</span>
                     <span><i class="dot" style="--c:var(--st-resting)"></i>off shift</span>
-                    <span><i class="dot" style="--c:#7ee0b5"></i>NEW tag - fewer than 10 lifetime runs</span>
+                    <span><i class="dot" style="--c:#7ee0b5"></i>NEW tag - fewer than 10 lifetime runs; an old hand shadows their runs</span>
                 </div>
             </div>
             <div class="card-body"><div class="roster" id="roster" aria-label="Crew roster"></div></div>
@@ -1327,6 +1327,10 @@
             welcomeHi: ["welcome to the crew!", "ten runs down, high five!", "officially one of us!", "smashed probation!"],
             comebackHi: ["welcome back, mate!", "back from the sick bay!", "knew you'd bounce back!", "high five, you're green!"],
             milestoneThanks: ["cheers, mate!", "feels good to be green!", "good to be back!", "happy to be here!"],
+            mentorGo: ["new starter on the go!", "I'll show them the ropes", "first runs, let me watch", "buddy duty!"],
+            mentor: ["you're doing fine", "don't mind me", "I'm just here if you need me", "take your time"],
+            mentorTip: ["read the brief twice", "check the output before you post", "that's how I'd do it", "nice and steady", "you'll be on your own soon"],
+            mentee: ["thanks, still finding my feet", "is this right?", "where's the kettle again?", "everyone's so nice here"],
             // employee of the week (the record is real; the ceremony is ambient)
             eotwWho: ["who, me?!", "me? really?", "oh, stop it", "I'm not crying, you're crying"],
             eotwBusy: ["can't stop, mid-run!", "frame it, I'm busy!", "tell them I said thanks!"],
@@ -1782,7 +1786,7 @@
             if (w.rewardRun) { w.rewardRun = false; w.emote = (ROAM_EMOTES[w.poi && w.poi.tag] || ["cup"])[0]; w.emoteUntil = now + 2400; }
             if (w.poi && w.poi.tag === "frame") eotwPose(w, now);
             else if (w.errand && w.poi && (w.poi.tag === "peek" || w.poi.tag === "bedside")) handOver(w, now);
-            else if (w.poi && w.poi.tag === "peek" && now - lastQuip > 5000 && Math.random() < .5) say(w, pick(QUIPS.peek, Math.random()), now);
+            else if (w.poi && w.poi.tag === "peek" && now - lastQuip > 5000 && Math.random() < .5) say(w, pick(menteeOf(w) ? QUIPS.mentorTip : QUIPS.peek, Math.random()), now);
         }
         function nearestWalker(w, r) {
             let best = null, bd = r;
@@ -3995,7 +3999,8 @@
             if (!t || !w) { dossier.hidden = true; return; }
             const st = behaviour(t), r = ROLES[roleOf(t)], lv = levelOf(t.run_count), xp = ((t.run_count || 0) - lv * lv) / ((lv + 1) ** 2 - lv * lv);
             const ew = w.errand && workers.get(w.errand), rw = (w.reliefWith && w.reliefUntil > tnow() && workers.get(w.reliefWith)) || (w.greetPeer && w.greetUntil > tnow() && workers.get(w.greetPeer)), rk = w.reliefKind || w.greetKind, rd = w.reliefDesk || w.greetDesk, wf = waitingForOf(t, tasks);
-            const where = { working: w.desk ? `desk ${DESKS.indexOf(w.desk) + 1}${cat.onDesk === w.id ? " · cat on the keyboard" : ""}` : "hot-desking", queued: (w.desk ? `gaming at desk ${DESKS.indexOf(w.desk) + 1}` : "staring out the window") + (wf ? ` · waiting for ${wf.nick}` : " · waiting for the writer lock"), locked: t.status === "auth-failed" ? "meeting room · redialling the call" : "meeting room · waiting on a sign-in", hurt: "sick bay" + (w.streak >= 2 ? ` · ${w.streak} failed runs in a row` : "") + (cat.onBed === w.id ? " · cat on the bed" : "") + (w.hasTea ? " · nursing a cuppa" : ""), resting: rw ? `celebrating ${rk === "welcome" ? "probation " : rk === "comeback" ? "recovery " : ""}with ${whoOf(rw)}${rd ? ` at desk ${rd}` : ""}` : ew ? (w.errandKind === "welcome" ? `walking over to congratulate ${whoOf(ew)}` : w.errandKind === "comeback" ? `walking over to welcome ${whoOf(ew)} back` : w.errandKind === "peek" ? `checking on ${whoOf(ew)}` : w.errandKind === "tea" ? `bringing a cuppa to ${whoOf(ew)} in the sick bay` : `fetching a coffee for ${whoOf(ew)}`) : w.poi ? (w.act && ACT_LABEL[w.act] && !w.path.length ? ACT_LABEL[w.act](w) : (w.path.length ? "on the way to " + (WHERE[w.poi.tag] || "roaming").replace(/^(at|on|in) /, "") : (WHERE[w.poi.tag] || "roaming"))) : "roaming" }[st] + (st === "resting" && !rw && !ew ? shiftNote((dueAt(t, Date.now()) ?? Infinity) - Date.now(), w.path.length > 0) : "") + (w.late && st !== "working" ? ` · ${fmtDur(w.late / 1000)} overdue, not started yet` : "");
+            const mentee = st === "resting" ? menteeOf(w) : null, mentorOf = st === "working" ? [...workers.values()].find((o) => menteeOf(o) === w) : null;
+            const where = { working: w.desk ? `desk ${DESKS.indexOf(w.desk) + 1}${cat.onDesk === w.id ? " · cat on the keyboard" : ""}${mentorOf ? ` · learning the ropes from ${whoOf(mentorOf)}` : ""}` : "hot-desking", queued: (w.desk ? `gaming at desk ${DESKS.indexOf(w.desk) + 1}` : "staring out the window") + (wf ? ` · waiting for ${wf.nick}` : " · waiting for the writer lock"), locked: t.status === "auth-failed" ? "meeting room · redialling the call" : "meeting room · waiting on a sign-in", hurt: "sick bay" + (w.streak >= 2 ? ` · ${w.streak} failed runs in a row` : "") + (cat.onBed === w.id ? " · cat on the bed" : "") + (w.hasTea ? " · nursing a cuppa" : ""), resting: rw ? `celebrating ${rk === "welcome" ? "probation " : rk === "comeback" ? "recovery " : ""}with ${whoOf(rw)}${rd ? ` at desk ${rd}` : ""}` : ew ? (w.errandKind === "welcome" ? `walking over to congratulate ${whoOf(ew)}` : w.errandKind === "comeback" ? `walking over to welcome ${whoOf(ew)} back` : w.errandKind === "peek" ? `checking on ${whoOf(ew)}` : w.errandKind === "mentor" ? `going to show ${whoOf(ew)} the ropes` : w.errandKind === "tea" ? `bringing a cuppa to ${whoOf(ew)} in the sick bay` : `fetching a coffee for ${whoOf(ew)}`) : mentee ? `showing ${whoOf(mentee)} the ropes at desk ${DESKS.indexOf(mentee.desk) + 1}` : w.poi ? (w.act && ACT_LABEL[w.act] && !w.path.length ? ACT_LABEL[w.act](w) : (w.path.length ? "on the way to " + (WHERE[w.poi.tag] || "roaming").replace(/^(at|on|in) /, "") : (WHERE[w.poi.tag] || "roaming"))) : "roaming" }[st] + (st === "resting" && !rw && !ew ? shiftNote((dueAt(t, Date.now()) ?? Infinity) - Date.now(), w.path.length > 0) : "") + (w.late && st !== "working" ? ` · ${fmtDur(w.late / 1000)} overdue, not started yet` : "");
             let prog = "";
             if (st === "working") {
                 const p = progressOf(t), s = runStart.get(t.id);
@@ -4434,6 +4439,23 @@
             }
             return best;
         }
+        // A new starter at work gets shadowed by the old hand: the most experienced free off-shift colleague
+        // (most lifetime runs, nearest on a tie), never another new starter. The run is real; the buddy is ambient.
+        function mentorFor(target, ws, newRuns = 10) {
+            let best = null, br = -1, bd = Infinity;
+            for (const o of ws) {
+                if (o === target || o.state !== "resting" || o.path.length || o.errand || o.act === "nap" || (o.poi && o.poi.pair)) continue;
+                const n = (o.task && o.task.run_count) || 0; if (n < newRuns) continue;
+                const d = Math.hypot(o.x - target.x, o.y - target.y);
+                if (n > br || (n === br && d < bd)) { best = o; br = n; bd = d; }
+            }
+            return best;
+        }
+        const runStamp = (t) => t.id + "#" + ((t.task && t.task.run_count) || 0);
+        function menteeOf(w) { // the new starter this colleague is shadowing right now, if any
+            const t = w.mentee && w.poi && w.poi.tag === "peek" && !w.path.length && workers.get(w.poi.desk.owner);
+            return t && t.state === "working" && w.mentee === runStamp(t) ? t : null;
+        }
         const peekOf = (w) => w.desk && POIS.find((q) => q.tag === "peek" && q.desk === w.desk);
         function sickErrandTarget(ws) {
             for (const w of ws) {
@@ -4447,6 +4469,15 @@
         function coffeeRuns(now) {
             if (now < nextCoffeeCheck) return; nextCoffeeCheck = now + 2000;
             for (const w of workers.values()) {
+                if (w.state === "working" && w.desk && !w.path.length && w.newStarter && w.mentorRun !== runStamp(w)) {
+                    const pk = peekOf(w), r = pk && !pk.taken && mentorFor(w, workers.values(), NEW_RUNS);
+                    if (r) {
+                        w.mentorRun = runStamp(w);
+                        leaveSpot(r); r.errand = w.id; r.errandKind = "mentor"; r.mentee = w.mentorRun; r.carry = null; sendTo(r, pk);
+                        say(r, pick(QUIPS.mentorGo, Math.random()), now);
+                        return; // one errand at a time
+                    }
+                }
                 const s = runStart.get(w.id);
                 if (w.state !== "working" || !w.desk || w.path.length || !s) continue;
                 const kind = overrunErrand(progressOf(w.task), w.coffeeFor === s, w.peekFor === s), peek = kind && peekOf(w);
@@ -4522,6 +4553,18 @@
             }
             if (!t || t.state !== "working") { w.dwellUntil = now; return; }
             t.nextThink = Math.max(t.nextThink, now + 5000);
+            if (kind === "mentor") { // stays for the whole run; idle() sends them off when the desk frees
+                w.dwellUntil = now + rnd(150000, 180000); w.dwellLen = w.dwellUntil - now;
+                w.emote = "bulb"; w.emoteUntil = now + 3400;
+                say(w, pick(QUIPS.mentor, Math.random()), now);
+                if (cat.onDesk !== t.id) {
+                    t.glanceDir = "right"; t.glanceUntil = now + 2600;
+                    t.emote = "heart"; t.emoteUntil = now + 2800;
+                    t.quip = pick(QUIPS.mentee, Math.random()); t.quipStart = now + 1500; t.quipUntil = now + 4500;
+                }
+                if (selected) renderDossier();
+                return;
+            }
             if (kind === "peek") {
                 w.dwellUntil = now + rnd(22000, 32000); w.dwellLen = w.dwellUntil - now;
                 w.emote = pick(["q", "bulb"], Math.random()); w.emoteUntil = now + 3400;

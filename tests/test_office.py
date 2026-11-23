@@ -86,6 +86,24 @@ def test_coffee_runner_is_nearest_free_off_shift_colleague():
     assert _node(js) == ["near", "far", None]
 
 
+def test_mentor_is_most_senior_free_colleague_never_a_new_starter():
+    ws = [
+        {"id": "new", "state": "working", "x": 0, "y": 0, "path": [], "task": {"run_count": 3}},
+        {"id": "junior", "state": "resting", "x": 5, "y": 0, "path": [], "task": {"run_count": 4}},
+        {"id": "mid", "state": "resting", "x": 10, "y": 0, "path": [], "task": {"run_count": 50}},
+        {"id": "veteran-far", "state": "resting", "x": 400, "y": 0, "path": [], "task": {"run_count": 900}},
+        {"id": "veteran-near", "state": "resting", "x": 40, "y": 0, "path": [], "task": {"run_count": 900}},
+        {"id": "boss-busy", "state": "working", "x": 1, "y": 0, "path": [], "task": {"run_count": 5000}},
+        {"id": "boss-nap", "state": "resting", "x": 1, "y": 0, "path": [], "act": "nap", "task": {"run_count": 4000}},
+        {"id": "boss-walk", "state": "resting", "x": 1, "y": 0, "path": [1], "task": {"run_count": 3000}},
+    ]
+    js = (f"{_lift('mentorFor')}const ws={json.dumps(ws)};"
+          "const a=mentorFor(ws[0],ws).id;ws[4].errand='x';const b=mentorFor(ws[0],ws).id;"
+          "const c=mentorFor(ws[0],[ws[0],ws[1]]);"
+          "process.stdout.write(JSON.stringify([a,b,c]))")
+    assert _node(js) == ["veteran-near", "veteran-far", None]
+
+
 def test_new_starter_tag_and_probation():
     cases = [[None, 0], [None, 9], [None, 10], [9, 10], [8, 9], [10, 11], [None, None]]
     out = _node(f"const NEW_RUNS = 10;{_lift('starter')}process.stdout.write(JSON.stringify("
