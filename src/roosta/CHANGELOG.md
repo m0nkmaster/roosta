@@ -2,7 +2,7 @@
 
 Record each release newest first. Bump minor for features and visible behaviour, patch for fixes and polish.
 
-## 0.18.0 - 2026-11-23
+## 0.17.2 - 2026-11-23
 
 - Active chats show “Thinking” with cycling dots until more specific progress is available. The dots stay still when reduced motion is enabled.
 
