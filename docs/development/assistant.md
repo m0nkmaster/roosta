@@ -121,7 +121,9 @@ or invoking a harness. Existing conversations and established workspaces keep th
   changing page or losing the browser stream cannot cancel the model process. `GET /api/board`
   exposes active item ids and `chat_progress`, keyed by item id with the current `run_id` and
   display `label`. SSE events carry both ids. A transient `progress` event reports running
-  status, tool activity or an explicit harness tool summary. Tool inputs, results and reasoning
+  status, tool activity or an explicit harness tool summary. Streamed and polled generic progress
+  displays as “Thinking” with decorative dots that stay still under reduced motion. Specific
+  labels such as tool activity and “Writing reply” stay static. Tool inputs, results and reasoning
   stay out of progress. Terminal events clear it, and history stores only the conversation.
   `SessionMap` (`assistant/sessions.json`), `TopicStore` (`assistant/topics.json`) and
   `ConversationHistoryStore` (`assistant/chat-history.json`) are keyed only by stable item id.
