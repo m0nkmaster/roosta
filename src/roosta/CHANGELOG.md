@@ -2,6 +2,10 @@
 
 Record each release newest first. Bump minor for features and visible behaviour, patch for fixes and polish.
 
+## 0.17.3 - 2026-11-23
+
+- Workers configured with `unrestricted: true` can carry out external actions explicitly directed by their instructions on both Run now and scheduled runs.
+
 ## 0.17.2 - 2026-11-23
 
 - Active chats show “Thinking” with cycling dots until more specific progress is available. The dots stay still when reduced motion is enabled.

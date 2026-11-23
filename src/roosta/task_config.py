@@ -59,7 +59,7 @@ class TaskConfig:
     sensor: bool = False      # feeds the board; board health warns when it fails or goes stale
     allow_git_push: bool = False  # narrowly privileged scheduled repository refresh
     push_on_schedule: bool = False  # timer runs may push too; otherwise only Run now pushes
-    unrestricted: bool = False  # no local tool deny rules; prompt still forbids external writes
+    unrestricted: bool = False  # standing approval for external actions explicitly directed by this worker
     requires: list[str] = field(default_factory=list)  # connector ids that must be signed in
     precheck: str = ""  # cheap command; exit 1 means nothing changed, so skip the model run
     idle_timeout: float = 0   # override TASK_IDLE_TIMEOUT for this task (0 = default)

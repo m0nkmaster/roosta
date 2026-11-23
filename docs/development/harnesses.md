@@ -142,7 +142,8 @@ backend API and saved selection remain for compatibility; new selections use nam
   the Ollama provider inline without changing OpenCode's user config. The tracked
   `opencode-runner.json` policy is seeded into a gitignored, highest-precedence config directory
   with the dashboard's secret, destructive-git and external-write denials, plus the selected
-  workspace skill directory so OpenCode can discover it. OpenCode is not available for
+  workspace skill directory so OpenCode can discover it. This policy also applies to
+  `unrestricted: true` tasks. OpenCode is not available for
   `allow_git_push` tasks. The child PATH puts `~/.opencode/bin` first when present;
   An older Homebrew OpenCode's legacy unattended flag is incompatible with the current `--auto`
   invocation.
@@ -164,9 +165,8 @@ backend API and saved selection remain for compatibility; new selections use nam
   denials, Write rules become Edit and Write denials), and the `Mcp(*:*keyword*)` denials become
   a `claude_guard.py` hook, because Claude permission rules cannot wildcard inside MCP tool names.
   The guard ignores case, so it is stricter than Cursor (`get_comments` is blocked too). The
-  approved sender uses the `unrestricted` profile, as does any task marked `unrestricted: true`
-  (check the workspace schedule): no local deny rules, but the prompt still forbids external
-  writes. `is_claude_model` is an argv-safety format check only (no family or effort names); a new
+  approved sender uses the `unrestricted` profile. Tasks marked `unrestricted: true` use the
+  same profile and have standing approval only for external actions their instructions explicitly direct. `is_claude_model` is an argv-safety format check only (no family or effort names); a new
   Claude choice is validated against Claude Code's own list (`validate_model`, including the
   `/runtime` and `/settings` task endpoints), so Cursor model names never reach Claude; an already
   stored value stays accepted:

@@ -15,11 +15,13 @@ never inside a user's workspace.
   never `git add -A` or stash the tree. Live runtime files can change underneath a stash.
 - Every shipped dashboard change needs a dated `CHANGELOG.md` entry and version bump.
   Follow the rules at the top of that file; check for concurrent edits before writing.
-- Keep external writes behind the board's explicit draft/approval/sender flow. Scheduled
+- By default, keep external writes behind the board's explicit draft/approval/sender flow. Scheduled
   skills report findings as board items. The runner may apply scoped issue comments and the `in review` label under an explicit
   per-worker repository grant (see Runner). A task with explicit
   `allow_git_push` approval may run exactly `git push origin main` in its named repository;
-  timer pushes also require `push_on_schedule`. Unrestricted tools do not grant permission.
+  timer pushes also require `push_on_schedule`. On manual and scheduled runs,
+  `unrestricted: true` takes precedence and authorises only external actions explicitly directed
+  by the worker's instructions, subject to user and workspace restrictions.
 - Treat workspace paths and model output as untrusted. Preserve resolved-symlink validation,
   attachment limits, Markdown sanitisation and sender-action validation.
 - A worker is a skill on a schedule: UI says **worker** and always names the skill;
