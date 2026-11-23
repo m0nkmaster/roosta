@@ -2,6 +2,10 @@
 
 Record each release newest first. Bump minor for features and visible behaviour, patch for fixes and polish.
 
+## 0.18.0 - 2026-11-23
+
+- Active chats show “Thinking” with cycling dots until more specific progress is available. The dots stay still when reduced motion is enabled.
+
 ## 0.17.1 - 2026-11-22
 
 - Fix file access for chats and workers using named AI connections. Review customisations can now read installed core skills, their references and the operating model.

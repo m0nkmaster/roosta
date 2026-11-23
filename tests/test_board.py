@@ -2101,17 +2101,39 @@ def test_composer_paste_keeps_links_hidden_in_rich_text():
     ]
 
 
+def _reply_progress_js(html):
+    render = re.search(r"function renderReplyProgress\(status,label\)\{.*?\n\}", html, re.S).group()
+    return render + """
+function statusNode(){
+  return {
+    get textContent(){return this.text||'';},
+    set textContent(text){this.text=text; this.firstElementChild=null;},
+    insertAdjacentHTML(_,markup){this.firstElementChild={markup};}
+  };
+}
+"""
+
+
+def test_thinking_dots_animate_only_when_motion_is_allowed():
+    html = (Path(cmod.__file__).parent / "static" / "assistant.html").read_text()
+    assert '.thinking-dots::after{content:"..."}' in html
+    assert re.search(r"@media \(prefers-reduced-motion: no-preference\)\{\s*"
+                     r"\.thinking-dots::after\{animation:thinking-dots [^}]*step-end infinite", html)
+    frames = re.search(r"@keyframes thinking-dots\{(.*?)\n  \}", html, re.S).group(1)
+    assert re.findall(r'content:"(.*?)"', frames) == [".", "..", "..."]
+
+
 def test_chat_progress_js_rejects_stale_events_and_clears_on_terminal():
     node = shutil.which("node")
     if not node:
         pytest.skip("node not available")
     html = (Path(cmod.__file__).parent / "static" / "assistant.html").read_text()
     handle = re.search(r"function handle\(id,ev,ai\)\{.*?\n\}", html, re.S).group()
-    js = handle + """
+    js = _reply_progress_js(html) + handle + """
 const assert=require('node:assert/strict'), chats={};
 const convo=id=>chats[id], scrollLog=()=>{}, md=s=>s, esc=s=>s, visibleReply=s=>s;
 function start(id){
-  let status={remove(){status=null;}};
+  let status=statusNode(); status.remove=()=>{status=null;};
   const bubble={innerHTML:'',insertAdjacentHTML(_,s){this.innerHTML+=s;},
     hasChildNodes(){return !!this.innerHTML;}};
   const ai={_raw:'',querySelector:s=>s==='.bubble'?bubble:status};
@@ -2132,7 +2154,12 @@ send(a,'a','one','progress',{label:'late'});
 send(a,'a','one','_close');
 assert.equal(a.querySelector('.bubble').innerHTML,'Final reply');
 assert.equal(a.querySelector('.reply-progress'),null);
-assert.equal(b.querySelector('.reply-progress').textContent,'Reply running');
+const status=b.querySelector('.reply-progress');
+assert.equal(status.textContent,'Thinking');
+assert.match(status.firstElementChild.markup,/class="thinking-dots" aria-hidden="true"/);
+send(b,'b','other','progress',{label:'Tool running · Read'});
+assert.equal(status.textContent,'Tool running · Read');
+assert.equal(status.firstElementChild,null);
 const next=start('b');
 send(b,'b','other','error',{payload:{reason:'stale error'}});
 assert.equal(b.querySelector('.bubble').innerHTML,'');
@@ -2152,13 +2179,13 @@ def test_idle_poll_does_not_yank_chat_scroll():
     html = (Path(__file__).resolve().parent.parent / "src" / "roosta" / "static" / "assistant.html").read_text()
     fn = re.search(r"function syncConversation\(id\)\{.*?\n\}", html, re.S)
     assert fn, "syncConversation not found"
-    js = fn.group(0) + """
+    js = _reply_progress_js(html) + fn.group(0) + """
 const chatContexts={}, activeId=null;
 let scrolls=0, pending=null;
 const scrollLog=()=>scrolls++, renderHistory=()=>{}, clearQueuedNotes=()=>{};
 const assert=require('node:assert/strict');
-const chatProgress={a:{run_id:'one',label:'Reply running'}};
-const document={createElement:()=>({dataset:{}, lastElementChild:{}, remove(){pending=null;}})};
+const chatProgress={};
+const document={createElement:()=>({dataset:{}, lastElementChild:statusNode(), remove(){pending=null;}})};
 const log={querySelector:()=>pending, appendChild:row=>{pending=row;}};
 const convos={a:{log, seeded:true, busy:false, historyCount:1}};
 const chatHistories={a:[{}]}, activeChats=new Set(), pendingApprovals={};
@@ -2166,14 +2193,22 @@ const out=[];
 syncConversation('a'); out.push(scrolls);           // idle poll
 chatHistories.a.push({}); syncConversation('a'); out.push(scrolls);  // new message
 activeChats.add('a'); syncConversation('a'); out.push(scrolls);      // thinking appears
-chatProgress.a.label='Tool started · Read';
+assert.equal(pending.lastElementChild.textContent,'Thinking');
+const dots=pending.lastElementChild.firstElementChild;
+assert.ok(dots);
+syncConversation('a');
+assert.equal(pending.lastElementChild.firstElementChild,dots);
+chatProgress.a={label:'Writing reply'};
 syncConversation('a'); out.push(scrolls);
-assert.equal(pending.lastElementChild.textContent,chatProgress.a.label);
+assert.equal(pending.lastElementChild.textContent,'Writing reply');
+assert.equal(pending.lastElementChild.firstElementChild,null);
 const first=pending;
 chatProgress.a={run_id:'two',label:'Reply running'};
 syncConversation('a');
 assert.notEqual(pending,first);
 assert.equal(pending.dataset.run,'two');
+assert.equal(pending.lastElementChild.textContent,'Thinking');
+assert.ok(pending.lastElementChild.firstElementChild);
 activeChats.delete('a'); syncConversation('a'); out.push(scrolls);   // thinking clears
 process.stdout.write(JSON.stringify(out));
 """
@@ -3553,7 +3588,7 @@ def test_assistant_restores_approval_cards_missed_by_the_stream():
     assert "d.pending_approvals" in html
     assert "div.dataset.run=runId" in html
     fn = re.search(r"function syncConversation\(id\)\{.*?\n\}", html, re.S)
-    js = fn.group(0) + """
+    js = _reply_progress_js(html) + fn.group(0) + """
 const chatContexts={}, activeId=null;
 const shown=new Set(), rendered=[];
 const scrollLog=()=>{}, renderHistory=()=>{}, clearQueuedNotes=()=>{};

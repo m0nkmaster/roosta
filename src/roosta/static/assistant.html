@@ -178,6 +178,15 @@
   .empty h2{font-size:1.15rem;font-weight:500;color:var(--secondary)}.empty p{font-size:.8rem}
   .daysep{display:flex;align-items:center;gap:.75rem;font-size:.65rem;color:var(--tertiary);padding:.75rem 0}
   .daysep::before,.daysep::after{content:"";flex:1;border-top:1px solid var(--tblr-border-color-translucent)}
+  .thinking-dots::after{content:"..."}
+  @media (prefers-reduced-motion: no-preference){
+    .thinking-dots::after{animation:thinking-dots 1.5s step-end infinite}
+  }
+  @keyframes thinking-dots{
+    0%{content:"."}
+    33.333%{content:".."}
+    66.667%,100%{content:"..."}
+  }
   .reply-progress{color:var(--tertiary);font-size:.875rem;overflow-wrap:anywhere}
   .busy{display:inline-flex;gap:3px;align-items:center;margin:0 .3rem;vertical-align:middle}
   .busy i{width:4px;height:4px;border-radius:50%;background:currentColor;animation:dot 1.2s ease-in-out infinite}
@@ -939,6 +948,13 @@ async function openContextDialog(id,mode){
     if(dialog.open&&dialog._preview===previewRequest) el('error').textContent=error.message;
   }
 }
+function renderReplyProgress(status,label){
+  const thinking=!label||label==='Reply running';
+  const text=thinking?'Thinking':label;
+  if(status.textContent===text&&!!status.firstElementChild===thinking) return;
+  status.textContent=text;
+  if(thinking) status.insertAdjacentHTML('beforeend','<span class="thinking-dots" aria-hidden="true"></span>');
+}
 function syncConversation(id){
   const c=convos[id]; if(!c||!c.seeded||c.busy) return;
   const history=chatHistories[id]||[];
@@ -972,18 +988,17 @@ function syncConversation(id){
   });
   const pending=c.log.querySelector('.server-progress');
   if(activeChats.has(id)){
-    const current=chatProgress[id], label=current?.label||'Reply running';
+    const current=chatProgress[id];
+    let row=pending;
     if(!pending||pending.dataset.run!==(current?.run_id||'')){
       pending?.remove();
-      const row=document.createElement('div');
+      row=document.createElement('div');
       row.className='msg ai server-progress';
       row.dataset.run=current?.run_id||'';
       row.innerHTML='<div class="who">Assistant</div><div class="reply-progress" role="status"></div>';
-      row.lastElementChild.textContent=label;
       c.log.appendChild(row); changed=true;
-    }else if(pending.lastElementChild.textContent!==label){
-      pending.lastElementChild.textContent=label;
     }
+    renderReplyProgress(row.lastElementChild,current?.label);
   }else if(pending){
     pending.remove(); changed=true;
   }
@@ -1548,7 +1563,7 @@ function handle(id,ev,ai){
       status=document.createElement('div'); status.className='reply-progress';
       status.setAttribute('role','status'); b.before(status);
     }
-    if(status.textContent!==ev.label) status.textContent=ev.label;
+    renderReplyProgress(status,ev.label);
     return;
   }
   if(ai._terminal&&ev.kind!=='_close') return;
