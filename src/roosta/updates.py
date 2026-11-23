@@ -5,7 +5,6 @@ import json
 from pathlib import Path
 import platform
 import re
-import shlex
 import sys
 import tomllib
 
@@ -122,19 +121,13 @@ async def check():
             compatible = False
         if not compatible:
             result["error"] = "Could not confirm a compatible release on PyPI for this Python interpreter."
+        elif kind in ("uv", "pipx", "venv", "uv-venv"):
+            result["guidance"] = f"Run this command using the Roosta CLI from {sys.prefix}."
+            result["command"] = "roosta update"
         else:
-            commands = {"uv": "uv tool upgrade roosta", "pipx": "pipx upgrade roosta",
-                        "venv": f"{shlex.quote(sys.executable)} -m pip install --upgrade roosta"}
-            if kind == "uv-venv":
-                commands[kind] = f"uv pip install --python {shlex.quote(sys.executable)} --upgrade roosta"
-            if kind in commands:
-                result["guidance"] = (f"Update the Python installation at {sys.prefix}. Use the same "
-                                      "tool directory and environment used to install Roosta.")
-                result["command"] = commands[kind]
-            else:
-                result["guidance"] = (f"The backend uses {sys.executable}. Identify its owner in your "
-                                      "runner or service configuration, then use that installation’s "
-                                      "original manager and environment to update Roosta.")
+            result["guidance"] = (f"The backend uses {sys.executable}. Identify its owner in your "
+                                  "runner or service configuration, then use that installation’s "
+                                  "original manager and environment to update Roosta.")
     if kind != "mac" and "error" not in result:
         restarts = {
             "service": "Restart the existing launchd or systemd user service serving this workspace.",

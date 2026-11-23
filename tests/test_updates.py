@@ -100,9 +100,7 @@ def test_running_installation_owns_guidance(monkeypatch, tmp_path, kind, marker,
     monkeypatch.setattr(updates, "read_json", read)
     result = asyncio.run(updates.check())
     assert read.await_args.args == ("https://pypi.org/pypi/roosta/1.10.0/json",)
-    commands = {"uv": "uv tool upgrade roosta", "pipx": "pipx upgrade roosta",
-                "venv": f"{updates.shlex.quote(updates.sys.executable)} -m pip install --upgrade roosta"}
-    assert result.get("command") == commands.get(kind)
+    assert result.get("command") == (None if kind == "unknown" else "roosta update")
     assert "Restart Roosta" in result["restart"] and "installer" not in result
     dist.read_text.return_value = json.dumps({"dir_info": {"editable": True}})
     assert updates.installation() == "source"
