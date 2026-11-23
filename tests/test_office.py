@@ -891,7 +891,7 @@ def test_pong_click_calls_jinxes_or_starts_a_game():
           "process.stdout.write(JSON.stringify([pongClickOutcome(true, 0, 2, 0), pongClickOutcome(true, 3, 2, 0), pongClickOutcome(false, 0, 2, 1),"
           " pongClickOutcome(false, 0, 2, 0), pongClickOutcome(false, 0, 1, 1), pongClickOutcome(false, 0, 0, 0),"
           " hintFor('pong', null, false), hintFor('foos', null, false)]))")
-    assert _node(js) == ["cheer", "jinx", "game", "warmup", "alone", "alone", "click: call the rally", "click: call a game"]
+    assert _node(js) == ["cheer", "jinx", "game", "warmup", "alone", "alone", "click: call the rally", "click: call a game or spin the rods"]
 
 
 def test_pong_point_is_first_to_eleven_win_by_two():
@@ -918,6 +918,13 @@ process.stdout.write(JSON.stringify({sent, spots:PONG_POIS.map(p => p.taken || n
     out = _node(js)
     assert out == ({"sent": ["0", "1"], "spots": ["0", "1"]} if available == 2
                    else {"sent": [], "spots": [None, None]})
+
+
+def test_foos_goal_is_first_to_five_and_spun_goals_never_count():
+    js = (f"{_lift('foosGoal')}"
+          "process.stdout.write(JSON.stringify([foosGoal([0, 0], 0, false), foosGoal([4, 3], 1, false), foosGoal([4, 3], 0, false), foosGoal([4, 3], 0, true)]))")
+    assert _node(js) == [{"score": [1, 0], "won": -1, "void": False}, {"score": [4, 4], "won": -1, "void": False},
+                         {"score": [5, 3], "won": 0, "void": False}, {"score": [4, 3], "won": -1, "void": True}]
 
 
 def test_ceefax_keeps_distressing_stories_off_the_wall_tv():
@@ -955,3 +962,10 @@ def test_overdue_only_when_the_scheduler_is_well_past_a_slot_it_could_have_run()
                                     capture_output=True, text=True, check=True, env={**os.environ, "TZ": "Europe/London"}).stdout)
     assert out == {"on_time": 0, "just_late": 0, "stalled": 30, "running": 0, "lock_wait": 0, "manual_queued": 0,
                    "sign_in": 0, "daily_missed": 240, "daily_done": 0, "never_ran": 0, "off_day": 0}
+
+
+def test_friday_cake_arrives_gets_cut_and_leaves_a_last_slice():
+    js = (f"{_lift('cakeStage')}"
+          "process.stdout.write(JSON.stringify([cakeStage(4, 15), cakeStage(5, 14.4), cakeStage(5, 14.5), cakeStage(5, 15.5),"
+          " cakeStage(5, 16.8), cakeStage(5, 18), cakeStage(6, 15)]))")
+    assert _node(js) == [None, None, "whole", "cut", "slice", None, None]

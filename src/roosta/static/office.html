@@ -276,7 +276,7 @@
             sofa: "furniture/Sofa.png", vending: "furniture/Vending_Machine.png", cooler: "furniture/Water_Cooler.png", tv: "furniture/TV.png",
             lampFloor: "furniture/Lamp_Floor.png", screen: "furniture/Standing_Screen.png", bed: "furniture/Bed.png", endTable: "furniture/End_Table.png",
             gclock: "furniture/Clock__Grandfather.png", fireplace: "furniture/Fireplace.png", fireTools: "items/Fireplace_Accessories.png", shelf: "furniture/Shelf.png", counter: "furniture/Countertop.png", tileB: "floor/tile.png",
-            laptop: "items/Laptop.png", lampTable: "items/Lamp_Table.png", coffee: "items/Coffee_Maker.png", paper: "items/Loose_Paper.png", boxes: "items/Boxes.png",
+            laptop: "items/Laptop.png", lampTable: "items/Lamp_Table.png", coffee: "items/Coffee_Maker.png", paper: "items/Loose_Paper.png", boxes: "items/Boxes.png", portraits: "items/Tabletop_Portraits.png", dessert: "items/Dessert.png",
             paintL: "wall/Paintings_Landscape.png", paintA: "wall/Paintings_Abstract.png", posters: "wall/Posters.png", lampWall: "wall/Lamp_Wall.png",
             walls: "structure/Painted_Walls.png", window: "structure/Windows.png", door: "structure/Door.png",
             rug: "rugs/Diamond_Rug.png", wood: "floor/wood.png", herring: "floor/herringbone.png", tile: "floor/tile_b.png",
@@ -339,6 +339,10 @@
             giftBig: ["presents", 36, 1, 26, 31], giftTall: ["presents", 71, 2, 12, 28], giftGold: ["presents", 100, 4, 23, 28], giftGreen: ["presents", 3, 5, 23, 22],
             giftWhite: ["presents", 131, 6, 26, 26], giftTiny: ["presents", 171, 11, 10, 13], giftPink: ["presents", 3, 37, 23, 22], giftBlue: ["presents", 100, 36, 23, 28],
             eggW: ["eggs", 10, 9, 10, 12], eggB: ["eggs", 42, 9, 10, 12],
+            // desk keepsakes: three tabletop photo frames and a bud vase that takes one stem (seasonal/Flowers row 0, 9 colours 32px apart)
+            pieWhole: ["dessert", 3, 5, 26, 21], pieCut: ["dessert", 6, 107, 26, 21], pieSlice: ["dessert", 0, 96, 14, 11],
+            photoFam: ["portraits", 10, 37, 13, 20], photoSolo: ["portraits", 10, 69, 13, 20], photoPair: ["portraits", 41, 37, 16, 20],
+            budVase: ["flowers", 108, 76, 8, 13], ...Object.fromEntries(Array.from({ length: 9 }, (_, i) => ["stem" + i, ["flowers", 12 + i * 32, 2, 7, 13]])),
             vaseWhite: ["flowers", 42, 73, 12, 22], vasePink: ["flowers", 10, 105, 12, 22], roses: ["flowers", 199, 66, 19, 15], daffs: ["flowers", 263, 66, 19, 15],
             skeleton: ["skel", 64, 0, 32, 61], skull: ["skel", 4, 3, 20, 20], webR: ["dungeon", 40, 0, 24, 32], webL: ["dungeon", 32, 40, 32, 23],
             gourds: ["veg", 228, 35, 25, 21], pumpkin: ["veg", 257, 43, 11, 8],
@@ -518,6 +522,13 @@
         // Desks: worker sits south of the desk, back to camera, laptop screen facing us.
         const DESKS = [];
         for (const dy of [118, 222]) for (const dx of [28, 140, 252, 364]) DESKS.push({ x: dx, y: dy, seat: { x: dx + 29, y: dy + 50 }, owner: null, mug: pick(["#e85d5d", "#5b8cff", "#f4ecff", "#7ee0b5", "#ffd166", "#b79bff"], hash("mug" + dx + dy)) });
+        // Personal touches so the desks aren't clones: a photo frame (only where no papers lie, they're wider) or a bud vase whose
+        // stem changes colour each week, as if someone brings fresh flowers; one desk in four stays bare (hot-desk tidy).
+        const WEEK = Math.floor((Date.now() / 864e5 + 3) / 7); // weeks since the Monday before 1 Jan 1970, so the stem changes on Mondays
+        for (const [i, d] of DESKS.entries()) {
+            const r = hash("touch" + d.x + d.y), photo = i % 2 ? pick(["photoFam", "photoSolo", "photoPair"], hash("ph" + d.x + d.y)) : null;
+            d.touch = r < .25 ? null : photo && r < .7 ? { k: photo, x: d.x + 31, y: d.y - 13 } : { k: "budVase", x: d.x + 36, y: d.y - 9, stem: "stem" + Math.floor(hash("st" + i + ":" + WEEK) * 9) };
+        }
         const BOARD = { x: 650, y: 12, w: 180, h: 56 };
         const FRAME = { x: 430, y: 20, w: 28, h: 38 }; // employee of the week, on the wall by the front door
         const DOOR = { x: 468, y: 22, front: { x: 484, y: 100 } };
@@ -942,6 +953,12 @@
             return null;
         }
         const moodNow = () => { const c = clock(); return weekMood(c.day, c.t); };
+        // Friday cake (ambient): someone brings a pie in at 14:30; it's cut into by 15:30 and the last slice sits there, unclaimed, until 18:00
+        function cakeStage(day, t) {
+            if (day !== 5 || t < 14.5 || t >= 18) return null;
+            return t < 15.5 ? "whole" : t < 16.75 ? "cut" : "slice";
+        }
+        const cakeNow = () => { const c = clock(); return cakeStage(c.day, c.t); };
         // weekends: off-shift crew drift to the lounge and library; desk-ish chores lose their pull (ambient only)
         function weekendBias(tag) {
             if (["sofa", "tv", "arcade", "pong", "foos", "darts", "console", "read", "coffee", "fridge", "vending", "window", "table"].includes(tag)) return 2.2;
@@ -1024,6 +1041,7 @@
                 let k = (r.likes.includes(p.tag) ? 4 : 1) * bias * shiftPull(dueIn, rm);
                 if (p.pair && free.length && POIS.some((q) => q.pair === p.pair && q !== p && q.taken)) k *= 3.5;
                 if (p.tag === "peek") k *= 1.5;
+                if (p.dine && cakeNow() && cakeNow() !== "slice") k *= 4; // word gets round: there's cake
                 k *= 1 / (1 + Math.hypot(p.x - w.x, p.y - w.y) / 260);
                 if (w.carry) {
                     if (KITCHEN[p.tag] || p.tag === "books") k *= .08;
@@ -1059,7 +1077,7 @@
             if (tag === "visit") return "visit";
             if (tag === "chat") return "talk";
             if (tag === "fire") return "warm";
-            if (tag === "table") return tableAct(c, phaseNow(), Math.random());
+            if (tag === "table") return p.dine && !c && cakeNow() && cakeNow() !== "slice" ? "eat" : tableAct(c, phaseNow(), Math.random());
             if (["peek", "bedside", "pong", "arcade", "phone", "foos", "darts", "console"].includes(tag)) return tag;
             if (tag === "sink") return "wash";
             if (tag === "tv" || tag === "sofa") return "tv"; // every lounge seat faces the TV
@@ -1246,6 +1264,7 @@
             foos: ["goal!", "no spinning!", "top bins", "rematch?"],
             darts: ["one hundred and eighty!", "double top", "bullseye!", "missed the board…"],
             eat: ["yum", "so good", "needed that", "crumbs…"],
+            cake: ["who brought cake?", "is it someone's birthday?", "just a sliver for me", "Friday cake!", "did you bake this?", "go on then, small bit", "who's having the last slice?"],
             sip: ["needed this brew", "good cuppa, that", "kettle's earnt its keep", "ah, caffeine", "proper builder's tea"],
             lunch: ["what did you bring?", "meal deal again", "someone's heated fish…", "save me a seat", "al desko? no chance", "is that sourdough?"],
             morning: ["first brew of the day", "kettle's just boiled", "morning all", "stand-up in five?", "what's on the board?"],
@@ -1824,7 +1843,7 @@
                 if (w.state === "resting" && w.poi) {
                     const opts = ACT_EMOTES[w.act] || ROAM_EMOTES[w.poi.tag]; if (opts) { w.emote = pick(opts, Math.random()); w.emoteUntil = now + 2600; }
                     const T = clock(), ph = phaseNow(), duskNow = !night && darkness(T) > .25;
-                    const aq = w.act === "eat" && ph === "lunch" && Math.random() < .65 ? QUIPS.lunch : ph === "morning" && (w.act === "fetch" || w.act === "write" || w.act === "meet") && Math.random() < .55 ? QUIPS.morning : ph === "afternoon" && w.act === "sip" && Math.random() < .55 ? (duskNow && Math.random() < .55 ? QUIPS.dusk : QUIPS.afternoon) : QUIPS[w.act];
+                    const aq = w.act === "eat" && w.poi.dine && cakeNow() && Math.random() < .7 ? QUIPS.cake : w.act === "eat" && ph === "lunch" && Math.random() < .65 ? QUIPS.lunch : ph === "morning" && (w.act === "fetch" || w.act === "write" || w.act === "meet") && Math.random() < .55 ? QUIPS.morning : ph === "afternoon" && w.act === "sip" && Math.random() < .55 ? (duskNow && Math.random() < .55 ? QUIPS.dusk : QUIPS.afternoon) : QUIPS[w.act];
                     if (aq && !paired && now - lastQuip > 7000 && Math.random() < .3) say(w, pick(aq, Math.random()), now);
                     if (paired && w.poi.tag === "chat" && !w.inConvo && now - lastQuip > 6000 && Math.random() < .5) { const mood = SEASON_CHAT && Math.random() < .35 ? SEASON_CHAT : T.wx === "rain" && Math.random() < .3 ? "rain" : duskNow && Math.random() < .4 ? "dusk" : (ph === "lunch" || ph === "morning" || ph === "afternoon") && Math.random() < .45 ? ph : moodNow(); say(w, pick(mood && Math.random() < .45 ? QUIPS[mood] : QUIPS.chat, Math.random()), now); }
                     else if (seated && !QUIPS[w.act] && now - lastQuip > 9000 && Math.random() < .25) { const mood = SEASON_CHAT && Math.random() < .3 ? SEASON_CHAT : ph === "morning" && w.poi.tag === "meeting" ? "morning" : duskNow ? "dusk" : moodNow(); say(w, pick(night ? QUIPS.night : mood && Math.random() < .5 ? QUIPS[mood] : QUIPS.rest, Math.random()), now); }
@@ -2019,19 +2038,22 @@
             react(cheerer({ x: cx, y: PONG.y + 30 }, ws, 200), "q", ["no one free for a game", "everyone's busy", "I'll play you later"]);
         }
 
-        // Click the foosball table: cheer a game on, or when it's free two idle colleagues come over (same outcomes as table tennis, never a jinx). World-only.
+        // Click the foosball table: spin the attacking player's rods mid-game (a spun goal never counts), or when it's free two idle colleagues come over. World-only.
         const hitFoos = (p) => p.x >= FOOS.x && p.x <= FOOS.x + FOOS.w && p.y >= FOOS.y - 4 && p.y <= FOOS.y + FOOS.h + 6;
         function clickFoos(now) {
             const ws = [...workers.values()], cx = FOOS.x + (FOOS.w >> 1), cy = FOOS.y - 6;
             const free = FOOS_POIS.filter((p) => !p.taken), fans = [];
             if (!foos.active) for (const spot of free) { const f = coffeeRunner(spot, ws.filter((o) => !fans.some(([fan]) => fan === o))); if (f) fans.push([f, spot]); }
             const out = pongClickOutcome(foos.active, 0, FOOS_POIS.length - free.length + fans.length, fans.length);
-            if (out === "cheer") {
-                floatText(cx, cy, "shoot!", "#fffaf0");
-                const w = workers.get(pick(FOOS_POIS, Math.random()).taken);
-                if (w && now >= w.quipUntil) { w.emote = "star"; w.emoteUntil = now + 2200; say(w, pick(["no spinning!", "top corner, watch", "goalie's asleep"], Math.random()), now); }
+            if (out === "cheer" && foos.pause <= 0 && foos.spin <= 0) {
+                // spin the attacking player's rods: the ball flies at goal, and a spun goal never counts
+                const [pl, pr] = FOOS_POIS.map((p) => workers.get(p.taken)), by = foos.vx > 0 ? 0 : 1, rival = by ? pl : pr;
+                foos.spin = 1.4; foos.spinBy = by; foos.vx = by ? -80 : 80; foos.vy = (FOOS.y + FOOS.h / 2 - foos.y) * 1.6;
+                floatText(cx, cy, "*whirrrr*", "#fffaf0");
+                if (rival) { rival.emote = "bang"; rival.emoteUntil = now + 2200; say(rival, pick(["no spinning!", "oi! that's spinning", "pub rules: no spinning"], Math.random()), now); }
                 return;
             }
+            if (out === "cheer") { floatText(cx, cy, "shoot!", "#fffaf0"); return; }
             if (out === "game") {
                 for (const [f, spot] of fans) { leaveSpot(f); f.carry = null; f.item = null; sendTo(f, spot); f.emote = "star"; f.emoteUntil = now + 2400; }
                 if (fans[0]) say(fans[0][0], pick(["foosball?", "first to five?", "no spinning, mind"], Math.random()), now);
@@ -2044,12 +2066,24 @@
         }
 
         // ================================================================ foosball and darts (games room, ambient)
-        const foos = { x: 0, y: 0, vx: 0, vy: 0, active: false, pause: 0, rods: [0, 0, 0, 0] };
+        const foos = { x: 0, y: 0, vx: 0, vy: 0, active: false, pause: 0, rods: [0, 0, 0, 0], score: [0, 0], pair: "", gameAt: 0, spin: 0, spinBy: 0 };
+        // Foosball scoring (lifted into tests/test_office.py): pub rules, first to five, and a goal off a spun rod
+        // doesn't count. side 0 = left player (red, shooting right).
+        function foosGoal(score, side, spun) {
+            if (spun) return { score: score.slice(), won: -1, void: true };
+            const s = score.slice(); s[side]++;
+            return { score: s, won: s[side] >= 5 ? side : -1, void: false };
+        }
         function foosStep(dt, now) {
             const [pl, pr] = FOOS_POIS.map((p) => p.taken && workers.get(p.taken));
             const was = foos.active;
             foos.active = !!(pl && pr && !pl.path.length && !pr.path.length);
-            if (!foos.active) return;
+            if (!foos.active) { foos.spin = 0; return; }
+            const pair = pl.id + "|" + pr.id;
+            if (pair !== foos.pair) { foos.pair = pair; foos.score = [0, 0]; foos.gameAt = now; } // new pairing, fresh game
+            // a game in progress keeps both players at the table (up to 3 minutes); a real run still calls them away
+            if (foos.score[0] + foos.score[1] && now - foos.gameAt < 180000) for (const w of [pl, pr]) w.dwellUntil = Math.max(w.dwellUntil, now + 4000);
+            if (foos.spin > 0) foos.spin -= dt;
             const L = FOOS.x + 4, R = FOOS.x + FOOS.w - 5, T = FOOS.y + 3, B = FOOS.y + FOOS.h - 4, mid = FOOS.y + FOOS.h / 2;
             if (!was || foos.pause > 0) {
                 if (was) foos.pause -= dt;
@@ -2059,13 +2093,26 @@
             foos.x += foos.vx * dt; foos.y += foos.vy * dt;
             if (foos.y < T || foos.y > B) { foos.vy *= -1; foos.y = clamp(foos.y, T, B); }
             for (let i = 0; i < 4; i++) foos.rods[i] = clamp(foos.y - mid, -6, 6) * (i % 2 ? .8 : 1) + Math.sin(now / 90 + i) * .8;
-            // a rod kicks the ball back now and then; otherwise it reaches the goal mouth
-            for (const rx of [FOOS.x + 12, FOOS.x + 23, FOOS.x + 30, FOOS.x + 41]) if (Math.abs(foos.x - rx) < 1.2 && Math.random() < .35) { foos.vx *= -1.05; foos.vy += rnd(-20, 20); }
+            // a rod kicks the ball back now and then (never while it's being spun at goal); otherwise it reaches the goal mouth
+            if (foos.spin <= 0) for (const rx of [FOOS.x + 12, FOOS.x + 23, FOOS.x + 30, FOOS.x + 41]) if (Math.abs(foos.x - rx) < 1.2 && Math.random() < .35) { foos.vx *= -1.05; foos.vy += rnd(-20, 20); }
             if (foos.x < L || foos.x > R) {
                 if (Math.abs(foos.y - mid) < 6) {
-                    const scorer = foos.x > R ? pl : pr; foos.pause = 1.2; foos.x = clamp(foos.x, L, R);
-                    scorer.emote = "star"; scorer.emoteUntil = now + 1400;
-                    if (now - lastQuip > 3000) say(scorer, pick(QUIPS.foos, Math.random()), now);
+                    const side = foos.x > R ? 0 : 1, scorer = side ? pr : pl, loser = side ? pl : pr, cx = FOOS.x + (FOOS.w >> 1);
+                    const r = foosGoal(foos.score, side, foos.spin > 0 && foos.spinBy === side);
+                    foos.pause = 1.2; foos.x = clamp(foos.x, L, R); foos.spin = 0; foos.score = r.score;
+                    if (r.void) {
+                        floatText(cx, FOOS.y - 14, "SPUN! no goal", "#ff8a7a");
+                        loser.emote = "bang"; loser.emoteUntil = now + 2000; say(loser, pick(["doesn't count!", "spinning! no goal", "that's not foosball, that's a blender"], Math.random()), now);
+                    } else if (r.won >= 0) {
+                        floatText(cx, FOOS.y - 14, "GAME! " + r.score[side] + "-" + r.score[1 - side], "#ffd166"); starBurst(cx, FOOS.y + 8);
+                        scorer.emote = "star"; scorer.emoteUntil = now + 2600; say(scorer, pick(["get in!", "five! winner stays on", "and that's the game", "you're buying"], Math.random()), now);
+                        loser.emote = "bang"; loser.emoteUntil = now + 2600;
+                        for (const w of [pl, pr]) w.dwellUntil = now + rnd(3000, 6000);
+                        foos.score = [0, 0]; foos.gameAt = 0;
+                    } else {
+                        scorer.emote = "star"; scorer.emoteUntil = now + 1400;
+                        if (now - lastQuip > 3000) say(scorer, pick(QUIPS.foos, Math.random()), now);
+                    }
                 } else { foos.vx *= -1; foos.x = clamp(foos.x, L, R); }
             }
             foos.vx = clamp(foos.vx, -80, 80); foos.vy = clamp(foos.vy, -40, 40);
@@ -2079,7 +2126,21 @@
             ctx.fillStyle = "#e8f4ec88"; ctx.fillRect(x + (w >> 1), y, 1, h); ctx.fillRect(x, y, w, 1); ctx.fillRect(x, y + h - 1, w, 1);
             ctx.fillStyle = "#0d0b16"; ctx.fillRect(x - 2, mid - 5, 2, 10); ctx.fillRect(x + w, mid - 5, 2, 10);
             if (foos.active) { ctx.fillStyle = "#fffaf0"; ctx.fillRect(Math.round(foos.x) - 1, Math.round(foos.y) - 1, 2, 2); }
+            // bead scorers on the top rail, one per side: scored beads slide to the player's end, in their colour
+            ctx.fillStyle = "#1b1410"; ctx.fillRect(x + 1, y - 2, 18, 1); ctx.fillRect(x + w - 19, y - 2, 18, 1);
+            for (let side = 0; side < 2; side++) for (let b = 0; b < 5; b++) {
+                const won = foos.active && b < foos.score[side], bx = side ? (won ? x + w - 3 - b * 3 : x + w - 18 + (4 - b) * 3) : (won ? x + 1 + b * 3 : x + 16 - (4 - b) * 3);
+                ctx.fillStyle = won ? (side ? "#5b8ff9" : "#ff5a5a") : "#5a4432"; ctx.fillRect(bx, y - 3, 2, 2);
+                if (won) { ctx.fillStyle = "#fffaf0"; ctx.fillRect(bx, y - 3, 1, 1); }
+            }
             [12, 23, 30, 41].forEach((rx, i) => {
+                if (foos.active && foos.spin > 0 && i % 2 === foos.spinBy) { // a spun rod: the men are a blur
+                    ctx.fillStyle = "#b8bcc8"; ctx.fillRect(x + rx, y - 4, 1, h + 8); ctx.fillStyle = "#1b1830"; ctx.fillRect(x + rx - 1, y - 6, 3, 2); ctx.fillRect(x + rx - 1, y + h + 4, 3, 2);
+                    ctx.fillStyle = (i === 0 || i === 2 ? "#d94848" : "#3b6fd9") + "99";
+                    const ph = (now / 40 | 0) % 2;
+                    for (const my of i % 3 === 0 ? [mid] : [mid - 8, mid + 8]) ctx.fillRect(x + rx - 3 + ph, my - 1, 5, 2);
+                    return;
+                }
                 const off = Math.round(foos.active ? foos.rods[i] : 0);
                 ctx.fillStyle = "#b8bcc8"; ctx.fillRect(x + rx, y - 4, 1, h + 8); ctx.fillStyle = "#1b1830"; ctx.fillRect(x + rx - 1, y - 6, 3, 2); ctx.fillRect(x + rx - 1, y + h + 4, 3, 2);
                 ctx.fillStyle = i === 0 || i === 2 ? "#d94848" : "#3b6fd9";
@@ -2190,8 +2251,11 @@
                 } else drawItem(drk, p.x - 1, ISLAND.y + 10, w, tnow());
             }
         }
-        function drawDiningTop() { // plates at lunch or with food; a cuppa or water when taking a break outside lunch
-            ctx.fillStyle = "#1b1830"; ctx.fillRect(DINING.x + 46, DINING.y + 3, 5, 7); ctx.fillStyle = "#9fd8ff"; ctx.fillRect(DINING.x + 47, DINING.y + 5, 3, 4);
+        function drawDiningTop() { // plates at lunch or with food; a cuppa or water when taking a break outside lunch; Friday cake in the middle
+            const cake = cakeNow();
+            if (cake === "slice") { pxEllipse(ctx, DINING.x + 48, DINING.y + 12, 9, 3, "#f4f6f8"); blit(ctx, "pieSlice", DINING.x + 41, DINING.y + 5); }
+            else if (cake) blit(ctx, cake === "whole" ? "pieWhole" : "pieCut", DINING.x + 35, DINING.y + 1);
+            else { ctx.fillStyle = "#1b1830"; ctx.fillRect(DINING.x + 46, DINING.y + 3, 5, 7); ctx.fillStyle = "#9fd8ff"; ctx.fillRect(DINING.x + 47, DINING.y + 5, 3, 4); }
             for (const p of POIS) {
                 if (!p.dine || !p.taken) continue;
                 const w = workers.get(p.taken); if (!w || w.path.length || (w.act !== "eat" && w.act !== "sip")) continue;
@@ -2839,6 +2903,8 @@
             const on = deskBusy(d), game = !on && deskGaming(d);
             blit(ctx, on || game ? "laptopOn" : "laptopOff", d.x + 8, d.y - 8);
             if (game) drawLaptopGame(d, now);
+            const t = d.touch;
+            if (t) { if (t.stem) blit(ctx, t.stem, t.x, t.y - 9); blit(ctx, t.k, t.x, t.y); }
             if (on) { // scrolling code on the screen (or key-mash while the cat sits on the keyboard)
                 const paws = cat.onDesk && cat.onDesk === d.owner;
                 for (let i = 0; i < 4; i++) { const ln = Math.floor(now / (paws ? 110 : 380)) + i, len = paws ? 11 : 3 + Math.floor(hash(d.x + ":" + ln) * 9); ctx.fillStyle = paws ? (ln % 2 ? "#ff6b6b" : "#ffd166") : ["#7ee0b5", "#e6f7ff", "#ffd166", "#b79bff"][ln % 4]; ctx.fillRect(d.x + 11 + (paws || ln % 3 === 0 ? 0 : 2), d.y - 5 + i * 2, len, 1); }
@@ -4058,7 +4124,7 @@
             if (kind === "call") return st === "locked" ? (demo ? "click: inspect the frozen call" : "click: re-check sign-in") : "click: test the video call";
             if (kind === "copier") return "click: print a test page";
             if (kind === "door") return "click: check badge reader";
-            return { cat: "click: pet the cat", darts: "click: throw a dart", console: "click: swap game and call players", pong: "click: call the rally", foos: "click: call a game", coffee: "click: brew a fresh pot", fridge: "click: open the fridge", fire: "click: poke the fire", clock: "click: strike the hour", tv: "click: Ceefax", board: "click: open the Assistant board", frame: "click: employee of the week", egg: "click: pick up the egg" }[kind] || null;
+            return { cat: "click: pet the cat", darts: "click: throw a dart", console: "click: swap game and call players", pong: "click: call the rally", foos: "click: call a game or spin the rods", coffee: "click: brew a fresh pot", fridge: "click: open the fridge", fire: "click: poke the fire", clock: "click: strike the hour", tv: "click: Ceefax", board: "click: open the Assistant board", frame: "click: employee of the week", egg: "click: pick up the egg" }[kind] || null;
         }
         // drag a worker onto the ops floor to arm its Run now confirm, or a queued worker off it to arm Cancel; never fires itself (lifted into tests/test_office.py)
         function dropAction(st, room, demo, canCancel = true) {

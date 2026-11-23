@@ -45,6 +45,8 @@ glasses/round, /halfmoon     Characters/Head Accessories/Eyewear 01 - Glasses, E
 furniture, items, wall       Objects/Furniture, Objects/Small Items, Objects/Wall Items
                              (furniture/Fireplace.png is Objects/Furniture/Fireplace.png - Lanea Zimmerman (Sharm), Eliza Wyatt)
                              (items/Fireplace_Accessories.png is Objects/Small Items/Fireplace, Accessories A.png - Lanea Zimmerman (Sharm), Eliza Wyatt)
+                             (items/Tabletop_Portraits.png is Objects/Small Items/Tabletop Portraits.png - Lanea Zimmerman (Sharm), Eliza Wyatt)
+                             (items/Dessert.png is Objects/Small Items/Food/Dessert.png - BlueCarrot16, Eliza Wyatt)
 structure, floor, rugs       Structure/Walls (Painted Walls), Windows (Ornamental A), Doors (15 Panel A), Floor; Objects/Furniture/Rugs
 seasonal/                    Objects/Furniture/Christmas Tree; Objects/Wall Items (Christmas Wall Decor, Pride Flags);
                              Objects/Small Items (Presents, Flowers, Skeletons A, Dungeon Elements, Food/Eggs, Food/Vegetables C)
