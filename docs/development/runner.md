@@ -104,8 +104,9 @@ supervises its own runner). Tests monkeypatch `cli.CONFIG_FILE`, `Path.home`, `p
 The runner knows no specific tool. `.roosta/connectors.yaml` lists connectors, re-read whenever it
 changes. Each may declare a read-only `check` command (no shell), how to read it (`expect`/`reject`
 dotted JSON paths, else the exit code), the user's `login` command, and `deny` - write-command
-prefixes merged into every unattended policy (Cursor `Shell(...)`, the Claude settings generated
-from it, and OpenCode `bash` rules). A connector with no `check` only contributes denials.
+prefixes enforced by the safe and git-push profiles and by legacy OpenCode. Unrestricted Claude,
+Pi and Cursor runs omit Roosta's connector denials. Named connections retain their
+[protected paths](harnesses.md) under every profile. A connector with no `check` only contributes denials.
 
 - There are no standing health workers. A task with `requires: [<id>]` runs those checks just
   before it starts; a confirmed `auth-failed` holds it `blocked` with "Waiting for sign-in: <label>
@@ -117,11 +118,14 @@ from it, and OpenCode `bash` rules). A connector with no `check` only contribute
 - The `connectors` core skill holds a catalogue of common tools. Organisation-specific recipes live in
   `examples/organisation-pack/` and are not shipped; a workspace adds them through TOOLS.md.
 
-Scheduled skills must never write to chat tools; they return board-shaped `details.items`, `/api/board`
+By default workers return board-shaped `details.items`, `/api/board`
 merges those feeds with the conductor snapshot, and the Electron main process owns native
-notifications. Chat sends remain available only through the board's explicit draft and approval flow.
+notifications. Assistant drafts use the board's Send/Cancel flow.
+On manual and scheduled runs, `unrestricted: true` grants standing approval only for external
+actions explicitly directed by that worker's instructions, subject to user and workspace restrictions.
+It takes precedence over the git-push prompt. Blockers still go to the board in the task output.
 
-**Git push requires an `allow_git_push` task.** Each such
+**Scoped git push (`allow_git_push: true`, `unrestricted: false`).** Each such
 skill names one repository and may run exactly `git push origin main` there. Three prompts keep
 the approval honest, and they must stay task-neutral so any push task fits them:
 
@@ -148,7 +152,7 @@ Manual and scheduled runs use the same grant. The model returns at most one
 open issue carrying `ready`, posts the comment, and adds `in review` only when `complete` is true.
 The host's signed-in GitHub CLI performs the requests. The repository must already have the label.
 On failure the activity records an error. A repeated request with the same text skips an existing
-comment. Issue creation and other GitHub changes still use board approval.
+comment. This issue grant covers only the comment and label.
 
 ## Adding a task
 
@@ -169,7 +173,7 @@ Add to the workspace's `.roosta/tasks.yaml`:
     requires: [github]       # optional: wait while these connectors are signed out
     precheck: scripts/new.sh # optional: exit 1 = nothing new, skip the scheduled model run
     sensor: true             # optional: feeds the board; board health warns when it fails
-    unrestricted: true       # optional: removes profile denials; named connections still protect runtime paths
+    unrestricted: true       # optional: standing approval for external actions directed by this worker
     idle_timeout: 300       # optional: silence limit; defaults to 300 Agent / 1800 Ollama
     max_timeout: 3600       # optional: absolute runtime ceiling (default TASK_MAX_TIMEOUT)
     connection: account-id  # optional: pin a connected named connection; omitted follows the default
@@ -191,11 +195,11 @@ loop re-reads its own config every cycle. Code changes to the runner do need a r
 
 ## Prompt template
 
-`PROMPT_TEMPLATE` in `scheduler.py` is the source of truth. In short: run the named skill unattended,
-ask no questions, never create or modify external content (messages, tickets, wiki pages,
-email, GitHub, deployments, jobs), return findings as Assistant board items (optionally linking
-vault Markdown through `documents`), and wrap the final output in `<task-output>` JSON with
-`summary`, `status` and `details`. Git-push tasks use the prompts described above.
+`task_prompt` in `scheduler.py` selects the unattended instructions. The default prompt forbids
+external writes and returns findings as Assistant board items, optionally linking workspace Markdown
+through `documents`. The unrestricted prompt authorises only external actions explicitly directed by
+the worker's instructions and returns blockers to the board. It takes precedence over the scoped
+git-push prompts described above. All branches return `<task-output>` JSON with `summary`, `status` and `details`.
 
 ## Workers page
 

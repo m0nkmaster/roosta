@@ -150,13 +150,15 @@ class Stdin:
         pass
 
 
-@pytest.mark.parametrize("flags,profile", [
-    ({"allow_git_push": True}, "git-push"),
-    ({"unrestricted": True}, "unrestricted"),
-    ({"unrestricted": True, "allow_git_push": True}, "unrestricted"),
-    ({}, "safe"),
+@pytest.mark.parametrize("run_source", ["manual", "scheduled"])
+@pytest.mark.parametrize("flags,profile,prompt_rule", [
+    ({"allow_git_push": True}, "git-push", "Never push another repository"),
+    ({"unrestricted": True}, "unrestricted", "standing approval only for external actions"),
+    ({"unrestricted": True, "allow_git_push": True, "push_on_schedule": True},
+     "unrestricted", "standing approval only for external actions"),
+    ({}, "safe", "Never create or modify external content or state"),
 ])
-def test_run_task_uses_claude_harness(claude, monkeypatch, flags, profile):
+def test_run_task_uses_claude_harness(claude, monkeypatch, flags, profile, prompt_rule, run_source):
     captured = {}
     body = '<task-output>{"summary":"ok","status":"success","details":{}}</task-output>'
     line = json.dumps({"type": "result", "subtype": "success", "result": body}).encode()
@@ -186,14 +188,23 @@ def test_run_task_uses_claude_harness(claude, monkeypatch, flags, profile):
     monkeypatch.setattr(appmod.asyncio, "create_subprocess_exec", fake_create)
     status, output, error, session_id = asyncio.run(scheduler.run_task(
         task_config.TaskConfig(id="x", skill="skill", harness="claude", dir=str(claude), **flags),
-        idle_timeout=1,
+        run_source=run_source, idle_timeout=1,
     ))
     assert (status, error) == ("success", "")
     assert captured["cmd"][0] == claude_code.CLAUDE_BIN
     assert "--session-id" in captured["cmd"] and session_id in captured["cmd"]
     settings = captured["cmd"][captured["cmd"].index("--settings") + 1]
     assert settings.endswith(f"settings-{profile}.json")
-    assert b"skill" in captured["proc"].stdin.data
+    prompt = captured["proc"].stdin.data.decode()
+    assert prompt_rule in prompt and "'skill'" in prompt
+    assert "<task-output>" in prompt
+    if profile == "unrestricted":
+        assert prompt.startswith("You are running as an unattended background task.")
+        assert "Do not ask questions - make autonomous decisions." in prompt
+        assert "explicitly directed by this worker's instructions" in prompt
+        assert "blockers as Assistant board items" in prompt
+        assert "Never create or modify external" not in prompt
+        assert "git push origin main" not in prompt
     assert captured["env"]["CLAUDE_CODE_DISABLE_BACKGROUND_TASKS"] == "1"
 
 

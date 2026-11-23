@@ -86,6 +86,15 @@ PROMPT_TEMPLATE = (
     "When complete, wrap your final output in <task-output> tags as JSON "
     "with keys: summary, status, details."
 )
+UNRESTRICTED_PROMPT_TEMPLATE = (
+    "You are running as an unattended background task. "
+    "Execute the '{skill}' skill from its resolved instructions below. "
+    "Do not ask questions - make autonomous decisions. "
+    "You have standing approval only for external actions explicitly directed by this worker's instructions. "
+    "Follow all user and workspace restrictions. Never expand your own approval. "
+    "Return blockers as Assistant board items. "
+    "Wrap your final output in <task-output> tags as JSON with keys: summary, status, details."
+)
 GIT_PUSH_PROMPT_COMMON = (
     "Execute the '{skill}' skill from its resolved instructions below. "
     "Do not ask questions - make autonomous decisions. "
@@ -203,7 +212,9 @@ def task_idle_timeout(task: TaskConfig, override: float | None = None) -> float:
 def task_prompt(task: TaskConfig, *, run_source: str = "scheduled") -> str:
     """Build the harness prompt, distinguishing manual Run now from the timer."""
     template = PROMPT_TEMPLATE
-    if task.allow_git_push:
+    if task.unrestricted:
+        template = UNRESTRICTED_PROMPT_TEMPLATE
+    elif task.allow_git_push:
         template = (
             GIT_PUSH_MANUAL_PROMPT_TEMPLATE
             if run_source == "manual"
