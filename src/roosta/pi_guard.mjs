@@ -20,6 +20,35 @@ function resolved(file, seen = new Set()) {
   }
   return path.join(fs.realpathSync(candidate), ...tail);
 }
+// Recognise one literal command only. Shell expansion and command composition stay denied.
+function packageRead(command, policy, cwd) {
+  const word = /[ \t]*(?:'([^'\r\n]*)'|"([^"$`\\!\r\n]*)"|([a-zA-Z0-9_./:+@%-]+))(?=[ \t]|$)/gy;
+  const args = [];
+  let offset = 0;
+  command = command.replace(/[ \t]+$/, '');
+  while (offset < command.length) {
+    const match = word.exec(command);
+    if (!match) return false;
+    args.push(match[1] ?? match[2] ?? match[3]);
+    offset = word.lastIndex;
+  }
+  const [program, file, operation, ...options] = args;
+  const root = policy.readOnlyRoot;
+  if (program === 'python3' && file === path.join(root, 'skills/workspace-learner/sessions.py')) {
+    if (fs.realpathSync(file) !== file) return false;
+    if (operation === 'status') return options.length === 0;
+    if (operation === 'list') return options.every(arg => /^[\w-]+$/.test(arg));
+    return operation === 'transcript' && /^(?:assistant:.+|(?:oc|cc|cursor):[\w.@-]+)$/.test(options[0])
+      && (options.length === 1 || (options.length === 2 && options[1] === '--tools'));
+  }
+  const cat = program === 'cat' && args.length === 2;
+  const search = program === 'grep' && args.length === 5 && file === '-F' && operation === '--';
+  if (!cat && !search) return false;
+  const target = args.at(-1);
+  return target.startsWith(root + path.sep) && !target.split(path.sep).includes('..')
+    && fs.existsSync(target) && fs.realpathSync(target).startsWith(root + path.sep)
+    && fs.statSync(target).isFile() && !denied({toolName: 'read', input: {path: target}}, policy, cwd);
+}
 export function denied(event, policy, cwd = process.cwd()) {
   const tool = event.toolName, input = event.input || {};
   if (!policy || !Array.isArray(policy.deny)) return 'Roosta permission policy is missing';
@@ -28,7 +57,8 @@ export function denied(event, policy, cwd = process.cwd()) {
   const command = tool === 'bash' ? String(input.command || '') : '';
   const targetsRoot = root => file === root || file?.startsWith(root + path.sep) || command.includes(root);
   if ((policy.protected || []).some(targetsRoot)) return 'AI credentials and runtime state are private';
-  if (policy.readOnlyRoot && tool !== 'read' && targetsRoot(policy.readOnlyRoot)) {
+  if (policy.readOnlyRoot && tool !== 'read' && targetsRoot(policy.readOnlyRoot)
+      && !(tool === 'bash' && packageRead(command, policy, cwd))) {
     return 'The installed Roosta package is read-only';
   }
 
