@@ -277,7 +277,7 @@
             lampFloor: "furniture/Lamp_Floor.png", screen: "furniture/Standing_Screen.png", bed: "furniture/Bed.png", endTable: "furniture/End_Table.png",
             gclock: "furniture/Clock__Grandfather.png", fireplace: "furniture/Fireplace.png", fireTools: "items/Fireplace_Accessories.png", shelf: "furniture/Shelf.png", counter: "furniture/Countertop.png", tileB: "floor/tile.png",
             laptop: "items/Laptop.png", lampTable: "items/Lamp_Table.png", coffee: "items/Coffee_Maker.png", paper: "items/Loose_Paper.png", boxes: "items/Boxes.png", portraits: "items/Tabletop_Portraits.png", dessert: "items/Dessert.png",
-            paintL: "wall/Paintings_Landscape.png", paintA: "wall/Paintings_Abstract.png", posters: "wall/Posters.png", lampWall: "wall/Lamp_Wall.png",
+            paintL: "wall/Paintings_Landscape.png", paintA: "wall/Paintings_Abstract.png", posters: "wall/Posters.png", lampWall: "wall/Lamp_Wall.png", mailboxes: "wall/Mailboxes.png",
             walls: "structure/Painted_Walls.png", window: "structure/Windows.png", door: "structure/Door.png",
             rug: "rugs/Diamond_Rug.png", wood: "floor/wood.png", herring: "floor/herringbone.png", tile: "floor/tile_b.png",
             xtree: "seasonal/Christmas_Tree.png", xdecor: "seasonal/Christmas_Wall_Decor.png", presents: "seasonal/Presents.png", eggs: "seasonal/Eggs.png",
@@ -324,7 +324,7 @@
             plantFern: ["planter", 128, 33, 32, 51], plantTree: ["planter", 64, 6, 32, 78], plantBox: ["planter", 0, 32, 32, 52],
             bin: ["bin", 39, 3, 18, 28], boxes: ["boxes", 34, 4, 28, 22], paper: ["paper", 7, 41, 15, 8],
             screen: ["screen", 160, 0, 32, 64], bedTop: ["bed", 74, 96, 44, 25], bedBody: ["bed", 73, 18, 46, 55],
-            door: ["door", 224, 38, 32, 58],
+            door: ["door", 224, 38, 32, 58], pigeonholes: ["mailboxes", 30, 30, 37, 37], // a 3x3 bank; each slot's slit is at +4/+15/+25 across and down
             tableLong: ["desk", 0, 12, 192, 40], chairFront: ["chair", 4, 46, 24, 34], sofaGreen: ["sofa", 321, 17, 94, 38],
             drawers: ["cabinet", 96, 5, 32, 70], lampTable: ["lampTable", 4, 0, 24, 31],
             deskDark: ["desk", 3, 80, 58, 35], deskWhite: ["desk", 67, 80, 58, 35], deskGrey: ["desk", 3, 144, 58, 35], island: ["desk", 0, 12, 96, 40],
@@ -532,6 +532,7 @@
         const BOARD = { x: 650, y: 12, w: 180, h: 56 };
         const FRAME = { x: 430, y: 20, w: 28, h: 38 }; // employee of the week, on the wall by the front door
         const DOOR = { x: 468, y: 22, front: { x: 484, y: 100 } };
+        const PIGEON = { x: 384, y: 34, w: 37, h: 37 }; // the post's pigeonholes, under the wall lamp between the shelves and the frame
         const COPIER = { x: 532, y: 72 };
         // Video-call screen on a stand at the head of the meeting table: where workers wait while a sign-in is down
         const CALL = { x: 846, y: 130, front: { x: 861, y: 218 } };
@@ -681,6 +682,7 @@
         poi("window", 30, 98, "up"); poi("window", 70, 98, "up"); poi("window", 196, 98, "up"); poi("window", 236, 98, "up"); poi("art", 124, 98, "up");
         poi("books", 316, 100, "up"); poi("books", 348, 100, "up");
         poi("door", 452, 104, "down", { only: "guard" });
+        poi("post", 402, 100, "up"); // the pigeonholes: only worth the walk while post is waiting (postLeft)
         poi("chat", 196, 304, "right", { pair: 1 }); poi("chat", 222, 304, "left", { pair: 1 });
         poi("chat", 300, 318, "right", { pair: 2 }); poi("chat", 326, 318, "left", { pair: 2 });
         poi("plant", XMAS ? 404 : 432, 338, "right"); poi("copier", 512, 124, "up"); // at Christmas the plant-waterer tends the tree instead poi("phone", 24, 340, "down"); poi("phone", 434, 196, "left");
@@ -1034,13 +1036,14 @@
             const r = ROLES[w.role], phase = phaseNow();
             const due = w.task ? dueAt(w.task, Date.now()) : null, dueIn = due === null ? null : due - Date.now();
             if (w.role === "guard" && phase !== "night" && phase !== "lunch") { const d = POIS.find((p) => p.only === "guard"); if (d && !d.taken && w.lastPoi !== d && Math.random() < .6) return d; }
-            const free = POIS.filter((p) => !p.taken && (!p.only || p.only === w.role) && p !== w.lastPoi && !(p.tag === "meeting" && counts.locked) && (p.tag !== "fire" || fireNow() === 2) && (p.tag !== "peek" || (deskBusy(p.desk) && p.desk.owner !== w.id)));
+            const free = POIS.filter((p) => !p.taken && (!p.only || p.only === w.role) && p !== w.lastPoi && !(p.tag === "meeting" && counts.locked) && (p.tag !== "fire" || fireNow() === 2) && (p.tag !== "post" || postLeft().length) && (p.tag !== "peek" || (deskBusy(p.desk) && p.desk.owner !== w.id)));
             const weights = free.map((p) => {
                 const rm = roomAt(p.x, p.y), bias = dayBias(p.tag, phase, rm);
                 if (!bias) return 0;
                 let k = (r.likes.includes(p.tag) ? 4 : 1) * bias * shiftPull(dueIn, rm);
                 if (p.pair && free.length && POIS.some((q) => q.pair === p.pair && q !== p && q.taken)) k *= 3.5;
                 if (p.tag === "peek") k *= 1.5;
+                if (p.tag === "post") k *= 1 + postLeft().length; // a full bank of post draws people over
                 if (p.dine && cakeNow() && cakeNow() !== "slice") k *= 4; // word gets round: there's cake
                 k *= 1 / (1 + Math.hypot(p.x - w.x, p.y - w.y) / 260);
                 if (w.carry) {
@@ -1063,7 +1066,7 @@
         const DRINKS = new Set(["mug", "water"]), FOODS = new Set(["snack", "sandwich"]);
         const DWELL = { fetch: [4000, 7000], browse: [6000, 10000], tv: [30000, 70000], read: [30000, 60000], eat: [25000, 45000], sip: [20000, 35000],
             talk: [20000, 40000], phone: [12000, 25000], gaze: [10000, 20000], water: [10000, 16000], write: [14000, 26000], meet: [30000, 60000],
-            papers: [8000, 14000], guard: [20000, 40000], nap: [40000, 80000], peek: [6000, 11000], pong: [8000, 14000], foos: [9000, 16000], darts: [10000, 20000], wash: [6000, 10000], arcade: [25000, 50000], console: [30000, 70000], pose: [9000, 11000], visit: [15000, 30000], warm: [12000, 22000] };
+            papers: [8000, 14000], guard: [20000, 40000], nap: [40000, 80000], peek: [6000, 11000], pong: [8000, 14000], foos: [9000, 16000], darts: [10000, 20000], wash: [6000, 10000], arcade: [25000, 50000], console: [30000, 70000], pose: [9000, 11000], visit: [15000, 30000], warm: [12000, 22000], post: [5000, 8000] };
         function chooseAct(w, p) {
             const c = w.carry, night = isNight(), tag = p.tag;
             if (KITCHEN[tag]) return "fetch";
@@ -1074,6 +1077,7 @@
             if (tag === "copier") return "papers";
             if (tag === "door") return "guard";
             if (tag === "frame") return "pose";
+            if (tag === "post") return "post";
             if (tag === "visit") return "visit";
             if (tag === "chat") return "talk";
             if (tag === "fire") return "warm";
@@ -1606,6 +1610,7 @@
             for (const wx of WINDOWS) { bx.clearRect(wx + 2, 8, 28, 66); bx.drawImage(A.img.windowCut, wx, -4); bx.fillStyle = "#00000040"; bx.fillRect(wx + 1, 76, 30, 2); }
             // wall decor, top row
             blit(bx, "paintL", 98, 30); blit(bx, "poster", 262, 20); blit(bx, "lampWall", 140, 0); blit(bx, "lampWall", 404, 0);
+            bx.fillStyle = "#00000038"; bx.fillRect(PIGEON.x + 2, PIGEON.y + PIGEON.h, PIGEON.w - 2, 2); blit(bx, "pigeonholes", PIGEON.x, PIGEON.y);
             splashback(886, 1030); splashback(1066, 1210);
             // whiteboard frame (live content drawn each frame)
             bx.fillStyle = "#3a3a4a"; bx.fillRect(BOARD.x - 3, BOARD.y - 3, BOARD.w + 6, BOARD.h + 6); bx.fillStyle = "#8c8ca0"; bx.fillRect(BOARD.x - 2, BOARD.y - 2, BOARD.w + 4, BOARD.h + 4);
@@ -1785,6 +1790,7 @@
             if (m && !m.path.length) { const d = now + (w.poi.tag === "pong" ? rnd(30000, 60000) : rnd(15000, 30000)); w.dwellUntil = m.dwellUntil = d; }
             if (w.rewardRun) { w.rewardRun = false; w.emote = (ROAM_EMOTES[w.poi && w.poi.tag] || ["cup"])[0]; w.emoteUntil = now + 2400; }
             if (w.poi && w.poi.tag === "frame") eotwPose(w, now);
+            else if (w.poi && w.poi.tag === "post") collectPost(w, now);
             else if (w.errand && w.poi && (w.poi.tag === "peek" || w.poi.tag === "bedside")) handOver(w, now);
             else if (w.poi && w.poi.tag === "peek" && now - lastQuip > 5000 && Math.random() < .5) say(w, pick(menteeOf(w) ? QUIPS.mentorTip : QUIPS.peek, Math.random()), now);
         }
@@ -3250,6 +3256,63 @@
             return prev != null && h !== prev && h >= 7 && h < 22;
         }
         let chimeHour = null;
+        // The post: ambient, seeded per date like the weather. Monday to Saturday it lands mid-morning (Monday's is heavier,
+        // with the weekend's), a slot at a time it's collected by colleagues who wander over, and anything left is gone by
+        // 17:30 (13:00 on Saturdays), so a reload never shows a stale bank. No Sunday post. Never runner output.
+        function postFor(key, day) {
+            if (day === 0) return null;
+            const sat = day === 6, at = Math.round((sat ? 600 : 570) + hash("postAt" + key) * (sat ? 120 : 90)), end = sat ? 780 : 1050;
+            const n = Math.min(9, 1 + Math.floor(hash("postN" + key) * 5) + (day === 1 ? 2 : 0));
+            const order = [0, 1, 2, 3, 4, 5, 6, 7, 8].sort((a, b) => hash("postI" + key + a) - hash("postI" + key + b));
+            return { at, slots: order.slice(0, n).sort((a, b) => a - b).map((i) => {
+                const r = hash("postK" + key + i);
+                return { i, kind: r < .55 ? "letter" : r < .85 ? "flyer" : "postcard", by: Math.round(at + 20 + hash("postBy" + key + i) * (end - at - 20)) };
+            }) };
+        }
+        function postWaiting(plan, min, taken) { return plan && min >= plan.at ? plan.slots.filter((s) => min < s.by && !taken.has(s.i)) : []; }
+        const postTaken = new Set(); let postKey = "", postMin = null;
+        function postNow() {
+            const T = clock(), d = new Date(), key = `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`;
+            if (key !== postKey) { postKey = key; postTaken.clear(); postCache.k = -1; }
+            return { plan: postFor(key, T.day), min: T.h * 60 + T.m };
+        }
+        const postCache = { k: -1, v: [] };
+        function postLeft() { // cached per minute and collection, as it's read every frame
+            const p = postNow(), k = p.min * 16 + postTaken.size;
+            if (k !== postCache.k) { postCache.k = k; postCache.v = postWaiting(p.plan, p.min, postTaken); }
+            return postCache.v;
+        }
+        const POST_QUIPS = { letter: ["anything for me?", "another bank statement", "who still sends letters?", "ooh, handwritten"],
+            flyer: ["just flyers", "pizza menu, keeping that", "recycling, this", "'have you considered solar?'"],
+            postcard: ["a postcard! wish you were here, apparently", "postcard from somewhere sunny", "someone's having a nice time"],
+            none: ["nothing for me", "beaten to it", "empty again"] };
+        function collectPost(w, now) {
+            const left = postLeft(), s = left.length ? left[Math.floor(Math.random() * left.length)] : null;
+            if (s) postTaken.add(s.i);
+            w.item = s ? "papers" : null; w.emote = s ? (s.kind === "postcard" ? "heart" : s.kind === "letter" ? "q" : "note") : "q"; w.emoteUntil = now + 2200;
+            if (now - lastQuip > 3000 || s) say(w, pick(POST_QUIPS[s ? s.kind : "none"], Math.random()), now);
+        }
+        function postStep(now) { // the post lands with a thud at the front door; the nearest idle colleague goes to see
+            const p = postNow(), was = postMin; postMin = p.min;
+            if (!booted || !p.plan || was === null || !(was < p.plan.at && p.min >= p.plan.at)) return; // never during ?warp or catch-up
+            doorFlashUntil = now + 900; floatText(DOOR.x + 16, DOOR.y + 30, "*thud* post!", "#f4efe1");
+            const spot = POIS.find((q) => q.tag === "post"), f = spot && !spot.taken ? coffeeRunner(spot, [...workers.values()]) : null;
+            if (f) { leaveSpot(f); f.carry = null; f.item = null; sendTo(f, spot); say(f, pick(["post's here!", "I'll get it", "that'll be the post"], Math.random()), now); }
+        }
+        function drawPost() { // what's waiting pokes out of each slot's slit: cream letters, coloured flyers, a sky-blue postcard
+            for (const s of postLeft()) {
+                const x = PIGEON.x + [5, 16, 26][s.i % 3], y = PIGEON.y + [4, 15, 25][Math.floor(s.i / 3)] - 1;
+                ctx.fillStyle = s.kind === "letter" ? "#f4efe1" : s.kind === "postcard" ? "#8fd3ff" : (s.i % 2 ? "#ffd166" : "#ff8fb1");
+                ctx.fillRect(x, y, 5, 2); ctx.fillStyle = "#00000040"; ctx.fillRect(x, y + 2, 5, 1);
+            }
+            if (hovered === "post") { ctx.strokeStyle = "#f4efe1cc"; ctx.lineWidth = 1; ctx.strokeRect(PIGEON.x - 1.5, PIGEON.y - 1.5, PIGEON.w + 3, PIGEON.h + 3); }
+        }
+        function postText() {
+            const p = postNow(), n = postWaiting(p.plan, p.min, postTaken).length, hm = (m) => `${Math.floor(m / 60)}:${String(m % 60).padStart(2, "0")}`;
+            if (!p.plan) return "pigeonholes · no post on Sundays";
+            if (p.min < p.plan.at) return "pigeonholes · post usually comes about " + hm(Math.round(p.plan.at / 30) * 30);
+            return n ? `pigeonholes · ${n} waiting` : "pigeonholes · all collected";
+        }
         function clockStep() {
             if (!booted) return; // never during ?warp or away catch-up
             const h = clock().h;
@@ -3340,6 +3403,7 @@
             drawCeefaxScreen(now);
             drawDarts(now);
             drawFrame(now);
+            drawPost();
             // whiteboard kanban: the Assistant board as sticky notes - the user's pile, the AI's pile, snoozed, and a tally of today's wins
             ctx.fillStyle = "#f4f6f8"; ctx.fillRect(BOARD.x, BOARD.y, BOARD.w, BOARD.h);
             const cols = kanbanCols(kanban), cw = BOARD.w / cols.length;
@@ -3705,6 +3769,7 @@
             if (hovered === "cat" && !(cat.quip && now < cat.quipUntil)) label("office cat", cat.x, cat.y - 16, { size: 6, color: "#ffd166", border: "#e8964a", dodge: quipRects });
             if (hovered === "console") { const g = CONSOLE_GAMES[consoleSlot(now).idx]; label(g.name, GS.x + GS.w / 2, DEN.tv.y - 2, { size: 6, color: g.col, border: g.col, dodge: quipRects }); }
             if (hovered === "userDesk") label(officeName() + " · door's open", USER_DESK.x + 29, USER_DESK.y - 22, { size: 6, color: "#ffd166", border: "#e8964a", dodge: quipRects });
+            if (hovered === "post") label(postText(), PIGEON.x + 18, PIGEON.y + PIGEON.h + 24, { size: 6, color: "#f4efe1", border: "#8c8ca0", dodge: quipRects });
             if (hovered === "frame") label(eotwText(eotwView), FRAME.x + 14, FRAME.y + FRAME.h + 26, { size: 6, color: "#ffd166", border: "#e8964a", dodge: quipRects });
             if (hovered === "copier") label("copier", COPIER.x + 26, COPIER.y - 2, { size: 6, color: "#ffd166", border: "#e8964a", dodge: quipRects });
             if (hovered === "door") label("front door · badge ok", DOOR.x + 20, DOOR.y - 4, { size: 6, color: "#7ee0b5", border: "#7ee0b5", dodge: quipRects });
@@ -3947,12 +4012,12 @@
             if (el.dataset.html !== html) { el.dataset.html = html; el.innerHTML = html + html; el.style.setProperty("--dur", Math.max(30, bits.length * 7) + "s"); }
         }
         const WHERE = { fire: "at the fireplace", chat: "chatting", sofa: "on the sofa", tv: "watching TV", window: "at the window", books: "browsing the shelves", coffee: "at the coffee machine", cooler: "at the water cooler",
-            vending: "at the vending machine", fridge: "raiding the fridge", plant: "tending a plant", door: "guarding the door", art: "admiring the art", meeting: "in a meeting",
+            vending: "at the vending machine", fridge: "raiding the fridge", plant: "tending a plant", door: "guarding the door", art: "admiring the art", meeting: "in a meeting", post: "at the pigeonholes",
             board: "at the whiteboard", copier: "loitering by the copier", roam: "wandering", read: "reading in the lounge", peek: "looking over a shoulder", bedside: "visiting the sick bay", pong: "at the table tennis table", arcade: "on the arcade machine", console: "on the games console", foos: "at the foosball table", darts: "at the dartboard", frame: "at the employee-of-the-week frame", visit: "in " + officeName().replace(/^Your/, "your"), sink: "at the kitchen sink", table: "in the kitchen", phone: "on their phone" };
         const ITEM_NAME = { mug: "a coffee", water: "some water", snack: "a snack", sandwich: "a sandwich", book: "a book" };
         const ACT_LABEL = { warm: () => "warming up by the fire", tv: () => "watching TV", read: () => "reading", eat: (w) => w.poi.tag === "table" && phaseNow() === "lunch" ? "having lunch" : "having a snack", sip: (w) => "having " + (ITEM_NAME[w.carry] || "a cuppa"),
             fetch: (w) => "grabbing " + (ITEM_NAME[KITCHEN[w.poi.tag]] || "something"), browse: () => "picking a book", phone: () => "scrolling their phone", gaze: () => "taking in the view",
-            water: () => "watering the plants", write: () => "sketching on the whiteboard", meet: () => "in a meeting", papers: () => "sorting papers by the copier", talk: () => "chatting",
+            water: () => "watering the plants", write: () => "sketching on the whiteboard", meet: () => "in a meeting", papers: () => "sorting papers by the copier", post: (w) => w.item ? "reading the post" : "checking the pigeonholes", talk: () => "chatting",
             guard: () => "guarding the door", nap: () => "napping", peek: (w) => { const o = w.poi && w.poi.desk && workers.get(w.poi.desk.owner); return o ? "looking over " + whoOf(o) + "'s shoulder" : "looking over a shoulder"; }, bedside: (w) => { const so = w && w.sendOffFor && w.sendOffUntil > tnow() && workers.get(w.sendOffFor); if (so) return "wishing " + whoOf(so) + " luck from the sick bay"; const o = [...workers.values()].find((p) => p.state === "hurt" && !p.path.length); return o ? "visiting " + whoOf(o) + " in the sick bay" : "visiting the sick bay"; }, pong: () => "playing table tennis", arcade: () => "on the arcade machine",
             foos: () => "playing foosball", darts: () => "throwing darts", wash: () => "washing up", pose: () => "posing under their employee-of-the-week portrait", visit: () => "dropping in on " + officeName().replace(/^Your/, "your") };
         const dossier = document.getElementById("dossier");
@@ -4091,6 +4156,7 @@
         const hitDoor = (p) => p.x >= DOOR.x - 4 && p.x <= DOOR.x + 45 && p.y >= DOOR.y - 4 && p.y <= WALL + 10;
         const hitCall = (p) => p.x >= CALL.x - 2 && p.x <= CALL.x + 32 && p.y >= CALL.y - 2 && p.y <= CALL.y + 50;
         const hitUserDesk = (p) => p.x >= USER_DESK.x && p.x <= USER_DESK.x + 58 && p.y >= USER_DESK.y - 20 && p.y <= USER_DESK.y + 35;
+        const hitPost = (p) => p.x >= PIGEON.x - 1 && p.x <= PIGEON.x + PIGEON.w + 1 && p.y >= PIGEON.y - 1 && p.y <= PIGEON.y + PIGEON.h + 1;
         const hitFrame = (p) => p.x >= FRAME.x - 1 && p.x <= FRAME.x + FRAME.w + 1 && p.y >= FRAME.y - 3 && p.y <= FRAME.y + FRAME.h + 1;
         const hitEgg = (p) => eggs.find((e) => !e.found && p.x >= e.x - 7 && p.x <= e.x + 7 && p.y >= e.y - 14 && p.y <= e.y + 2) || null;
         let hoverEgg = null;
@@ -4186,7 +4252,7 @@
             const p = worldPoint(e), c = hitCat(p), w = c ? null : hit(p), cl = !c && !w && hitCall(p), cp = !c && !w && !cl && hitCopier(p), dr = !c && !w && !cl && !cp && hitDoor(p), cn = !c && !w && !cl && !cp && !dr && hitConsole(p);
             hoverEgg = !c && !w ? hitEgg(p) : null;
             const fr = !c && !w && !hoverEgg && hitFrame(p), rd = !c && !w && !hoverEgg && !fr && hitUserDesk(p);
-            hovered = c ? "cat" : w ? w.id : hoverEgg ? "egg" : fr ? "frame" : rd ? "userDesk" : cl ? "call" : cp ? "copier" : dr ? "door" : cn ? "console" : null;
+            hovered = c ? "cat" : w ? w.id : hoverEgg ? "egg" : fr ? "frame" : rd ? "userDesk" : !c && !w && hitPost(p) ? "post" : cl ? "call" : cp ? "copier" : dr ? "door" : cn ? "console" : null;
             const bn = w || c ? null : hitBoardNote(p); boardHover = bn ? bn.title : null;
             const kind = hintKind(p, w, c), id = w ? w.id : null;
             if (kind !== hint.kind || id !== hint.id) { hint.kind = kind; hint.id = id; hint.since = performance.now(); }
@@ -4664,7 +4730,7 @@
                 }
                 if (w.path.length) moveAlong(w, dt, now); else idle(w, dt, now, night);
             }
-            separate(dt); greet(now); shiftBell(now); coffeeRuns(now); pongStep(dt, now); foosStep(dt, now); dartsStep(now); clockStep(); catStep(dt, now); botStep(dt, now); ambient(dt, now); stepParts(dt);
+            separate(dt); greet(now); shiftBell(now); coffeeRuns(now); pongStep(dt, now); foosStep(dt, now); dartsStep(now); clockStep(); postStep(now); catStep(dt, now); botStep(dt, now); ambient(dt, now); stepParts(dt);
         }
         let last = tnow(), booted = false;
         function frame(raf) {
