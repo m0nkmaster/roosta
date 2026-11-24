@@ -1,0 +1,68 @@
+name: Desktop build
+on:
+  workflow_call:
+    inputs:
+      runner:
+        required: true
+        type: string
+      arch:
+        required: true
+        type: string
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ${{ inputs.runner }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+      - name: Check tag and native architecture
+        env:
+          EXPECTED_ARCH: ${{ inputs.arch }}
+        run: |
+          node -e 'if (process.arch !== process.env.EXPECTED_ARCH) process.exit(1)'
+          python scripts/release.py check
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
+            python scripts/release.py check --tag "$GITHUB_REF_NAME"
+          fi
+      - name: Install build dependencies
+        run: |
+          python -m pip install '.[dev]' 'pyinstaller==6.22.3'
+          npm ci --prefix desktop
+      - name: Test
+        run: |
+          python -m pytest -q
+          npm test --prefix desktop
+      - name: Build backend
+        run: python desktop/scripts/build-backend.py
+      - name: Prepare self-signing identity
+        env:
+          ROOSTA_SIGNING_P12: ${{ secrets.ROOSTA_SIGNING_P12 }}
+          ROOSTA_SIGNING_PASSWORD: ${{ secrets.ROOSTA_SIGNING_PASSWORD }}
+        run: bash desktop/scripts/ci-signing.sh
+      - name: Build DMG
+        run: npm run dmg --prefix desktop
+      - name: Smoke-test packaged backend
+        env:
+          ROOSTA_BUILD_ARCH: ${{ inputs.arch }}
+        run: python desktop/scripts/smoke-backend.py "desktop/dist/Roosta-darwin-$ROOSTA_BUILD_ARCH/Roosta.app/Contents/Resources/roosta-backend/roosta-backend"
+      - uses: actions/upload-artifact@v6
+        with:
+          name: Roosta-${{ inputs.arch }}
+          path: |
+            desktop/dist/*.dmg
+            desktop/dist/*.sha256
+          if-no-files-found: error
+      - name: Remove temporary signing keychain
+        if: always()
+        run: |
+          if [ -n "${ASSISTANT_CODESIGN_KEYCHAIN:-}" ]; then
+            security delete-keychain "$ASSISTANT_CODESIGN_KEYCHAIN"
+          fi

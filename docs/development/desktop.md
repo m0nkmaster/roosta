@@ -92,8 +92,8 @@ so Claude's external-write hook does not depend on system Python.
 
 `npm run dmg` signs the app, verifies its signature and creates a compressed disk image with an
 Applications shortcut, installation notes and SHA-256 checksum. The tag workflow builds arm64
-and x64 independently, smoke-tests the packaged backend, then publishes PyPI and GitHub together
-after validation. See [release automation](releases.md) for the single-command flow, trusted
+and x64 independently through a shared reusable build, smoke-tests the packaged backend, then
+publishes PyPI and GitHub once arm64 validates; the Intel DMG is attached when its build lands. See [release automation](releases.md) for the single-command flow, trusted
 publishing setup and failure recovery, and the desktop README for signing and clean-Mac checks. Self-signed
 builds require a Gatekeeper override; no notarisation or automatic updates are implied.
 
