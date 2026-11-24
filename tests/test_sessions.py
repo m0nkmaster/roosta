@@ -165,3 +165,82 @@ def test_learner_lists_assistant_chats_by_their_own_latest_message(tmp_path):
     rows = json.loads(out)
     assert [row["id"] for row in rows] == ["chat:new"]
     assert rows[0]["timestamp_utc"] == "2026-11-17 23:04"
+
+
+def _queued(prompt, **fields):
+    return {"type": "attachment", "attachment": {
+        "type": "queued_command", "humanTurn": True, "prompt": prompt, **fields,
+    }}
+
+
+def _write_cc(path, records):
+    path.write_text("\n".join(json.dumps(record) for record in records), encoding="utf-8")
+
+
+def _cc_cli(store, *args):
+    import subprocess
+
+    helper = Path(appmod.__file__).parent / "skills" / "workspace-learner" / "sessions.py"
+    return subprocess.run(
+        [sys.executable, str(helper), *args], env={"CLAUDE_PROJECTS_DIR": str(store)},
+        capture_output=True, text=True, check=True,
+    ).stdout.splitlines()
+
+
+def test_learner_cc_queued_corrections_keep_order_and_identity(tmp_path):
+    repeat = {"type": "user", "message": {"content": "Try again"}}
+    _write_cc(tmp_path / "chat.jsonl", [
+        {"type": "user", "message": {"content": "Start"}},
+        {"type": "assistant", "message": {"content": [
+            {"type": "text", "text": "Checking"}, {"type": "tool_use", "name": "Read"},
+        ]}},
+        _queued([{"type": "text", "text": "Try again"}], source_uuid="first"),
+        {"type": "assistant", "message": {"content": "Will do"}},
+        {**repeat, "uuid": "first"},
+        {**repeat, "uuid": "second"},
+        _queued("Try again", source_uuid="second"),
+        _queued("Try again"),
+        repeat,
+    ])
+    expected = ["USER: Start", "ASSISTANT: Checking", "USER: Try again", "ASSISTANT: Will do",
+                "USER: Try again", "USER: Try again", "USER: Try again"]
+    assert _cc_cli(tmp_path, "transcript", "cc:chat") == expected
+    assert _cc_cli(tmp_path, "transcript", "cc:chat", "--tools") == [
+        *expected, "--- TOOL CALLS (tool | status | input) ---", "Read | called | {}",
+    ]
+
+
+def test_learner_cc_ignores_nonhuman_and_malformed_attachments(tmp_path):
+    _write_cc(tmp_path / "noise.jsonl", [
+        {**_queued("side"), "isSidechain": True}, {**_queued("meta"), "isMeta": True},
+        _queued("meta", isMeta=True), _queued("other", type="file"),
+        _queued("system", humanTurn=False), _queued("system", origin={"kind": "system"}),
+        _queued("notice", commandMode="task-notification"), _queued("  "),
+        {"type": "attachment", "attachment": []}, _queued({"unexpected": "value"}),
+        _queued([None, {"type": "text", "text": 1}, {"type": "tool_use", "name": "hidden"}]),
+        {"type": "assistant", "message": {"content": "Still scanning"}, "timestamp": "2026-11-17"},
+    ])
+    assert _cc_cli(tmp_path, "transcript", "cc:noise", "--tools") == ["ASSISTANT: Still scanning"]
+    assert _cc_cli(tmp_path, "list", "0", "--source", "cc", "--json") == ["[]"]
+
+
+def test_learner_cc_lists_queued_human_by_embedded_timestamp_and_filters_runners(tmp_path):
+    import os
+
+    reply = {"type": "assistant", "message": {"content": "Okay"}}
+    queued = {**_queued("Change direction"), "timestamp": "2026-11-17T23:04:00Z"}
+    chat = tmp_path / "chat.jsonl"
+    _write_cc(chat, [reply, queued])
+    os.utime(chat, (1, 1))
+    for i, marker in enumerate((
+        "running as an unattended background task.",
+        "running as an unattended scheduled background task.",
+        "triggered Run now on the skill runner.",
+    )):
+        for kind, record in (("queued", _queued(marker)), ("user", {"type": "user", "message": {"content": marker}})):
+            _write_cc(tmp_path / f"{kind}-{i}.jsonl", [queued, record, reply])
+
+    rows = json.loads("\n".join(_cc_cli(tmp_path, "list", "1794956337000", "--source", "cc", "--json")))
+    assert [(r["id"], r["title"], r["timestamp_utc"]) for r in rows] == [
+        ("chat", "Change direction", "2026-11-17 23:04"),
+    ]
