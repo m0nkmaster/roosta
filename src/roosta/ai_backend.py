@@ -1,4 +1,4 @@
-"""AI dispatch, isolated named connections and preserved legacy CLI configuration."""
+"""AI dispatch: isolated named connections, their runs and process cleanup."""
 from __future__ import annotations
 
 import asyncio
@@ -11,7 +11,6 @@ import time
 import uuid
 import json
 import os
-import shutil
 from pathlib import Path
 
 from roosta import claude_code
@@ -21,111 +20,41 @@ from roosta import paths, ai_connections as connections, ai_runtime, pi_agent
 
 CURSOR = "cursor"
 CLAUDE = "claude"
-BACKENDS = {CURSOR: "Cursor Agent", CLAUDE: "Claude Code"}
-DEFAULT_BACKEND = CLAUDE  # setup configures Claude Code; Cursor is opt-in
-BACKEND_FILE = paths.CACHE_DIR / "ai-backend.json"
 
 
-def current(path: Path | None = None) -> str:
+def label() -> str:
+    """The default AI connection's name, for logs and status."""
     try:
-        saved = json.loads(Path(path or BACKEND_FILE).read_text()).get("backend")
-    except (OSError, json.JSONDecodeError, AttributeError):
-        saved = None
-    if saved in BACKENDS:
-        return saved
-    fallback = (
-        os.environ.get("AI_BACKEND")
-        or cursor_agent._dotenv_value(cursor_agent.CURSOR_ENV_FILE, "AI_BACKEND")
-    ).strip().lower()
-    return fallback if fallback in BACKENDS else DEFAULT_BACKEND
+        return connections.get(connected=False)["label"]
+    except ValueError:
+        return "AI connection"
 
 
-def set_backend(backend: str, path: Path | None = None) -> str:
-    if backend not in BACKENDS:
-        raise ValueError(f"unknown AI backend: {backend}")
-    target = Path(path or BACKEND_FILE)
-    target.parent.mkdir(parents=True, exist_ok=True)
-    temporary = target.with_suffix(f".{os.getpid()}.tmp")
-    temporary.write_text(json.dumps({"backend": backend}))
-    temporary.replace(target)
-    return backend
+def unavailable_message() -> str:
+    """Why chats can't run, specific enough to act on."""
+    try:
+        connections.get()
+    except ValueError as exc:
+        return str(exc)
+    return "Install or repair the software for your AI connection in Settings"
 
 
-def label(backend: str | None = None) -> str:
-    if backend is None and default_connection():
-        try:
-            return connections.get(connected=False)["label"]
-        except ValueError:
-            return "AI connection"
-    return BACKENDS[backend or current()]
+async def new_session(connection_id: str, workspace: str) -> str:
+    """A fresh chat session id: Cursor names its own chats; the other runtimes accept ours."""
+    try:
+        connection = connections.get(connection_id)
+    except ValueError:
+        return str(uuid.uuid4())  # the turn itself reports the missing connection
+    if connections.engine(connection["provider"]) != CURSOR:
+        return str(uuid.uuid4())
+    env = {**connection_env(connection), "CURSOR_API_KEY": connections.credential(connection)}
+    return await cursor_agent.create_chat(ai_runtime.find("cursor"), env, workspace)
 
 
-def available(backend: str | None = None) -> bool:
-    if backend is None and default_connection():
-        return connection_available()
-    if (backend or current()) == CLAUDE:
-        return claude_code.claude_available()
-    return cursor_agent.cursor_available()
+async def stop_all() -> None:
+    await asyncio.gather(*(terminate(proc) for proc in list(LIVE_PROCESSES)))
 
 
-def unavailable_message(backend: str | None = None) -> str:
-    """Why the engine can't run, specific enough to act on."""
-    if backend is None and default_connection():
-        try:
-            connections.get()
-        except ValueError as exc:
-            return str(exc)
-        return "Install or repair the software for your AI connection in Settings"
-    if (backend or current()) == CLAUDE:
-        return "Claude Code CLI unavailable: install it and run `claude` once to sign in"
-    binary = cursor_agent.CURSOR_AGENT
-    installed = Path(binary).is_file() if Path(binary).is_absolute() else bool(shutil.which(binary))
-    if not installed:
-        return "Cursor Agent CLI unavailable: install it from https://cursor.com/cli"
-    return (f"Cursor needs CURSOR_API_KEY in {cursor_agent.CURSOR_ENV_FILE} (unattended runs "
-            "never use your interactive `agent login`)")
-
-
-def status() -> dict:
-    backend = current()
-    return {
-        "backend": backend,
-        "label": label(backend),
-        "available": available(backend),
-        "options": [
-            {"id": key, "label": name, "available": available(key)}
-            for key, name in BACKENDS.items()
-        ],
-    }
-
-
-async def create_session(workspace: str, backend: str | None = None) -> str:
-    if (backend or current()) == CLAUDE:
-        return claude_code.new_session_id()
-    return await cursor_agent.CursorAgent(workspace=workspace).create_session()
-
-
-class AIAgent:
-    """Facade the chat router and startup use; dispatches on the live toggle."""
-
-    def __init__(self, workspace: str = cursor_agent.VAULT) -> None:
-        self.workspace = workspace
-
-    @property
-    def alive(self) -> bool:
-        return available()
-
-    async def start(self) -> None:
-        if not self.alive:
-            raise RuntimeError(unavailable_message())
-
-    async def stop(self) -> None:
-        await asyncio.gather(*(terminate(proc) for proc in list(LIVE_PROCESSES)))
-
-    async def create_session(self) -> str:
-        return await create_session(self.workspace, current())
-
-# Legacy configuration remains untouched until a connection is explicitly selected.
 ACTIVE_CONNECTIONS = Counter()
 LIVE_PROCESSES = set()
 
@@ -143,10 +72,12 @@ class ConnectionRun:
     probe: bool = False
 
     def text(self, output: str) -> str:
-        return (claude_code.claude_result_text if self.backend == CLAUDE else pi_agent.result_text)(output)
+        return {CLAUDE: claude_code.claude_result_text, CURSOR: cursor_agent.cursor_result_text}.get(
+            self.backend, pi_agent.result_text)(output)
 
     def parse(self, line: str) -> dict | None:
-        return (claude_code.parse_claude_chat_line if self.backend == CLAUDE else pi_agent.parse_line)(line)
+        return {CLAUDE: claude_code.parse_claude_chat_line, CURSOR: cursor_agent.parse_chat_line}.get(
+            self.backend, pi_agent.parse_line)(line)
 
     def redact(self, text: str) -> str:
         return text.replace(self.secret, "[credential]") if self.secret else text
@@ -174,12 +105,12 @@ def claude_fallback() -> dict:
 
 
 async def claude_models(key: str, *, refresh: bool = False) -> dict:
-    """Claude Code's own model list for a connection id or `legacy:claude`, cached for an hour."""
+    """Claude Code's own model list for a connection id (or "" for the user's own sign-in), cached for an hour."""
     cached = ai_runtime.CLAUDE_MODELS.get(key)
     if cached and not refresh and time.monotonic() - cached[0] < CLAUDE_MODELS_TTL:
         return cached[1]
-    if key == "legacy:claude":
-        binary, env = claude_code.CLAUDE_BIN, claude_code.claude_env(os.environ)
+    if not key:  # a provider's list before any Anthropic account exists
+        binary, env = ai_runtime.find("claude"), claude_code.claude_env(os.environ)
     else:
         binary = ai_runtime.find("claude")
         env = connection_env(connections.get(key, connected=False))
@@ -269,7 +200,7 @@ def connection_env(connection: dict) -> dict:
     else:
         env["CLAUDE_CONFIG_DIR"] = str(directory / "claude")
         env["CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST"] = "1"
-    for runtime in ("claude", "pi"):
+    for runtime in ("claude", "pi", "cursor"):
         target = directory / runtime
         if target.is_symlink() or not target.resolve().is_relative_to(directory.resolve()):
             raise ValueError("AI runtime state cannot use a symlink outside its connection")
@@ -328,7 +259,7 @@ def _private_json(path: Path, value: dict) -> None:
 def prepare(connection_id: str, workspace: str, *, model: str = "", session_id: str = "", profile: str = "safe", probe: bool = False, subject: str = "chat") -> ConnectionRun:
     connection = connections.get(connection_id)
     model = model or connections.default_model(connection["provider"])
-    if not model and connection["provider"] != "anthropic":
+    if not model and connection["provider"] not in ("anthropic", "cursor"):  # these pick their own default
         raise ValueError("Choose a model in Settings" if subject == "chat"
                          else "Choose a model for this worker in its settings")
     effort = connections.selected_effort(connection["provider"], model)
@@ -341,9 +272,10 @@ def prepare(connection_id: str, workspace: str, *, model: str = "", session_id: 
     env = connection_env(connection)
     secret = connections.credential(connection)
     if secret:
-        env[{"anthropic": "ANTHROPIC_API_KEY", "openai": "OPENAI_API_KEY", "openrouter": "OPENROUTER_API_KEY"}[connection["provider"]]] = secret
+        env[{"anthropic": "ANTHROPIC_API_KEY", "openai": "OPENAI_API_KEY", "openrouter": "OPENROUTER_API_KEY",
+             "cursor": "CURSOR_API_KEY"}[connection["provider"]]] = secret
     directory = connections.directory(connection["id"])
-    sid = session_id or str(uuid.uuid4())
+    sid = session_id or ("" if backend == CURSOR else str(uuid.uuid4()))  # Cursor mints its own chat ids
     mcp = {"mcpServers": {}} if probe else mcp_config(workspace)
     workspace_root = Path(workspace).resolve()
     workspace_key = hashlib.sha256(str(workspace_root).encode()).hexdigest()[:16]
@@ -372,6 +304,14 @@ def prepare(connection_id: str, workspace: str, *, model: str = "", session_id: 
         args.extend(["--setting-sources", "", "--strict-mcp-config", "--mcp-config", str(mcp_path)])
         if probe:
             args.extend(["--tools", "Read", "--allowedTools", "Read"])
+    elif backend == CURSOR:
+        permissions = ({"allow": ["Read(**)", "Write(**)"], "deny": []} if profile == "unrestricted" else
+                       cursor_agent.merged_permissions(json.loads(cursor_agent.SAFE_CONFIG_TEMPLATE.read_text())["permissions"]))
+        permissions["deny"] += [f"{tool}({root}/**)" for root in private_roots for tool in ("Read", "Write")]
+        if external_package:
+            permissions["deny"].append(f"Write({package}/**)")
+        env["CURSOR_CONFIG_DIR"] = str(cursor_agent.write_config(directory / "cursor", permissions, mcp))
+        args = cursor_agent.cursor_args(workspace=workspace, session_id=sid, model=model, binary=binary)
     else:
         pi_dir = directory / "pi" / workspace_key
         if pi_dir.is_symlink() or not pi_dir.resolve().is_relative_to(directory.resolve()):
@@ -397,8 +337,7 @@ def prepare(connection_id: str, workspace: str, *, model: str = "", session_id: 
                             "input": ["text"], "contextWindow": 32768, "maxTokens": 8192,
                             "cost": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0}}],
             }}})
-        template = cursor_agent.GIT_PUSH_CONFIG_TEMPLATE if profile == "git-push" else cursor_agent.SAFE_CONFIG_TEMPLATE
-        policy = cursor_agent.merged_permissions(json.loads(Path(template).read_text())["permissions"])
+        policy = cursor_agent.merged_permissions(json.loads(cursor_agent.SAFE_CONFIG_TEMPLATE.read_text())["permissions"])
         if profile == "unrestricted":
             policy = {"allow": [], "deny": [], "unrestricted": True}
         policy["protected"] = [str(p) for p in private_roots]
@@ -479,7 +418,13 @@ async def stream(run: ConnectionRun, prompt: str, *, idle: float = 300, maximum:
     stderr_task = None
     chunks, errors = [], []
     try:
-        proc = await spawn_group(*run.args, cwd=run.workspace, env=run.env,
+        args = run.args
+        if run.backend == CURSOR:
+            if not run.session_id:
+                run.session_id = await cursor_agent.create_chat(run.args[0], run.env, run.workspace)
+                run.args = [*run.args, "--resume", run.session_id]
+            args = [*run.args, prompt]  # Cursor takes the prompt as its last argument
+        proc = await spawn_group(*args, cwd=run.workspace, env=run.env,
             stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
             limit=16 * 1024 * 1024)
         LIVE_PROCESSES.add(proc)
@@ -492,8 +437,9 @@ async def stream(run: ConnectionRun, prompt: str, *, idle: float = 300, maximum:
         waiting_for_policy = run.backend == "pi"
         prompt_sent = not waiting_for_policy
         if prompt_sent:
-            proc.stdin.write(prompt.encode())
-            await proc.stdin.drain()
+            if run.backend != CURSOR:
+                proc.stdin.write(prompt.encode())
+                await proc.stdin.drain()
             proc.stdin.close()
         deadline, last_output = time.monotonic() + maximum, time.monotonic()
         while True:
@@ -539,10 +485,14 @@ async def stream(run: ConnectionRun, prompt: str, *, idle: float = 300, maximum:
             raise ValueError("Pi permission policy did not load; no prompt was sent")
         stdout = "".join(chunks)
         failure = pi_agent.failure(stdout) if run.backend == "pi" else ""
-        if run.backend == CLAUDE:
+        if run.backend in (CLAUDE, CURSOR):
             for event in pi_agent.events(stdout):
                 if event.get("type") == "result" and event.get("is_error"):
-                    failure = str(event.get("result") or event.get("errors") or "Claude request failed")
+                    failure = str(event.get("result") or event.get("errors") or "AI request failed")
+        if proc.returncode is not None and proc.returncode < 0 and not stdout.strip():
+            raise ValueError(f"The AI runtime was stopped by macOS (signal {-proc.returncode}) before it replied. "
+                             "Endpoint security can kill a process over a word in the message, so try "
+                             "rephrasing or removing a link.")
         if proc.returncode or failure:
             diagnostic = run.redact(failure or b"".join(errors).decode(errors="replace") or stdout)
             raise ValueError(repair_message(diagnostic))
@@ -578,8 +528,7 @@ async def _join_on_cancel(work):
 async def _first_model(provider: str) -> str:
     """A model to probe with when the harness reports no default: the first one it lists."""
     if provider == "ollama":
-        from roosta.opencode_ollama import OLLAMA, opencode_ollama_env, parse_ollama_models
-        proc = await spawn_group(OLLAMA, "list", env=opencode_ollama_env(),
+        proc = await spawn_group(ai_runtime.OLLAMA, "list", env={**os.environ, "PATH": cursor_agent.agent_path()},
             stdin=asyncio.subprocess.DEVNULL, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
         try:
             stdout, _ = await asyncio.wait_for(proc.communicate(), 20)
@@ -587,7 +536,7 @@ async def _first_model(provider: str) -> str:
             stdout = b""
         finally:
             await kill_group(proc)
-        models = [m["id"] for m in parse_ollama_models(stdout.decode(errors="replace"))]
+        models = [m["id"] for m in ai_runtime.parse_ollama_models(stdout.decode(errors="replace"))]
     else:
         models = [m for m in await _join_on_cancel(asyncio.to_thread(ai_runtime.model_catalog, provider))
                   if _acceptable(provider, m)]
@@ -612,7 +561,7 @@ async def test_connection(connection_id: str) -> dict:
         test_file.write_text(nonce)
         connection = connections.get(connection_id)
         model = await _join_on_cancel(asyncio.to_thread(connections.default_model, connection["provider"]))
-        if not model and connection["provider"] != "anthropic":
+        if not model and connection["provider"] not in ("anthropic", "cursor"):
             model = await _first_model(connection["provider"])
         run = await _join_on_cancel(asyncio.to_thread(prepare, connection_id, temporary, model=model, probe=True))
         output = "".join([line async for line in stream(run,
@@ -622,6 +571,8 @@ async def test_connection(connection_id: str) -> dict:
         for event in pi_agent.events(output):
             if run.backend == "pi" and event.get("type") == "tool_execution_end" and event.get("toolName") == "read" and not event.get("isError"):
                 tool_read = nonce in json.dumps(event.get("result", {}))
+            if run.backend == CURSOR and event.get("type") == "tool_call" and event.get("subtype") == "completed":
+                tool_read = tool_read or nonce in json.dumps(event.get("tool_call"))
             if run.backend == CLAUDE and event.get("type") == "user":
                 tool_read = tool_read or any(p.get("type") == "tool_result" and not p.get("is_error") and nonce in json.dumps(p.get("content"))
                                             for p in event.get("message", {}).get("content", []) if isinstance(p, dict))

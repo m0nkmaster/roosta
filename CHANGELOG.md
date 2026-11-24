@@ -9,6 +9,10 @@ Record each release newest first. Bump minor for features and visible behaviour,
 - Unrestricted workers have standing approval for any action, local or external. Roosta's own AI account credentials and package folder stay protected.
 - The Assistant reads the live board with `roosta snapshot board`, which every worker may run.
 - Setup counts a tool as connected only when it is callable in the session or its check passes.
+- Cursor is now an AI account in Settings: add a Cursor API key and Roosta runs that account's chats and workers through the Cursor Agent CLI.
+- Every chat and worker now runs on an AI connection. The old engine switch, per-worker harness settings and the OpenCode runtime are gone; local Ollama models run through Pi. On startup Roosta removes `harness` and `claude_model` from `tasks.yaml`, keeping your comments and moving `claude_model` into `model`.
+- Worker permissions have two levels: the default, and Unrestricted. The narrower `allow_git_push`, `push_on_schedule` and GitHub issue grants no longer do anything; `roosta doctor` flags any worker still using them.
+- The board shows Connect your AI whenever no AI connection is ready, not only before workspace setup.
 
 ## 0.19.4 - 2026-11-24
 

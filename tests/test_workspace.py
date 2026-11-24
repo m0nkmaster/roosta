@@ -95,6 +95,7 @@ def test_chat_receives_full_context_and_rejects_invalid_files(tmp_path, monkeypa
 
     monkeypatch.setattr(appmod.paths, 'WORKSPACE', tmp_path)
     monkeypatch.setattr(appmod, 'chat_router', SimpleNamespace(start_turn=start_turn))
+    monkeypatch.setattr(appmod, 'setup_item', lambda *_: None)  # AI is connected
     request = {'item_id': 'chat:0123456789ab', 'message': 'Compare this', 'context_paths': ['notes/context.md']}
     response = asyncio.run(appmod.api_board_chat(request))
     assert response.status_code == 202

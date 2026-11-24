@@ -18,7 +18,6 @@ from pathlib import Path
 from roosta import paths
 from roosta.cursor_agent import (
     CURSOR_ENV_FILE,
-    GIT_PUSH_CONFIG_TEMPLATE,
     SAFE_CONFIG_TEMPLATE,
     merged_permissions,
     _dotenv_value,
@@ -36,7 +35,7 @@ CLAUDE_MODEL_ENV = "CLAUDE_MODEL"
 CLAUDE_GENERAL_CHAT_MODEL_ENV = "CLAUDE_GENERAL_CHAT_MODEL"
 # The one permitted model hardcode: unversioned aliases offered only when Claude Code cannot list its models.
 CLAUDE_FALLBACK_ALIASES = ("fable", "opus", "sonnet", "haiku")
-PROFILES = ("safe", "git-push", "unrestricted")
+PROFILES = ("safe", "unrestricted")
 _UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
 # Argv-safety format only: a model may carry a reasoning effort, `<model>@<effort>`, passed as
 # `--effort`. Which models and efforts exist is decided by Claude Code's own list.
@@ -126,9 +125,8 @@ def claude_settings(profile: str = "safe", config_dir: Path | None = None) -> Pa
         raise ValueError(f"unknown Claude permission profile: {profile}")
     allow, deny, keywords = [], [], []
     if profile != "unrestricted":
-        template = GIT_PUSH_CONFIG_TEMPLATE if profile == "git-push" else SAFE_CONFIG_TEMPLATE
         allow, deny, keywords = translate_permissions(
-            merged_permissions(json.loads(Path(template).read_text())["permissions"])
+            merged_permissions(json.loads(Path(SAFE_CONFIG_TEMPLATE).read_text())["permissions"])
         )
     guard = shlex.join([sys.executable, "--claude-guard"] if getattr(sys, "frozen", False)
                        else [sys.executable, str(GUARD_SCRIPT)])

@@ -15,7 +15,6 @@ from roosta import ai_settings
 from roosta import task_config
 from roosta import app as appmod
 from roosta.activity_log import ActivityLog
-from roosta import opencode_ollama
 
 
 class FakeActivity:
@@ -650,34 +649,59 @@ def test_http_manual_run_endpoint_starts_task(tmp_path, monkeypatch):
     asyncio.run(scenario())
 
 
-def test_load_tasks_defaults_to_the_engine_and_allows_runtime_override(tmp_path, monkeypatch):
+def test_load_tasks_reads_model_and_ignores_retired_fields(tmp_path, monkeypatch):
     tasks_file = tmp_path / "tasks.yaml"
     tasks_file.write_text(
         "tasks:\n"
-        "  - id: default-model\n"
+        "  - id: plain\n"
         "    skill: first\n"
-        "  - id: override-model\n"
+        "  - id: old\n"
         "    skill: second\n"
-        "    harness: opencode-ollama\n"
-        "    model: qwen3.5:latest\n"
+        "    harness: claude\n"
+        "    claude_model: sonnet\n"
         "    allow_git_push: true\n"
         "    requires: [jira]\n"
         "    precheck: check-inbox --quiet\n"
     )
     monkeypatch.setattr(appmod.paths, "TASKS_FILE", tasks_file)
-    monkeypatch.setattr(appmod.ai_backend, "current", lambda path=None: "cursor")
+    plain, old = task_config.load_tasks()
+    assert (plain.model, old.model) == ("", "sonnet")
+    assert not old.unrestricted  # a retired privilege flag never grants anything
+    assert old.requires == ["jira"] and old.precheck == "check-inbox --quiet"
 
-    tasks = task_config.load_tasks()
 
-    assert tasks[0].model == ""
-    assert tasks[0].harness == "cursor"
-    assert tasks[1].harness == "opencode-ollama"
-    assert tasks[1].model == "qwen3.5:latest"
-    assert tasks[0].allow_git_push is False
-    assert tasks[1].allow_git_push is True
-    assert tasks[0].requires == []
-    assert tasks[1].requires == ["jira"]
-    assert tasks[1].precheck == "check-inbox --quiet"
+def test_startup_strips_retired_runtime_fields_and_keeps_comments(tmp_path):
+    tasks_file = tmp_path / "tasks.yaml"
+    tasks_file.write_text(
+        "# my workers\n"
+        "tasks:\n"
+        "  - id: a\n"
+        "    skill: a\n"
+        "    harness: claude\n"
+        "    claude_model: sonnet  # light pass\n"
+        "    interval: 900  # 15 minutes\n"
+        "  - id: b\n"
+        "    skill: b\n"
+        "    model: gpt-6\n"
+        "    claude_model: opus\n"
+        "  - id: c\n"
+        "    skill: c\n"
+    )
+    assert task_config.strip_obsolete_runtime_fields(tasks_file) == ["a", "b"]
+    assert tasks_file.read_text() == (
+        "# my workers\n"
+        "tasks:\n"
+        "  - id: a\n"
+        "    skill: a\n"
+        "    model: sonnet\n"
+        "    interval: 900  # 15 minutes\n"
+        "  - id: b\n"
+        "    skill: b\n"
+        "    model: gpt-6\n"
+        "  - id: c\n"
+        "    skill: c\n"
+    )
+    assert task_config.strip_obsolete_runtime_fields(tasks_file) == []
 
 
 def test_load_tasks_flags_fail_closed_on_non_boolean_values(tmp_path, monkeypatch):
@@ -688,7 +712,6 @@ def test_load_tasks_flags_fail_closed_on_non_boolean_values(tmp_path, monkeypatc
         "    skill: first\n"
         "    unrestricted: true.\n"
         "    writer: \"false\"\n"
-        "    allow_git_push: yes please\n"
         "  - id: real\n"
         "    skill: second\n"
         "    unrestricted: true\n"
@@ -699,14 +722,13 @@ def test_load_tasks_flags_fail_closed_on_non_boolean_values(tmp_path, monkeypatc
 
     assert typo.unrestricted is False
     assert typo.writer is False
-    assert typo.allow_git_push is False
     assert real.unrestricted is True
 
 
 def test_shipped_tasks_yaml_flags_are_real_booleans():
     import yaml
     from roosta import paths
-    flags = ("weekdays_only", "writer", "allow_git_push", "unrestricted", "sensor")
+    flags = ("weekdays_only", "writer", "unrestricted", "sensor")
     for task in yaml.safe_load((paths.CORE_SKILLS_DIR / "setup" / "references" / "starter-tasks.yaml").read_text())["tasks"]:
         assert "connection" not in task
         for flag in flags:
@@ -838,185 +860,22 @@ def test_worker_skill_preview_rejects_unsafe_documents(monkeypatch, tmp_path, pr
 
 
 def test_runtime_model_list_parsers():
-    cursor = opencode_ollama.parse_cursor_models(
+    from roosta import ai_runtime, cursor_agent
+    cursor = cursor_agent.parse_cursor_models(
         "Available models\n\n"
         "auto - Auto (default)\n"
         "gpt-5.6-sol-high - GPT-5.6 Sol 1M High\n"
     )
-    ollama = opencode_ollama.parse_ollama_models(
+    ollama = ai_runtime.parse_ollama_models(
         "NAME ID SIZE MODIFIED\n"
-        "qwen2.5-coder:3b old 1.9 GB 1 day ago\n"
         "qwen3.5:latest abc 6.6 GB 1 day ago\n"
         "qwen3.5:9b-mlx def 8.9 GB 1 day ago\n"
     )
-
     assert cursor == [
         {"id": "auto", "label": "Auto (default)"},
         {"id": "gpt-5.6-sol-high", "label": "GPT-5.6 Sol 1M High"},
     ]
     assert [model["id"] for model in ollama] == ["qwen3.5:latest", "qwen3.5:9b-mlx"]
-    assert not task_config.valid_runtime("opencode-ollama", "qwen2.5-coder:3b")
-    assert task_config.valid_runtime("opencode-ollama", "qwen3.5:latest")
-    incompatible = task_config.TaskConfig(
-        id="local",
-        skill="skill",
-        harness="opencode-ollama",
-        model="qwen2.5-coder:3b",
-    )
-    assert "cannot execute OpenCode tool calls" in ai_settings.runtime_unavailable_message(incompatible)
-
-
-def test_opencode_disables_reasoning_only_for_supported_qwen_models():
-    qwen35 = opencode_ollama.opencode_ollama_args(
-        "prompt",
-        workspace="/workspace",
-        model="qwen3.5:latest",
-    )
-    qwen25 = opencode_ollama.opencode_ollama_args(
-        "prompt",
-        workspace="/workspace",
-        model="qwen2.5-coder:3b",
-    )
-
-    run = qwen35.index("run")
-    assert qwen35[qwen35.index("--model", run) + 1] == "ollama/qwen3.5:latest#none"
-    assert "--model" not in qwen25[qwen25.index("run"):]
-    for args in (qwen35, qwen25):  # OpenCode 2 rejects both flags
-        assert "--pure" not in args and "--dir" not in args
-
-
-def test_opencode_env_points_pwd_at_the_workspace():
-    # OpenCode 2 picks its project from PWD, not the child's cwd.
-    env = opencode_ollama.opencode_ollama_env({"PATH": "/usr/bin", "PWD": "/elsewhere"}, workspace="/tmp")
-    assert env["PWD"] == "/tmp"
-
-
-def test_opencode_env_seeds_highest_precedence_safety_config(tmp_path, monkeypatch):
-    template = tmp_path / "policy.json"
-    template.write_text('{"permission":{"*":"allow"}}')
-    config_dir = tmp_path / "runtime-config"
-    preferred_opencode = tmp_path / "current" / "opencode"
-    workspace_skills = tmp_path / "workspace" / ".claude" / "skills" / "test-skill"
-    workspace_skills.mkdir(parents=True)
-    (workspace_skills / "SKILL.md").write_text("workspace skill")
-    monkeypatch.setattr(opencode_ollama, "SAFE_CONFIG", template)
-    monkeypatch.setattr(opencode_ollama, "SAFE_CONFIG_DIR", config_dir)
-    monkeypatch.setattr(opencode_ollama, "OPENCODE", str(preferred_opencode))
-
-    env = opencode_ollama.opencode_ollama_env(
-        {"PATH": "/opt/homebrew/bin:/usr/bin"},
-        workspace=str(tmp_path / "workspace"),
-        skill="test-skill",
-    )
-
-    directory = Path(env["OPENCODE_CONFIG_DIR"])
-    assert directory.parent == config_dir
-    runtime_config = json.loads((directory / "opencode.json").read_text())
-    assert runtime_config["permission"] == {"*": "allow"}
-    assert str(workspace_skills) in runtime_config["skills"]["paths"]
-    assert env["PATH"].split(appmod.os.pathsep)[0] == str(preferred_opencode.parent)
-
-
-def test_runtime_selection_updates_tasks_yaml_without_losing_comments(tmp_path):
-    tasks_file = tmp_path / "tasks.yaml"
-    tasks_file.write_text(
-        "tasks:\n"
-        "  - id: local\n"
-        "    skill: skill  # keep this comment\n"
-        "    interval: 3600  # and this one\n"
-    )
-    task = task_config.TaskConfig(id="local", skill="skill", interval=3600)
-    runner = make_runner(tmp_path, [task], lambda _task: None)
-    runner._tasks = runner._load_tasks()
-    runner._states[task.id] = runner._load_state(task)
-    runner._triggers[task.id] = asyncio.Event()
-
-    state = runner.set_runtime("local", "opencode-ollama", "qwen3.5:latest")
-
-    assert state["harness"] == "opencode-ollama"
-    assert state["model"] == "qwen3.5:latest"
-    updated = tasks_file.read_text()
-    assert "    harness: opencode-ollama\n" in updated
-    assert "    model: qwen3.5:latest\n" in updated
-    assert "skill: skill  # keep this comment" in updated
-    assert "interval: 3600  # and this one" in updated
-
-    runner.set_runtime("local", "cursor", "gpt-5.6-sol-high")
-    updated = tasks_file.read_text()
-    assert updated.count("    harness: cursor\n") == 1
-    assert updated.count("    model: gpt-5.6-sol-high\n") == 1
-
-
-def test_claude_harness_keeps_its_own_task_model(tmp_path, monkeypatch):
-    """A Claude Code pick lands in claude_model; the Cursor model survives."""
-    tasks_file = tmp_path / "tasks.yaml"
-    tasks_file.write_text(
-        "tasks:\n"
-        "  - id: local\n"
-        "    skill: skill\n"
-        "    harness: agent\n"
-        "    model: gpt-5.6-sol-high\n"
-    )
-    task = task_config.TaskConfig(id="local", skill="skill", interval=3600)
-    runner = make_runner(tmp_path, [task], lambda _task: None)
-    runner._tasks = runner._load_tasks()
-    runner._states[task.id] = runner._load_state(task)
-    runner._triggers[task.id] = asyncio.Event()
-    assert not task_config.valid_runtime("claude", "bad model;")
-    assert not task_config.valid_runtime("agent", "opus")
-    state = runner.set_runtime("local", "claude", "opus")
-
-    assert state["claude_model"] == "opus"
-    updated = tasks_file.read_text()
-    assert "    harness: claude\n" in updated
-    assert "    model: gpt-5.6-sol-high\n" in updated
-    assert "    claude_model: opus\n" in updated
-    monkeypatch.setattr(appmod.paths, "TASKS_FILE", tasks_file)
-    loaded = next(t for t in task_config.load_tasks() if t.id == "local")
-    assert (loaded.harness, loaded.model, loaded.claude_model) == ("claude", "gpt-5.6-sol-high", "opus")
-
-
-@pytest.mark.parametrize("raw,engine,expected", [
-    (None, "claude", "claude"), (None, "cursor", "cursor"), ("", "claude", "claude"),
-    ("cursor", "claude", "cursor"), ("claude", "cursor", "claude"),
-    ("opencode-ollama", "claude", "opencode-ollama"),
-])
-def test_task_harness_is_explicit_or_follows_the_engine(monkeypatch, raw, engine, expected):
-    monkeypatch.setattr(appmod.ai_backend, "current", lambda path=None: engine)
-    assert task_config.resolve_harness(raw) == expected
-
-
-def test_cursor_harness_runs_cursor_even_when_the_engine_is_claude(tmp_path, monkeypatch):
-    captured = {}
-
-    async def fake_create(*cmd, **kwargs):
-        captured["cmd"] = cmd
-        raise RuntimeError("stop")
-
-    async def no_session(*_args, **_kwargs):
-        return ""
-
-    monkeypatch.setattr(appmod.ai_backend, "current", lambda path=None: "claude")
-    monkeypatch.setattr(appmod.ai_backend, "create_session", no_session)
-    monkeypatch.setattr(appmod.asyncio, "create_subprocess_exec", fake_create)
-    asyncio.run(scheduler.run_task(
-        task_config.TaskConfig(id="x", skill="skill", harness="cursor", model="auto", dir=str(tmp_path)),
-        idle_timeout=1,
-    ))
-    assert captured["cmd"][0] == scheduler.CURSOR_AGENT
-    assert task_config.task_engine(task_config.TaskConfig(id="x", skill="s", harness="cursor")) == "cursor"
-
-
-def test_unknown_harness_fails_without_spawning(tmp_path, monkeypatch):
-    async def fake_create(*_cmd, **_kwargs):
-        raise AssertionError("must not spawn")
-
-    monkeypatch.setattr(appmod.asyncio, "create_subprocess_exec", fake_create)
-    status, _, error, _ = asyncio.run(scheduler.run_task(
-        task_config.TaskConfig(id="x", skill="skill", harness="copilot", dir=str(tmp_path)),
-        idle_timeout=1,
-    ))
-    assert status == "error" and "Unknown harness" in error
 
 
 def test_settings_edit_identity_and_schedule_in_tasks_yaml(tmp_path, monkeypatch):
@@ -1149,8 +1008,6 @@ def test_settings_reject_bad_input(tmp_path):
         {"schedule": {"mode": "daily", "run_at": "25:00"}},
         {"schedule": {"mode": "interval", "interval": 10}},
         {"schedule": {"mode": "interval", "interval": 600, "days": "specific", "days_of_week": []}},
-        {"harness": "cursor", "model": "bad model;"},
-        {"harness": "claude", "model": "-flag"},
         {"writer": "true"},
     ):
         with pytest.raises(ValueError):
@@ -1158,341 +1015,66 @@ def test_settings_reject_bad_input(tmp_path):
     assert tasks_file.read_text() == "tasks:\n  - id: local\n    skill: skill\n"
 
 
-def test_runtime_options_list_every_harness_whatever_the_engine(monkeypatch):
-    async def fake_output(*command, **_kwargs):
-        return "gpt-5.6-sol-high - GPT\n" if "models" in command else ""
-
-    monkeypatch.setattr(ai_settings, "command_output", fake_output)
-    monkeypatch.setattr(appmod.ai_backend, "current", lambda path=None: "claude")
-    options = asyncio.run(ai_settings.available_runtime_options())
-    by_id = {h["id"]: h for h in options["harnesses"]}
-    assert options["backend"] == "claude"
-    assert [h["label"] for h in options["harnesses"]] == ["Claude Code", "Cursor", "Ollama (OpenCode)"]
-    assert by_id["claude"]["model_key"] == "claude_model"
-    assert by_id["cursor"]["model_key"] == by_id["opencode-ollama"]["model_key"] == "model"
-    claude_ids = [m["id"] for m in by_id["claude"]["models"]]
-    assert "opus" in claude_ids and "gpt-5.6-sol-high" not in claude_ids
-    assert [m["id"] for m in by_id["cursor"]["models"]] == ["gpt-5.6-sol-high"]
-    assert all("available" in h for h in options["harnesses"])
-
-
-def test_http_runtime_endpoint_updates_future_task_runs(tmp_path, monkeypatch):
-    async def scenario():
-        from httpx import ASGITransport, AsyncClient
-
-        async def executor(_task, **_):
-            return "success", {"summary": "ran", "status": "success"}, "", ""
-
-        runner = make_runner(
-            tmp_path,
-            [task_config.TaskConfig(id="manual", skill="skill", interval=3600)],
-            executor,
-        )
-        (tmp_path / "tasks.yaml").write_text(
-            "tasks:\n"
-            "  - id: manual\n"
-            "    skill: skill\n"
-        )
-        monkeypatch.setattr(appmod, "runner", runner)
-        runner.start()
-        try:
-            transport = ASGITransport(app=appmod.app)
-            async with AsyncClient(transport=transport, base_url="http://test") as client:
-                response = await client.post(
-                    "/api/tasks/manual/runtime",
-                    json={"harness": "opencode-ollama", "model": "qwen3.5:latest"},
-                )
-                assert response.status_code == 200
-                assert response.json()["harness"] == "opencode-ollama"
-                assert response.json()["model"] == "qwen3.5:latest"
-        finally:
-            await runner.stop()
-
-    asyncio.run(scenario())
-
-
-class _FakeStream:
-    """Async stream: yields queued chunks then EOF (b""). A chunk of None blocks
-    forever, standing in for a child that has gone silent."""
-
-    def __init__(self, chunks):
-        self._chunks = list(chunks)
-
-    async def read(self, _n):
-        if not self._chunks:
-            return b""
-        chunk = self._chunks.pop(0)
-        if chunk is None:
-            await asyncio.Event().wait()  # never returns - simulates a hang
-        return chunk
-
-
-def test_run_task_closes_stdin_and_parses_task_output(tmp_path, monkeypatch):
-    monkeypatch.delenv("CURSOR_MODEL", raising=False)
-    async def scenario():
-        captured = {}
-        env_calls = []
-
-        body = '<task-output>{"summary":"ok","status":"success","details":{"x":1}}</task-output>'
-        line = json.dumps({"type": "result", "subtype": "success", "result": body}).encode()
-
-        class Proc:
-            returncode = 0
-            stdout = _FakeStream([line])
-            stderr = _FakeStream([])
-
-            async def wait(self):
-                return 0
-
-        async def fake_create(*cmd, **kwargs):
-            captured["cmd"] = cmd
-            captured["kwargs"] = kwargs
-            return Proc()
-
-        monkeypatch.setattr(appmod.asyncio, "create_subprocess_exec", fake_create)
-
-        def fake_cursor_env(**kwargs):
-            env_calls.append(kwargs)
-            return {"CURSOR_API_KEY": object()}
-
-        monkeypatch.setattr(scheduler, "cursor_env", fake_cursor_env)
-
-        status, output, error, session_id = await scheduler.run_task(
-            task_config.TaskConfig(id="x", skill="skill", dir=str(tmp_path)),
-            session_id="11111111-1111-4111-8111-111111111111",
-            idle_timeout=1,
-        )
-
-        assert status == "success"
-        assert output == {"summary": "ok", "status": "success", "details": {"x": 1}}
-        assert error == ""
-        assert session_id == "11111111-1111-4111-8111-111111111111"
-        assert "--resume" in captured["cmd"]
-        assert "11111111-1111-4111-8111-111111111111" in captured["cmd"]
-        assert captured["kwargs"]["stdin"] == appmod.asyncio.subprocess.DEVNULL
-        assert captured["kwargs"]["cwd"] == str(tmp_path)
-        assert "--force" in captured["cmd"]
-        assert "--approve-mcps" in captured["cmd"]
-        assert "--trust" in captured["cmd"]
-        assert captured["kwargs"]["env"]["CURSOR_API_KEY"]
-        assert env_calls == [{"allow_git_push": False}]
-        assert "--model" not in captured["cmd"]
-
-    asyncio.run(scenario())
-
-
-def test_agent_task_retries_transient_failure_before_any_output(tmp_path, monkeypatch):
-    async def scenario():
-        body = '<task-output>{"summary":"ok","status":"success","details":{}}</task-output>'
-        result = json.dumps({"type": "result", "subtype": "success", "result": body}).encode()
-
-        class Proc:
-            def __init__(self, returncode, stdout, stderr):
-                self.returncode = returncode
-                self.stdout = _FakeStream(stdout)
-                self.stderr = _FakeStream(stderr)
-
-            async def wait(self):
-                return self.returncode
-
-        processes = [
-            Proc(1, [], [b"Error: [unavailable] getaddrinfo ENOTFOUND api2.cursor.sh\n"]),
-            Proc(0, [result], []),
-        ]
-        calls = 0
-
-        async def fake_create(*_cmd, **_kwargs):
-            nonlocal calls
-            calls += 1
-            return processes.pop(0)
-
-        async def fake_sleep(_seconds):
-            return None
-
-        monkeypatch.setattr(appmod.asyncio, "create_subprocess_exec", fake_create)
-        monkeypatch.setattr(appmod.asyncio, "sleep", fake_sleep)
-        monkeypatch.setattr(scheduler, "cursor_env", lambda **_kwargs: {"CURSOR_API_KEY": object()})
-
-        status, output, error, _ = await scheduler.run_task(
-            task_config.TaskConfig(id="x", skill="skill", dir=str(tmp_path)),
-            session_id="11111111-1111-4111-8111-111111111111",
-            idle_timeout=1,
-        )
-
-        assert calls == 2
-        assert status == "success"
-        assert output["summary"] == "ok"
-        assert error == ""
-
-    asyncio.run(scenario())
-
-
-def test_agent_task_retries_transient_failure_after_protocol_preamble(tmp_path, monkeypatch):
-    async def scenario():
-        body = '<task-output>{"summary":"ok","status":"success","details":{}}</task-output>'
-        result = json.dumps({"type": "result", "subtype": "success", "result": body}).encode()
-        preamble = [
-            b'{"type":"system","subtype":"init"}\n',
-            json.dumps({
-                "type": "user",
-                "message": {
-                    "role": "user",
-                    "content": [{"type": "text", "text": "Run the scheduled skill."}],
-                },
-            }).encode(),
-        ]
-
-        class Proc:
-            def __init__(self, returncode, stdout, stderr):
-                self.returncode = returncode
-                self.stdout = _FakeStream(stdout)
-                self.stderr = _FakeStream(stderr)
-
-            async def wait(self):
-                return self.returncode
-
-        processes = [
-            Proc(1, preamble, [b"RetriableError: [unavailable] PING timed out\n"]),
-            Proc(0, [result], []),
-        ]
-        calls = 0
-
-        async def fake_create(*_cmd, **_kwargs):
-            nonlocal calls
-            calls += 1
-            return processes.pop(0)
-
-        async def fake_sleep(_seconds):
-            return None
-
-        monkeypatch.setattr(appmod.asyncio, "create_subprocess_exec", fake_create)
-        monkeypatch.setattr(appmod.asyncio, "sleep", fake_sleep)
-        monkeypatch.setattr(scheduler, "cursor_env", lambda **_kwargs: {"CURSOR_API_KEY": object()})
-
-        status, output, error, _ = await scheduler.run_task(
-            task_config.TaskConfig(id="x", skill="skill", dir=str(tmp_path)),
-            session_id="11111111-1111-4111-8111-111111111111",
-            idle_timeout=1,
-        )
-
-        assert calls == 2
-        assert status == "success"
-        assert output["summary"] == "ok"
-        assert error == ""
-
-    asyncio.run(scenario())
-
-
-def test_agent_task_does_not_retry_transient_failure_after_model_progress(tmp_path, monkeypatch):
-    async def scenario():
-        class Proc:
-            returncode = 1
-            stdout = _FakeStream([
-                json.dumps({
-                    "type": "assistant",
-                    "message": {
-                        "content": [{"type": "text", "text": "Checking the workspace."}],
-                    },
-                }).encode(),
-            ])
-            stderr = _FakeStream(
-                [b"Error: [unavailable] getaddrinfo ENOTFOUND api2.cursor.sh\n"]
-            )
-
-            async def wait(self):
-                return self.returncode
-
-        calls = 0
-
-        async def fake_create(*_cmd, **_kwargs):
-            nonlocal calls
-            calls += 1
-            return Proc()
-
-        monkeypatch.setattr(appmod.asyncio, "create_subprocess_exec", fake_create)
-        monkeypatch.setattr(scheduler, "cursor_env", lambda **_kwargs: {"CURSOR_API_KEY": object()})
-
-        status, _, error, _ = await scheduler.run_task(
-            task_config.TaskConfig(id="x", skill="skill", dir=str(tmp_path)),
-            session_id="11111111-1111-4111-8111-111111111111",
-            idle_timeout=1,
-        )
-
-        assert calls == 1
-        assert status == "error"
-        assert "ENOTFOUND" in error
-
-    asyncio.run(scenario())
-
-
-def test_agent_run_without_completed_task_output_is_an_error(tmp_path, monkeypatch):
-    async def scenario():
-        line = json.dumps({
-            "type": "result",
-            "subtype": "success",
-            "result": "I am still checking the workspace.",
-        }).encode()
-
-        class Proc:
-            returncode = 0
-            stdout = _FakeStream([line])
-            stderr = _FakeStream([])
-
-            async def wait(self):
-                return 0
-
-        async def fake_create(*_cmd, **_kwargs):
-            return Proc()
-
-        monkeypatch.setattr(appmod.asyncio, "create_subprocess_exec", fake_create)
-        monkeypatch.setattr(scheduler, "cursor_env", lambda **_kwargs: {"CURSOR_API_KEY": object()})
-
-        status, output, error, _ = await scheduler.run_task(
-            task_config.TaskConfig(id="x", skill="skill", dir=str(tmp_path)),
-            session_id="11111111-1111-4111-8111-111111111111",
-            idle_timeout=1,
-        )
-
-        assert status == "error"
-        assert output["status"] == "unknown"
-        assert error == "Harness did not return the required <task-output> result"
-
-    asyncio.run(scenario())
-
-
-def test_malformed_task_output_is_an_error(tmp_path, monkeypatch):
-    async def scenario():
-        line = json.dumps({
-            "type": "result",
-            "subtype": "success",
-            "result": "<task-output>not json</task-output>",
-        }).encode()
-
-        class Proc:
-            returncode = 0
-            stdout = _FakeStream([line])
-            stderr = _FakeStream([])
-
-            async def wait(self):
-                return 0
-
-        async def fake_create(*_cmd, **_kwargs):
-            return Proc()
-
-        monkeypatch.setattr(appmod.asyncio, "create_subprocess_exec", fake_create)
-        monkeypatch.setattr(scheduler, "cursor_env", lambda **_kwargs: {"CURSOR_API_KEY": object()})
-
-        status, output, error, _ = await scheduler.run_task(
-            task_config.TaskConfig(id="x", skill="skill", dir=str(tmp_path)),
-            session_id="11111111-1111-4111-8111-111111111111",
-            idle_timeout=1,
-        )
-
-        assert status == "error"
-        assert output["status"] == "unknown"
-        assert error == "Harness returned an invalid <task-output> result"
-
-    asyncio.run(scenario())
+def test_runtime_options_list_ai_connections(monkeypatch):
+    data = {"default": "a" * 32, "connections": [{"id": "a" * 32, "provider": "cursor"}]}
+    monkeypatch.setattr(ai_settings.ai_connections, "load", lambda: data)
+    monkeypatch.setattr(ai_settings.ai_backend, "default_connection", lambda: data["default"])
+    assert asyncio.run(ai_settings.available_runtime_options()) == {
+        "connections": data["connections"], "default_connection": "a" * 32}
+
+
+def fake_connection_run(monkeypatch, text, captured=None):
+    """Stand in for one AI connection run that prints `text`."""
+    class Run:
+        backend, env = "pi", {}
+        session_id = "11111111-1111-4111-8111-111111111111"
+
+        def text(self, output):
+            return output
+
+    def prepare(connection, workspace, **kwargs):
+        if captured is not None:
+            captured.update(connection=connection, workspace=workspace, **kwargs)
+        return Run()
+
+    async def stream(_run, prompt, **_kwargs):
+        if captured is not None:
+            captured["prompt"] = prompt
+        yield text
+
+    monkeypatch.setattr(scheduler.ai_backend, "prepare", prepare)
+    monkeypatch.setattr(scheduler.ai_backend, "stream", stream)
+    monkeypatch.setattr(scheduler.ai_connections, "get", lambda *_a, **_k: {"id": "c" * 32, "provider": "anthropic"})
+
+
+@pytest.mark.parametrize("unrestricted,profile", [(False, "safe"), (True, "unrestricted")])
+def test_run_task_runs_the_connection_and_parses_task_output(tmp_path, monkeypatch, unrestricted, profile):
+    captured = {}
+    fake_connection_run(monkeypatch, '<task-output>{"summary":"ok","status":"success","details":{"x":1}}</task-output>',
+                        captured)
+    status, output, error, session_id = asyncio.run(scheduler.run_task(
+        task_config.TaskConfig(id="x", skill="skill", dir=str(tmp_path), unrestricted=unrestricted), idle_timeout=1))
+    assert (status, error) == ("success", "")
+    assert output == {"summary": "ok", "status": "success", "details": {"x": 1}}
+    assert session_id == "11111111-1111-4111-8111-111111111111"
+    assert captured["workspace"] == str(tmp_path) and captured["profile"] == profile
+    assert "'skill'" in captured["prompt"] and "<task-output>" in captured["prompt"]
+
+
+def test_run_task_without_an_ai_connection_says_how_to_add_one(tmp_path, monkeypatch):
+    monkeypatch.setattr(scheduler.ai_connections, "load", lambda: {"default": "", "connections": []})
+    status, _, error, _ = asyncio.run(scheduler.run_task(
+        task_config.TaskConfig(id="x", skill="skill", dir=str(tmp_path)), idle_timeout=1))
+    assert status == "error" and error == "Choose an AI connection in Settings"
+
+
+@pytest.mark.parametrize("text", ["I am still checking the workspace.", "<task-output>not json</task-output>"])
+def test_run_without_a_valid_task_output_is_an_error(tmp_path, monkeypatch, text):
+    fake_connection_run(monkeypatch, text)
+    status, output, error, _ = asyncio.run(scheduler.run_task(
+        task_config.TaskConfig(id="x", skill="skill", dir=str(tmp_path)), idle_timeout=1))
+    assert (status, output["status"]) == ("error", "unknown")
+    assert error == "Harness did not return a valid <task-output> result"
 
 
 @pytest.mark.parametrize("given,expected", [
@@ -1500,370 +1082,12 @@ def test_malformed_task_output_is_an_error(tmp_path, monkeypatch):
     ("failed", "error"), ("maybe", "error"), ("partial", "error"),
 ])
 def test_task_output_status_synonyms_are_normalised(tmp_path, monkeypatch, given, expected):
-    async def scenario():
-        payload = json.dumps({"summary": "s", "status": given})
-        line = json.dumps({
-            "type": "result",
-            "subtype": "success",
-            "result": f"<task-output>{payload}</task-output>",
-        }).encode()
-
-        class Proc:
-            returncode = 0
-            stdout = _FakeStream([line])
-            stderr = _FakeStream([])
-
-            async def wait(self):
-                return 0
-
-        async def fake_create(*_cmd, **_kwargs):
-            return Proc()
-
-        monkeypatch.setattr(appmod.asyncio, "create_subprocess_exec", fake_create)
-        monkeypatch.setattr(scheduler, "cursor_env", lambda **_kwargs: {"CURSOR_API_KEY": object()})
-
-        status, output, error, _ = await scheduler.run_task(
-            task_config.TaskConfig(id="x", skill="skill", dir=str(tmp_path)),
-            session_id="11111111-1111-4111-8111-111111111111",
-            idle_timeout=1,
-        )
-
-        assert status == expected
-        assert output["summary"] == "s"
-        assert bool(error) == (expected == "error")
-
-    asyncio.run(scenario())
-
-
-def test_run_task_uses_ollama_wrapper_with_selected_opencode_model(tmp_path, monkeypatch):
-    async def scenario():
-        captured = {}
-        body = '<task-output>{"summary":"local","status":"success","details":{}}</task-output>'
-        line = json.dumps({
-            "type": "text",
-            "sessionID": "ses_local",
-            "part": {"type": "text", "text": body},
-        }).encode()
-
-        class Proc:
-            returncode = 0
-            stdout = _FakeStream([line])
-            stderr = _FakeStream([])
-
-            async def wait(self):
-                return 0
-
-        async def fake_create(*cmd, **kwargs):
-            captured["cmd"] = cmd
-            captured["kwargs"] = kwargs
-            return Proc()
-
-        monkeypatch.setattr(appmod.asyncio, "create_subprocess_exec", fake_create)
-        monkeypatch.setattr(
-            scheduler,
-            "opencode_ollama_env",
-            lambda **_kwargs: {"OPENCODE_CONFIG_DIR": "/safe/opencode-runner"},
-        )
-
-        status, output, error, session_id = await scheduler.run_task(
-            task_config.TaskConfig(
-                id="local",
-                skill="skill",
-                dir=str(tmp_path),
-                harness="opencode-ollama",
-                model="qwen3.5:latest",
-            ),
-            idle_timeout=1,
-        )
-
-        assert status == "success"
-        assert output["summary"] == "local"
-        assert error == ""
-        assert session_id == ""
-        assert captured["cmd"][1:3] == ("launch", "opencode")
-        model_index = captured["cmd"].index("--model")
-        assert captured["cmd"][model_index + 1] == "qwen3.5:latest"
-        separator = captured["cmd"].index("--")
-        assert captured["cmd"][separator + 1:separator + 5] == (
-            "run", "--standalone", "--format", "json",
-        )
-        assert "--auto" in captured["cmd"]
-        assert "ollama/qwen3.5:latest#none" in captured["cmd"]
-        assert captured["kwargs"]["env"]["OPENCODE_CONFIG_DIR"] == "/safe/opencode-runner"
-
-    asyncio.run(scenario())
-
-
-def test_opencode_plain_text_tool_call_is_an_error(tmp_path, monkeypatch):
-    async def scenario():
-        line = json.dumps({
-            "type": "text",
-            "part": {
-                "type": "text",
-                "text": '```json\n{"function":"skill","arguments":{"name":"key-person-tracker"}}\n```',
-            },
-        }).encode()
-
-        class Proc:
-            returncode = 0
-            stdout = _FakeStream([line])
-            stderr = _FakeStream([])
-
-            async def wait(self):
-                return 0
-
-        async def fake_create(*_cmd, **_kwargs):
-            return Proc()
-
-        monkeypatch.setattr(appmod.asyncio, "create_subprocess_exec", fake_create)
-        monkeypatch.setattr(
-            scheduler,
-            "opencode_ollama_env",
-            lambda **_kwargs: {"OPENCODE_CONFIG_DIR": "/safe/opencode-runner"},
-        )
-
-        status, output, error, _ = await scheduler.run_task(
-            task_config.TaskConfig(
-                id="local",
-                skill="key-person-tracker",
-                dir=str(tmp_path),
-                harness="opencode-ollama",
-                model="qwen2.5-coder:3b",
-            ),
-            idle_timeout=1,
-        )
-
-        assert status == "error"
-        assert output["status"] == "unknown"
-        assert "unexecuted tool call" in error
-
-    asyncio.run(scenario())
-
-
-def test_opencode_git_push_task_is_rejected_before_launch(tmp_path):
-    status, output, error, session_id = asyncio.run(scheduler.run_task(
-        task_config.TaskConfig(
-            id="refresh",
-            skill="refresh",
-            dir=str(tmp_path),
-            harness="opencode-ollama",
-            model="qwen3.5:latest",
-            allow_git_push=True,
-        )
-    ))
-
-    assert status == "error"
-    assert output == {}
-    assert "does not support" in error
-    assert session_id == ""
-
-
-def test_git_push_task_prompt_distinguishes_manual_run_now():
-    task = task_config.TaskConfig(
-        id="okr-dashboard-refresh",
-        skill="okr-dashboard-refresh",
-        allow_git_push=True,
-    )
-    scheduled = scheduler.task_prompt(task, run_source="scheduled")
-    manual = scheduler.task_prompt(task, run_source="manual")
-    assert "timer-driven" in scheduled
-    assert "Sam triggered Run now" in manual
-    assert "Skip the skill's scheduled-run section" in manual
-
-
-def test_git_push_prompts_are_not_specific_to_the_okr_refresh():
-    gardener = task_config.TaskConfig(
-        id="shared-vault-gardener", skill="shared-vault-gardener",
-        allow_git_push=True, push_on_schedule=True,
-    )
-    manual = scheduler.task_prompt(gardener, run_source="manual")
-    scheduled = scheduler.task_prompt(gardener, run_source="scheduled")
-    for prompt in (manual, scheduled):
-        assert "OKR" not in prompt and "snapshots" not in prompt
-        assert "'shared-vault-gardener'" in prompt
-    assert "Do not commit or push" not in scheduled
-    assert "git push origin main" in scheduled
-    okr = task_config.TaskConfig(id="okr", skill="okr-dashboard-refresh", allow_git_push=True)
-    assert "Do not commit or push" in scheduler.task_prompt(okr, run_source="scheduled")
-
-
-def test_run_task_uses_scoped_push_profile_only_for_authorised_task(tmp_path, monkeypatch):
-    async def scenario():
-        captured = {}
-        env_calls = []
-        body = '<task-output>{"summary":"ok","status":"success","details":{"items":[]}}</task-output>'
-        line = json.dumps({"type": "result", "subtype": "success", "result": body}).encode()
-
-        class Proc:
-            returncode = 0
-            stdout = _FakeStream([line])
-            stderr = _FakeStream([])
-
-            async def wait(self):
-                return 0
-
-        async def fake_create(*cmd, **kwargs):
-            captured["cmd"] = cmd
-            return Proc()
-
-        def fake_cursor_env(**kwargs):
-            env_calls.append(kwargs)
-            return {"CURSOR_API_KEY": object()}
-
-        monkeypatch.setattr(appmod.asyncio, "create_subprocess_exec", fake_create)
-        monkeypatch.setattr(scheduler, "cursor_env", fake_cursor_env)
-
-        status, _, error, _ = await scheduler.run_task(
-            task_config.TaskConfig(
-                id="refresh",
-                skill="okr-dashboard-refresh",
-                dir=str(tmp_path),
-                allow_git_push=True,
-            ),
-            session_id="22222222-2222-4222-8222-222222222222",
-            idle_timeout=1,
-            run_source="manual",
-        )
-
-        assert status == "success"
-        assert error == ""
-        assert env_calls == [{"allow_git_push": True}]
-        prompt = captured["cmd"][-1]
-        assert "Sam triggered Run now" in prompt
-        assert "git push origin main" in prompt
-        assert "Never push another repository" in prompt
-
-    asyncio.run(scenario())
-
-
-def test_opencode_uses_longer_default_idle_timeout():
-    local_task = task_config.TaskConfig(
-        id="local",
-        skill="skill",
-        harness="opencode-ollama",
-        model="qwen3.5:latest",
-    )
-    agent_task = task_config.TaskConfig(id="agent", skill="skill")
-
-    assert scheduler.task_idle_timeout(local_task) == 1800
-    assert scheduler.task_idle_timeout(agent_task) == 300
-    assert scheduler.task_idle_timeout(local_task, 45) == 45
-    local_task.idle_timeout = 90
-    assert scheduler.task_idle_timeout(local_task) == 90
-
-
-def test_run_task_kills_hung_child(tmp_path, monkeypatch):
-    """A child that goes silent past the idle window is killed and reaped."""
-    async def scenario():
-        killed = asyncio.Event()
-        waited = asyncio.Event()
-
-        class Proc:
-            returncode = None
-            stdout = _FakeStream([None])   # blocks forever - no output
-            stderr = _FakeStream([])
-
-            def kill(self):
-                self.returncode = -9
-                killed.set()
-
-            async def wait(self):
-                waited.set()
-
-        async def fake_create(*cmd, **kwargs):
-            return Proc()
-
-        monkeypatch.setattr(appmod.asyncio, "create_subprocess_exec", fake_create)
-
-        status, output, error, _ = await scheduler.run_task(
-            task_config.TaskConfig(id="x", skill="skill", dir=str(tmp_path)),
-            session_id="33333333-3333-4333-8333-333333333333",
-            idle_timeout=0.01,
-            max_timeout=10,
-        )
-
-        assert status == "error"
-        assert output == {}
-        assert "presumed hung" in error
-        assert killed.is_set()
-        assert waited.is_set()
-
-    asyncio.run(scenario())
-
-
-def test_run_task_survives_system_sleep(tmp_path, monkeypatch):
-    async def scenario():
-        body = '<task-output>{"summary":"done","status":"success","details":""}</task-output>'
-        payload = json.dumps({"type": "result", "subtype": "success", "result": body}).encode()
-
-        class Proc:
-            returncode = 0
-            stdout = _FakeStream([None, payload])  # silent across the "sleep", then answers
-            stderr = _FakeStream([])
-            def kill(self):
-                raise AssertionError("killed a run that only slept")
-            async def wait(self):
-                return 0
-
-        async def fake_create(*cmd, **kwargs):
-            return Proc()
-
-        monkeypatch.setattr(appmod.asyncio, "create_subprocess_exec", fake_create)
-        monkeypatch.setattr(scheduler, "time", types.SimpleNamespace(monotonic=lambda: 0.0))
-
-        status, output, error, _ = await scheduler.run_task(
-            task_config.TaskConfig(id="x", skill="skill", dir=str(tmp_path)),
-            session_id="55555555-5555-4555-8555-555555555555",
-            idle_timeout=0.01,
-            max_timeout=10,
-        )
-
-        assert (status, output["summary"], error) == ("success", "done", "")
-
-    asyncio.run(scenario())
-
-
-def test_run_task_busy_child_is_not_killed(tmp_path, monkeypatch):
-    """Steady output past the idle window keeps the run alive to completion."""
-    async def scenario():
-        body = '<task-output>{"summary":"done","status":"success","details":""}</task-output>'
-        payload = json.dumps({"type": "result", "subtype": "success", "result": body}).encode()
-
-        class TrickleStream:
-            """Emits a heartbeat every 5ms for longer than the idle window, then EOF."""
-            def __init__(self):
-                self._left = 20
-            async def read(self, _n):
-                if self._left <= 0:
-                    return b""
-                self._left -= 1
-                await asyncio.sleep(0.005)
-                return payload if self._left == 0 else b'{"type":"step"}\n'
-
-        class Proc:
-            returncode = 0
-            stdout = TrickleStream()
-            stderr = _FakeStream([])
-            async def wait(self):
-                return 0
-
-        async def fake_create(*cmd, **kwargs):
-            return Proc()
-
-        monkeypatch.setattr(appmod.asyncio, "create_subprocess_exec", fake_create)
-
-        status, output, error, _ = await scheduler.run_task(
-            task_config.TaskConfig(id="x", skill="skill", dir=str(tmp_path)),
-            session_id="44444444-4444-4444-8444-444444444444",
-            idle_timeout=0.05,
-            max_timeout=10,
-        )
-
-        assert status == "success"
-        assert output["summary"] == "done"
-        assert error == ""
-
-    asyncio.run(scenario())
+    fake_connection_run(monkeypatch, f"<task-output>{json.dumps({'summary': 's', 'status': given})}</task-output>")
+    status, output, error, _ = asyncio.run(scheduler.run_task(
+        task_config.TaskConfig(id="x", skill="skill", dir=str(tmp_path)), idle_timeout=1))
+    assert status == expected
+    assert output["summary"] == "s"
+    assert bool(error) == (expected == "error")
 
 
 def test_get_states_exposes_run_at_and_days(tmp_path):
@@ -2029,7 +1253,7 @@ def test_activity_records_session_id_from_task_run(tmp_path):
             session_events = [e for e in activity.events if e.get("event") == "session"]
             assert session_events == [{"event": "session", "id": "act-1", "session_id": "abcd-efgh"}]
             start = next(e for e in activity.events if e["event"] == "start")
-            assert start["backend"] == "cursor"
+            assert start["backend"] == "connection"  # no AI connection is configured here
             finish = next(e for e in activity.events if e["event"] == "finish")
             assert finish["summary"] == "ran"
         finally:
@@ -2138,10 +1362,9 @@ def _make_store(config_dir, uuid, age_days):
 
 def test_prune_removes_only_old_unreferenced_cursor_session_stores(tmp_path, monkeypatch):
     """Old scratch is reclaimed; recent or still-referenced stores survive intact."""
-    safe = tmp_path / "cursor-agent-config"
-    gitpush = tmp_path / "cursor-agent-git-push-config"
-    monkeypatch.setattr(appmod, "SAFE_CONFIG_DIR", safe)
-    monkeypatch.setattr(appmod, "GIT_PUSH_CONFIG_DIR", gitpush)
+    safe = tmp_path / ("a" * 32) / "cursor"
+    gitpush = tmp_path / ("b" * 32) / "cursor"
+    monkeypatch.setattr(appmod.ai_connections, "CONNECTIONS_DIR", tmp_path)
 
     stale = _make_store(safe, "stale-0000", age_days=90)
     recent = _make_store(safe, "recent-0000", age_days=1)
@@ -2199,38 +1422,11 @@ def test_task_output_quoted_in_prose_does_not_hide_the_real_block():
 
 
 def test_partial_pass_reports_its_own_summary_not_an_invalid_result(tmp_path, monkeypatch):
-    async def scenario():
-        payload = json.dumps({"summary": "Scan only: open-file refresh not done.", "status": "partial"})
-        line = json.dumps({
-            "type": "result",
-            "subtype": "success",
-            "result": f"<task-output>{payload}</task-output>",
-        }).encode()
-
-        class Proc:
-            returncode = 0
-            stdout = _FakeStream([line])
-            stderr = _FakeStream([])
-
-            async def wait(self):
-                return 0
-
-        async def fake_create(*_cmd, **_kwargs):
-            return Proc()
-
-        monkeypatch.setattr(appmod.asyncio, "create_subprocess_exec", fake_create)
-        monkeypatch.setattr(scheduler, "cursor_env", lambda **_kwargs: {"CURSOR_API_KEY": object()})
-
-        status, output, error, _ = await scheduler.run_task(
-            task_config.TaskConfig(id="x", skill="skill", dir=str(tmp_path)),
-            session_id="11111111-1111-4111-8111-111111111111",
-            idle_timeout=1,
-        )
-
-        assert status == "error"
-        assert error == "Scan only: open-file refresh not done."
-
-    asyncio.run(scenario())
+    payload = json.dumps({"summary": "Scan only: open-file refresh not done.", "status": "partial"})
+    fake_connection_run(monkeypatch, f"<task-output>{payload}</task-output>")
+    status, _, error, _ = asyncio.run(scheduler.run_task(
+        task_config.TaskConfig(id="x", skill="skill", dir=str(tmp_path)), idle_timeout=1))
+    assert (status, error) == ("error", "Scan only: open-file refresh not done.")
 
 
 def test_daily_run_lost_to_the_network_retries_soon_but_real_errors_wait(tmp_path):

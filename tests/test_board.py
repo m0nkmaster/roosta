@@ -25,116 +25,32 @@ def test_cursor_result_text_prefers_completed_stream_over_stale_result():
     assert camod.cursor_result_text(stdout) == final
 
 
-def test_cursor_env_dotenv_key_is_authoritative(tmp_path, monkeypatch):
-    env_file = tmp_path / ".env"
-    env_file.write_text('CURSOR_API_KEY="from-file"\nOTHER=value\n')
-    monkeypatch.setattr(camod, "SAFE_CONFIG_DIR", tmp_path / "cursor-config")
-    monkeypatch.setattr(camod, "GIT_PUSH_CONFIG_DIR", tmp_path / "git-push-config")
-    assert camod.cursor_env({}, env_file)["CURSOR_API_KEY"] == "from-file"
-    # A stale/blank value inherited from the launching process must not win over .env.
-    assert camod.cursor_env({"CURSOR_API_KEY": "inherited"}, env_file)["CURSOR_API_KEY"] == "from-file"
-    # When .env has no key, fall back to the inherited value.
-    empty_env = tmp_path / "empty.env"
-    empty_env.write_text("OTHER=value\n")
-    assert camod.cursor_env({"CURSOR_API_KEY": "inherited"}, empty_env)["CURSOR_API_KEY"] == "inherited"
-    safe_env = camod.cursor_env({}, env_file)
-    assert safe_env["CURSOR_CONFIG_DIR"] == str(tmp_path / "cursor-config")
-    assert (tmp_path / "cursor-config" / "cli-config.json").is_file()
-    assert "/.local/bin" in safe_env["PATH"]
-    push_env = camod.cursor_env({}, env_file, allow_git_push=True)
-    assert push_env["CURSOR_CONFIG_DIR"] == str(tmp_path / "git-push-config")
-    assert (tmp_path / "git-push-config" / "cli-config.json").is_file()
-    assert "CURSOR_CONFIG_DIR" not in camod.cursor_env(
-        safe_env, env_file, safe_config=False
-    )
-
-
-def test_ensure_mcp_config_mirrors_cursor_mcp_json(tmp_path, monkeypatch):
-    source = tmp_path / "source-cursor"
-    source.mkdir()
-    mcp_source = source / "mcp.json"
-    mcp_source.write_text('{"mcpServers":{"tracker":{"command":"npx"}}}\n')
-    monkeypatch.setattr(camod, "CURSOR_MCP_SOURCE", mcp_source)
-    config_dir = tmp_path / "agent-config"
-    camod.ensure_mcp_config(config_dir)
-    copied = config_dir / "mcp.json"
-    assert copied.is_file()
-    assert json.loads(copied.read_text())["mcpServers"]["tracker"]["command"] == "npx"
-    mcp_source.write_text('{"mcpServers":{"tracker":{"command":"updated"}}}\n')
-    import os
-    os.utime(mcp_source, (mcp_source.stat().st_mtime + 2, mcp_source.stat().st_mtime + 2))
-    camod.ensure_mcp_config(config_dir)
-    assert json.loads(copied.read_text())["mcpServers"]["tracker"]["command"] == "updated"
-
-
-def test_ensure_safe_config_scrubs_leaked_login_state(tmp_path):
+def test_write_config_scrubs_leaked_login_state(tmp_path):
     directory = tmp_path / "cursor-config"
     directory.mkdir()
-    path = directory / "cli-config.json"
-    template = json.loads(camod.SAFE_CONFIG_TEMPLATE.read_text())
-    path.write_text(json.dumps({
-        "version": template["version"],
-        "permissions": template["permissions"],
-        "editor": template["editor"],
-        "authInfo": {"email": "sam@example.com", "userId": 1},
-        "refreshToken": "secret",
-    }))
-    camod.ensure_safe_config(directory)
-    written = json.loads(path.read_text())
-    assert "authInfo" not in written
-    assert "refreshToken" not in written
-    assert written["permissions"] == template["permissions"]
-
-
-def test_cursor_model_uses_process_then_dotenv_then_cursors_own_default(tmp_path):
-    env_file = tmp_path / ".env"
-    env_file.write_text("CURSOR_MODEL=gpt-5.6-terra-high\n")
-
-    assert camod.cursor_model({}, env_file) == "gpt-5.6-terra-high"
-    assert camod.cursor_model({"CURSOR_MODEL": "claude-sonnet-5-medium"}, env_file) == (
-        "claude-sonnet-5-medium"
-    )
-    env_file.write_text("CURSOR_MODEL=not a valid model slug\n")
-    assert camod.cursor_model({}, env_file) == ""
-
-
-def test_general_chat_model_is_scoped_and_configurable(tmp_path):
-    env_file = tmp_path / ".env"
-    env_file.write_text(
-        "CURSOR_MODEL=composer-2.5\n"
-        "GENERAL_CHAT_MODEL=claude-opus-5-medium\n"
-    )
-
-    assert camod.cursor_model({}, env_file) == "composer-2.5"
-    assert camod.general_chat_model({}, env_file) == "claude-opus-5-medium"
-    assert camod.general_chat_model(
-        {"GENERAL_CHAT_MODEL": "claude-opus-5-thinking-xhigh"},
-        env_file,
-    ) == "claude-opus-5-thinking-xhigh"
-    env_file.write_text("GENERAL_CHAT_MODEL=not a valid model slug\n")
-    assert camod.general_chat_model({}, env_file) == ""
+    (directory / "cli-config.json").write_text(json.dumps({
+        "authInfo": {"email": "sam@example.com", "userId": 1}, "refreshToken": "secret", "kept": 1}))
+    permissions = {"allow": ["Read(**)"], "deny": ["Shell(git:push*)"]}
+    camod.write_config(directory, permissions, {"mcpServers": {"x": {}}})
+    written = json.loads((directory / "cli-config.json").read_text())
+    assert "authInfo" not in written and "refreshToken" not in written
+    assert written["permissions"] == permissions and written["kept"] == 1
+    assert json.loads((directory / "mcp.json").read_text()) == {"mcpServers": {"x": {}}}
 
 
 def test_cursor_permission_profile_allows_local_writes_but_denies_external_actions():
-    config = json.loads(camod.SAFE_CONFIG_TEMPLATE.read_text())
-    permissions = config["permissions"]
+    permissions = json.loads(camod.SAFE_CONFIG_TEMPLATE.read_text())["permissions"]
     assert "Write(**)" in permissions["allow"]
     assert "Read(**/.env*)" in permissions["deny"]
     assert "Shell(gh:pr create*)" in permissions["deny"]
     assert "Shell(git:push*)" in permissions["deny"]
     assert "Mcp(*:*create*)" in permissions["deny"]
-
-    push_config = json.loads(camod.GIT_PUSH_CONFIG_TEMPLATE.read_text())
-    push_permissions = push_config["permissions"]
-    assert "Shell(git:push origin main)" in push_permissions["allow"]
-    assert not any(rule.startswith("Shell(git:push") for rule in push_permissions["deny"])
-    assert "Shell(gh:pr create*)" in push_permissions["deny"]
-    assert "Mcp(*:*create*)" in push_permissions["deny"]
+    assert not {"Shell(rm)", "Shell(git:reset*)", "Shell(git:clean*)"} & set(permissions["deny"])
 
 
 def test_connector_write_commands_join_every_policy(tmp_path, monkeypatch):
     """A chat drafting a send could otherwise run the CLI directly and skip the approval card."""
-    from roosta import claude_code, opencode_ollama, paths
+    from roosta import claude_code, paths
 
     connectors_file = tmp_path / "connectors.yaml"
     connectors_file.write_text(
@@ -143,39 +59,25 @@ def test_connector_write_commands_join_every_policy(tmp_path, monkeypatch):
     merged = camod.merged_permissions({"deny": ["Shell(rm)"]})
     assert merged["deny"] == ["Shell(rm)", "Shell(chat:post*)", "Shell(msteams:teams_send_message*)"]
 
-    camod.ensure_safe_config(tmp_path / "cursor")
-    seeded = json.loads((tmp_path / "cursor" / "cli-config.json").read_text())
-    assert "Shell(msteams:teams_send_message*)" in seeded["permissions"]["deny"]
-
     settings = json.loads(claude_code.claude_settings("safe", tmp_path / "claude").read_text())
     assert "Bash(msteams teams_send_message:*)" in settings["permissions"]["deny"]
 
-    monkeypatch.setattr(opencode_ollama, "SAFE_CONFIG_DIR", tmp_path / "opencode")
-    opencode_ollama.ensure_opencode_config()
-    config = json.loads((tmp_path / "opencode" / "opencode.json").read_text())
-    assert config["permission"]["bash"]["msteams teams_send_message *"] == "deny"
 
-
-def test_cursor_args_use_headless_streaming_and_resume_without_force():
-    args = camod.cursor_args(
-        "hello",
-        binary="/x/agent",
-        workspace="/vault",
-        session_id="chat-id",
-    )
+def test_cursor_args_use_headless_streaming_and_resume():
+    args = camod.cursor_args(binary="/x/agent", workspace="/vault", session_id="chat-id", model="gpt-6")
     assert args[0] == "/x/agent"
-    assert "--print" in args and "--trust" in args
+    assert "--print" in args and "--trust" in args and "--force" in args
     assert args[args.index("--output-format") + 1] == "stream-json"
     assert "--stream-partial-output" in args
     assert args[args.index("--workspace") + 1] == "/vault"
     assert args[args.index("--resume") + 1] == "chat-id"
-    assert "--force" not in args
-    assert args[-1] == "hello"
+    assert args[args.index("--model") + 1] == "gpt-6"
+    fresh = camod.cursor_args(workspace="/vault")
+    assert "--resume" not in fresh and "--model" not in fresh
 
 
-def test_cursor_agent_creates_empty_chat_with_key_only_in_child_env(tmp_path, monkeypatch):
+def test_cursor_create_chat_drops_the_custom_config_dir(tmp_path, monkeypatch):
     captured = {}
-    env_calls = []
     session_id = "33333333-3333-4333-8333-333333333333"
 
     class Process:
@@ -185,23 +87,15 @@ def test_cursor_agent_creates_empty_chat_with_key_only_in_child_env(tmp_path, mo
             return session_id.encode(), b""
 
     async def fake_exec(*args, **kwargs):
-        captured["args"] = args
-        captured["kwargs"] = kwargs
+        captured["args"], captured["kwargs"] = args, kwargs
         return Process()
 
-    def fake_cursor_env(**kwargs):
-        env_calls.append(kwargs)
-        return {"CURSOR_API_KEY": object()}
-
     monkeypatch.setattr(camod.asyncio, "create_subprocess_exec", fake_exec)
-    monkeypatch.setattr(camod, "cursor_env", fake_cursor_env)
-    client = camod.CursorAgent(workspace=str(tmp_path), binary="/x/agent")
-
-    assert asyncio.run(client.create_session()) == session_id
+    env = {"CURSOR_API_KEY": "key", "CURSOR_CONFIG_DIR": "/private"}
+    assert asyncio.run(camod.create_chat("/x/agent", env, str(tmp_path))) == session_id
     assert captured["args"] == ("/x/agent", "create-chat")
     assert captured["kwargs"]["stdin"] == asyncio.subprocess.DEVNULL
-    assert captured["kwargs"]["env"]["CURSOR_API_KEY"]
-    assert env_calls == [{"env_file": client.env_file, "safe_config": False}]
+    assert captured["kwargs"]["env"] == {"CURSOR_API_KEY": "key"}
 
 
 from roosta import chat as cmod
@@ -213,7 +107,7 @@ def _texts(rows):
 
 
 def test_parse_line_text_delta():
-    ev = cmod.parse_line(
+    ev = camod.parse_chat_line(
         '{"type":"assistant","message":{"content":[{"type":"text","text":"hello "}]},'
         '"timestamp_ms":1}'
     )
@@ -221,14 +115,14 @@ def test_parse_line_text_delta():
 
 
 def test_parse_line_ignores_step_and_junk():
-    assert cmod.parse_line(
+    assert camod.parse_chat_line(
         '{"type":"assistant","message":{"content":[{"type":"text","text":"duplicate"}]}}'
     ) is None
-    assert cmod.parse_line(
+    assert camod.parse_chat_line(
         '{"type":"assistant","message":{"content":[{"type":"text","text":"flush"}]},'
         '"timestamp_ms":1,"model_call_id":"call"}'
     ) is None
-    assert cmod.parse_line('not json') is None
+    assert camod.parse_chat_line('not json') is None
 
 
 def test_extract_markers_pause():
@@ -305,16 +199,6 @@ def test_terminal_event_surfaces_learned_on_state_and_done():
 
 
 import json as _json
-
-
-def test_turn_args_attaches_session():
-    args = cmod.turn_args("/x/agent", "/vault", "chat-1", "hi")
-    assert args[0] == "/x/agent"
-    assert "--resume" in args and "chat-1" in args
-    assert "--workspace" in args and "/vault" in args
-    assert "--output-format" in args and "stream-json" in args
-    assert "--force" not in args
-    assert args[-1] == "hi"
 
 
 def test_session_map_roundtrip(tmp_path):
@@ -399,19 +283,11 @@ def test_topic_store_tracks_item_continuity_and_rotates_bounded_sessions(tmp_pat
     assert store.get("alignment-episode")["session_id"] == "ses_2"
 
 
-def test_different_items_from_same_project_use_separate_sessions(tmp_path):
-    class FakeDaemon:
-        def __init__(self):
-            self.created = 0
+def test_different_items_from_same_project_use_separate_sessions(tmp_path, fake_chat_connection):
 
-        async def create_session(self):
-            self.created += 1
-            return f"ses_{self.created}"
-
-    daemon = FakeDaemon()
     sessions = cmod.SessionMap(tmp_path / "sessions.json")
     topics = cmod.TopicStore(tmp_path / "topics.json")
-    router = cmod.ChatRouter(daemon, sessions, "/v", topic_store=topics)
+    router = cmod.ChatRouter(sessions, "/v", topic_store=topics)
     first = asyncio.run(router._ensure_session(
         "magic-mirror-alignment",
         {"title": "Alignment", "thread_id": "project:magic-mirror",
@@ -423,21 +299,18 @@ def test_different_items_from_same_project_use_separate_sessions(tmp_path):
 
     assert first == "ses_1"
     assert second == "ses_2"
-    assert daemon.created == 2
     assert sessions.get("magic-mirror-alignment") == "ses_1"
     assert sessions.get("magic-mirror-launch") == "ses_2"
     assert topics.get("magic-mirror-alignment")["item_id"] == "magic-mirror-alignment"
     assert topics.get("magic-mirror-launch")["item_id"] == "magic-mirror-launch"
 
 
-def test_item_session_reuses_existing_item_session(tmp_path):
-    class FakeDaemon:
-        async def create_session(self):
-            raise AssertionError("legacy session should be reused")
+def test_item_session_reuses_existing_item_session(tmp_path, fake_chat_connection):
 
     sessions = cmod.SessionMap(tmp_path / "sessions.json")
+    sessions.bind("old-episode", "c" * 32)
     sessions.set("old-episode", "ses_existing")
-    router = cmod.ChatRouter(FakeDaemon(), sessions, "/v")
+    router = cmod.ChatRouter(sessions, "/v")
 
     sid = asyncio.run(router._ensure_session(
         "old-episode", {"title": "AI adoption"}))
@@ -552,12 +425,12 @@ def test_terminal_event_remind_rejects_unsafe_due(due):
 
 def test_chatrouter_reminders_roundtrip_and_removal(tmp_path):
     path = tmp_path / "reminders.json"
-    cr = cmod.ChatRouter(agent=None, session_map=cmod.SessionMap(tmp_path / "s.json"),
+    cr = cmod.ChatRouter(session_map=cmod.SessionMap(tmp_path / "s.json"),
                          vault="/v", reminders_path=path)
     assert cr.reminders() == []
     rid = cr.add_reminder("Call the vendor", "before 5", "2026-07-28T16:00:00+00:00")
     assert rid.startswith("remind-")
-    stored = cmod.ChatRouter(None, cmod.SessionMap(tmp_path / "s2.json"), "/v",
+    stored = cmod.ChatRouter(cmod.SessionMap(tmp_path / "s2.json"), "/v",
                              reminders_path=path).reminders()
     assert stored[0]["title"] == "Call the vendor"
     assert stored[0]["due"] == "2026-07-28T16:00:00+00:00"
@@ -567,7 +440,7 @@ def test_chatrouter_reminders_roundtrip_and_removal(tmp_path):
 
 def test_chatrouter_mark_handled_clears_matching_reminder(tmp_path):
     reminders = tmp_path / "reminders.json"
-    cr = cmod.ChatRouter(agent=None, session_map=cmod.SessionMap(tmp_path / "s.json"),
+    cr = cmod.ChatRouter(session_map=cmod.SessionMap(tmp_path / "s.json"),
                          vault="/v", handled_path=tmp_path / "handled.json",
                          reminders_path=reminders)
     rid = cr.add_reminder("Draft the update")
@@ -575,12 +448,7 @@ def test_chatrouter_mark_handled_clears_matching_reminder(tmp_path):
     assert cr.reminders() == []
 
 
-def test_run_turn_remind_marker_persists_card_and_ends_reply(monkeypatch, tmp_path):
-    class FakeDaemon:
-        base_url = "http://127.0.0.1:9"
-
-        async def create_session(self):
-            return "ses_remind"
+def test_run_turn_remind_marker_persists_card_and_ends_reply(monkeypatch, tmp_path, fake_chat_connection):
 
     class FakeProcess:
         returncode = 0
@@ -608,7 +476,7 @@ def test_run_turn_remind_marker_persists_card_and_ends_reply(monkeypatch, tmp_pa
 
     monkeypatch.setattr(cmod.asyncio, "create_subprocess_exec", fake_exec)
     router = cmod.ChatRouter(
-        FakeDaemon(), cmod.SessionMap(tmp_path / "sessions.json"), "/vault",
+        cmod.SessionMap(tmp_path / "sessions.json"), "/vault",
         reminders_path=tmp_path / "reminders.json",
     )
 
@@ -642,7 +510,7 @@ def test_split_due_reminders_partitions_now_and_future():
     assert later[0]["new"] is False
 
 
-def test_board_surfaces_due_reminders_and_parks_future(monkeypatch):
+def test_board_surfaces_due_reminders_and_parks_future(monkeypatch, fake_chat_connection):
     class FakeRouter:
         def record_merges(self, merges):
             return {}
@@ -775,20 +643,16 @@ def test_normalise_sender_action_rejects_invalid_payloads(action):
     assert cmod.normalise_sender_action(action) is None
 
 
-def test_approve_sends_normalised_edited_action(monkeypatch, tmp_path):
+def test_approve_sends_normalised_edited_action(monkeypatch, tmp_path, fake_chat_connection):
     captured = {}
 
-    class FakeDaemon:
-        base_url = "http://127.0.0.1:9"
-
-        async def create_session(self):
-            return "ses_sender"
 
     class FakeProcess:
         returncode = 0
 
         async def communicate(self, input=None):
-            return b"", b""
+            line = {"type": "result", "result": '<task-output>{"status": "success", "summary": ""}</task-output>'}
+            return json.dumps(line).encode(), b""
 
     async def fake_exec(*args, **kwargs):
         captured["args"] = args
@@ -797,7 +661,7 @@ def test_approve_sends_normalised_edited_action(monkeypatch, tmp_path):
 
     monkeypatch.setattr(cmod.asyncio, "create_subprocess_exec", fake_exec)
     router = cmod.ChatRouter(
-        FakeDaemon(), cmod.SessionMap(tmp_path / "sessions.json"), "/vault"
+        cmod.SessionMap(tmp_path / "sessions.json"), "/vault"
     )
     router._paused["run-1"] = {
         "item_id": "item-1",
@@ -816,29 +680,23 @@ def test_approve_sends_normalised_edited_action(monkeypatch, tmp_path):
     assert '"text": "Edited"' in prompt
     assert '"draft"' not in prompt
     assert "--force" in captured["args"]
-    assert "--approve-mcps" in captured["args"]
-    assert "CURSOR_CONFIG_DIR" not in captured["kwargs"]["env"]
+    assert fake_chat_connection[-1]["profile"] == "unrestricted"
 
 
-def test_approved_general_chat_action_does_not_close_chat(monkeypatch, tmp_path):
-    class FakeDaemon:
-        base_url = "http://127.0.0.1:9"
-
-        async def create_session(self):
-            return "ses_sender"
+def test_approved_general_chat_action_does_not_close_chat(monkeypatch, tmp_path, fake_chat_connection):
 
     class FakeProcess:
         returncode = 0
 
         async def communicate(self, input=None):
-            return b"", b""
+            line = {"type": "result", "result": '<task-output>{"status": "success", "summary": ""}</task-output>'}
+            return json.dumps(line).encode(), b""
 
     async def fake_exec(*args, **kwargs):
         return FakeProcess()
 
     monkeypatch.setattr(cmod.asyncio, "create_subprocess_exec", fake_exec)
     router = cmod.ChatRouter(
-        FakeDaemon(),
         cmod.SessionMap(tmp_path / "sessions.json"),
         "/vault",
         handled_path=tmp_path / "handled.json",
@@ -861,11 +719,6 @@ def test_approved_general_chat_action_does_not_close_chat(monkeypatch, tmp_path)
 
 
 def _approve_with_sender_output(monkeypatch, tmp_path, output):
-    class FakeDaemon:
-        base_url = "http://127.0.0.1:9"
-
-        async def create_session(self):
-            return "ses_sender"
 
     class FakeProcess:
         returncode = 0
@@ -878,9 +731,8 @@ def _approve_with_sender_output(monkeypatch, tmp_path, output):
         return FakeProcess()
 
     monkeypatch.setattr(cmod.asyncio, "create_subprocess_exec", fake_exec)
-    monkeypatch.setattr(cmod.ai_backend, "current", lambda: cmod.ai_backend.CLAUDE)
     router = cmod.ChatRouter(
-        FakeDaemon(), cmod.SessionMap(tmp_path / "sessions.json"), "/vault",
+        cmod.SessionMap(tmp_path / "sessions.json"), "/vault",
         handled_path=tmp_path / "handled.json",
     )
     router._paused["run-ticket"] = {
@@ -892,14 +744,14 @@ def _approve_with_sender_output(monkeypatch, tmp_path, output):
     return asyncio.run(router.approve("run-ticket", True, None))
 
 
-def test_approved_ticket_create_returns_the_senders_summary(monkeypatch, tmp_path):
+def test_approved_ticket_create_returns_the_senders_summary(monkeypatch, tmp_path, fake_chat_connection):
     summary = "Created [PROJ-9999](https://example.atlassian.net/browse/PROJ-9999)"
     result = _approve_with_sender_output(
         monkeypatch, tmp_path, {"summary": summary, "status": "success", "details": ""})
     assert result == {"ok": True, "sent": True, "kind": "action", "summary": summary}
 
 
-def test_sender_reported_error_is_not_sent(monkeypatch, tmp_path):
+def test_sender_reported_error_is_not_sent(monkeypatch, tmp_path, fake_chat_connection):
     result = _approve_with_sender_output(
         monkeypatch, tmp_path, {"summary": "Team UUID unknown", "status": "error", "details": ""})
     assert result["ok"] is True
@@ -1036,14 +888,9 @@ def test_visible_reply_filter_preserves_direct_short_answer():
     assert visible.finish() == ""
 
 
-def test_persistent_chat_is_not_marked_handled_after_acting(monkeypatch, tmp_path):
+def test_persistent_chat_is_not_marked_handled_after_acting(monkeypatch, tmp_path, fake_chat_connection):
     captured = {}
 
-    class FakeDaemon:
-        base_url = "http://127.0.0.1:9"
-
-        async def create_session(self):
-            return "ses_general"
 
     class FakeProcess:
         returncode = 0
@@ -1067,14 +914,10 @@ def test_persistent_chat_is_not_marked_handled_after_acting(monkeypatch, tmp_pat
         return FakeProcess()
 
     monkeypatch.setattr(cmod.asyncio, "create_subprocess_exec", fake_exec)
-    monkeypatch.setattr(
-        cmod,
-        "general_chat_model",
-        lambda: "claude-opus-5-thinking-high",
-    )
+    monkeypatch.setattr(cmod.ai_connections, "default_model",
+                        lambda _provider, general=False: "claude-opus-5-thinking-high" if general else "")
     history = cmod.ConversationHistoryStore(tmp_path / "general-history.json")
     router = cmod.ChatRouter(
-        FakeDaemon(),
         cmod.SessionMap(tmp_path / "sessions.json"),
         "/vault",
         handled_path=tmp_path / "handled.json",
@@ -1097,14 +940,9 @@ def test_persistent_chat_is_not_marked_handled_after_acting(monkeypatch, tmp_pat
     ]
 
 
-def test_item_chat_persists_visible_history(monkeypatch, tmp_path):
+def test_item_chat_persists_visible_history(monkeypatch, tmp_path, fake_chat_connection):
     captured = {}
 
-    class FakeDaemon:
-        base_url = "http://127.0.0.1:9"
-
-        async def create_session(self):
-            return "ses_item"
 
     class FakeProcess:
         returncode = 0
@@ -1131,7 +969,6 @@ def test_item_chat_persists_visible_history(monkeypatch, tmp_path):
     monkeypatch.setattr(cmod.asyncio, "create_subprocess_exec", fake_exec)
     history = cmod.ConversationHistoryStore(tmp_path / "chat-history.json")
     router = cmod.ChatRouter(
-        FakeDaemon(),
         cmod.SessionMap(tmp_path / "sessions.json"),
         "/vault",
         persistent_history=history,
@@ -1148,126 +985,11 @@ def test_item_chat_persists_visible_history(monkeypatch, tmp_path):
         {"role": "assistant", "text": "It is waiting on review."},
     ]
     assert "--force" in captured["args"]
-    assert captured["kwargs"]["env"]["CURSOR_CONFIG_DIR"].endswith(
-        "cache/cursor-agent-config"
-    )
-
-
-def test_item_chat_retries_known_transient_failure_before_model_progress(monkeypatch, tmp_path):
-    class FakeDaemon:
-        async def create_session(self):
-            return "ses_item"
-
-    success_event = json.dumps({
-        "type": "assistant",
-        "message": {"content": [{"type": "text", "text":
-            'Recovered.\n<<<STATE>>>{"thread_summary":"Recovered."}'}]},
-        "timestamp_ms": 1,
-    }).encode()
-
-    class FakeProcess:
-        def __init__(self, lines, returncode):
-            self.returncode = returncode
-
-            async def output():
-                for line in lines:
-                    yield line + b"\n"
-
-            self.stdout = output()
-
-        async def wait(self):
-            return self.returncode
-
-    processes = [
-        FakeProcess(
-            [b"RetriableError: Agent turn stopped after repeated resume attempts made no progress"],
-            1,
-        ),
-        FakeProcess([success_event], 0),
-    ]
-    launches = []
-
-    async def fake_exec(*args, **kwargs):
-        launches.append(args)
-        return processes.pop(0)
-
-    async def no_wait(_seconds):
-        return None
-
-    monkeypatch.setattr(cmod.asyncio, "create_subprocess_exec", fake_exec)
-    monkeypatch.setattr(cmod.asyncio, "sleep", no_wait)
-    history = cmod.ConversationHistoryStore(tmp_path / "chat-history.json")
-    router = cmod.ChatRouter(
-        FakeDaemon(),
-        cmod.SessionMap(tmp_path / "sessions.json"),
-        "/vault",
-        persistent_history=history,
-    )
-
-    async def run():
-        return [event async for event in router.run_turn(
-            "item-1", {"id": "item-1"}, "Please continue")]
-
-    events = asyncio.run(run())
-
-    assert len(launches) == 2
-    assert not any(event["kind"] == "error" for event in events)
-    assert _texts(history.read("item-1")) == [
-        {"role": "user", "text": "Please continue"},
-        {"role": "assistant", "text": "Recovered."},
-    ]
-
-
-@pytest.mark.parametrize("event_type", ["assistant", "tool_call"])
-def test_item_chat_does_not_retry_after_model_progress(monkeypatch, tmp_path, event_type):
-    class FakeDaemon:
-        async def create_session(self):
-            return "ses_item"
-
-    progress_event = json.dumps({
-        "type": event_type,
-        "message": {"content": [{"type": "text", "text": "I found the context."}]},
-        "timestamp_ms": 1,
-    }).encode()
-
-    class FakeProcess:
-        returncode = 1
-
-        def __init__(self):
-            async def output():
-                yield progress_event + b"\n"
-                yield b"[unavailable] getaddrinfo ENOTFOUND api2.cursor.sh\n"
-
-            self.stdout = output()
-
-        async def wait(self):
-            return self.returncode
-
-    launches = []
-
-    async def fake_exec(*args, **kwargs):
-        launches.append(args)
-        return FakeProcess()
-
-    monkeypatch.setattr(cmod.asyncio, "create_subprocess_exec", fake_exec)
-    router = cmod.ChatRouter(
-        FakeDaemon(),
-        cmod.SessionMap(tmp_path / "sessions.json"),
-        "/vault",
-    )
-
-    async def run():
-        return [event async for event in router.run_turn(
-            "item-1", {"id": "item-1"}, "Please continue")]
-
-    events = asyncio.run(run())
-
-    assert len(launches) == 1
-    assert events[-1]["kind"] == "error"
+    assert fake_chat_connection[-1]["profile"] == "safe"
 
 
 def test_progress_isolated_across_chats_and_queued_turns_after_stop(tmp_path):
-    router = cmod.ChatRouter(None, cmod.SessionMap(tmp_path / "sessions.json"), "/vault")
+    router = cmod.ChatRouter(cmod.SessionMap(tmp_path / "sessions.json"), "/vault")
 
     async def exercise():
         release = asyncio.Event()
@@ -1309,7 +1031,6 @@ def test_progress_isolated_across_chats_and_queued_turns_after_stop(tmp_path):
 
 def test_detached_turn_continues_without_stream_consumer(tmp_path):
     router = cmod.ChatRouter(
-        agent=None,
         session_map=cmod.SessionMap(tmp_path / "sessions.json"),
         vault="/vault",
     )
@@ -1349,7 +1070,6 @@ def test_detached_turn_continues_without_stream_consumer(tmp_path):
 
 def test_queued_messages_run_after_current_turn(tmp_path):
     router = cmod.ChatRouter(
-        agent=None,
         session_map=cmod.SessionMap(tmp_path / "sessions.json"),
         vault="/vault",
     )
@@ -1734,7 +1454,7 @@ def test_folded_duplicate_never_rewrites_the_conductor_synthesis():
 def test_record_merges_keeps_the_card_with_user_history(tmp_path):
     history = cmod.ConversationHistoryStore(tmp_path / "h.json")
     history.append("teams-root1", "user", "What did Robin ask?")
-    cr = cmod.ChatRouter(agent=None, session_map=cmod.SessionMap(tmp_path / "s.json"),
+    cr = cmod.ChatRouter(session_map=cmod.SessionMap(tmp_path / "s.json"),
                          vault="/v", persistent_history=history,
                          merged_path=tmp_path / "merged.json")
 
@@ -1798,13 +1518,6 @@ def test_scheduled_prompt_forbids_external_writes():
     assert "Assistant board items" in scheduler.PROMPT_TEMPLATE
     assert "'documents':" in scheduler.PROMPT_TEMPLATE
     assert "'path': 'drafts/example.md'" in scheduler.PROMPT_TEMPLATE
-    scheduled = scheduler.GIT_PUSH_SCHEDULED_PROMPT_TEMPLATE
-    manual = scheduler.GIT_PUSH_MANUAL_PROMPT_TEMPLATE
-    assert "Do not commit or push" in scheduled
-    assert "git push origin main" in manual
-    for template in (scheduled, manual, scheduler.GIT_PUSH_SCHEDULED_PUSH_PROMPT_TEMPLATE):
-        assert "Never push another repository" in template
-        assert "Assistant board item" in template
 
 
 def test_snooze_deadlines_use_local_mornings_and_utc_storage():
@@ -1917,7 +1630,7 @@ def test_snooze_endpoint_accepts_visible_reminder(monkeypatch):
 def test_chatrouter_mark_and_read_handled(tmp_path):
     p = tmp_path / "handled.json"
     raised = tmp_path / "raised.json"
-    cr = cmod.ChatRouter(agent=None, session_map=cmod.SessionMap(tmp_path / "s.json"),
+    cr = cmod.ChatRouter(session_map=cmod.SessionMap(tmp_path / "s.json"),
                          vault="/v", handled_path=p, raised_path=raised)
     cr.record_raised(["item-1"])
     assert "item-1" in cr.raised()
@@ -1926,14 +1639,14 @@ def test_chatrouter_mark_and_read_handled(tmp_path):
     assert h["item-1"]["result"] == "Booked the review" and "at" in h["item-1"]
     assert "item-1" not in cr.raised()
     # persisted + reloadable by a fresh router
-    cr2 = cmod.ChatRouter(agent=None, session_map=cmod.SessionMap(tmp_path / "s.json"),
+    cr2 = cmod.ChatRouter(session_map=cmod.SessionMap(tmp_path / "s.json"),
                           vault="/v", handled_path=p)
     assert cr2.handled()["item-1"]["result"] == "Booked the review"
 
 
 def test_chatrouter_record_raised_preserves_first_seen(tmp_path):
     raised = tmp_path / "raised.json"
-    cr = cmod.ChatRouter(agent=None, session_map=cmod.SessionMap(tmp_path / "s.json"),
+    cr = cmod.ChatRouter(session_map=cmod.SessionMap(tmp_path / "s.json"),
                          vault="/v", raised_path=raised)
     first = cr.record_raised(["item-1"])["item-1"]["at"]
     second = cr.record_raised(["item-1", "item-2"])
@@ -1959,7 +1672,7 @@ def test_reminder_to_item_carries_created_as_raised_at():
 def test_chatrouter_handled_tolerates_corrupt(tmp_path):
     p = tmp_path / "handled.json"
     p.write_text("garbage{")
-    cr = cmod.ChatRouter(agent=None, session_map=cmod.SessionMap(tmp_path / "s.json"),
+    cr = cmod.ChatRouter(session_map=cmod.SessionMap(tmp_path / "s.json"),
                          vault="/v", handled_path=p)
     assert cr.handled() == {}
 
@@ -1974,7 +1687,6 @@ def test_chatrouter_handled_normalises_accidental_items_wrapper(tmp_path):
         ],
     }))
     cr = cmod.ChatRouter(
-        agent=None,
         session_map=cmod.SessionMap(tmp_path / "s.json"),
         vault="/v",
         handled_path=p,
@@ -1987,7 +1699,7 @@ def test_chatrouter_handled_normalises_accidental_items_wrapper(tmp_path):
 
 
 def test_chatrouter_mark_handled_noop_without_path():
-    cr = cmod.ChatRouter(agent=None, session_map=None, vault="/v")
+    cr = cmod.ChatRouter(session_map=None, vault="/v")
     cr.mark_handled("x", "y")  # must not raise
     assert cr.handled() == {}
 
@@ -1996,7 +1708,6 @@ def test_chatrouter_snooze_roundtrip_unsnooze_and_handled_cleanup(tmp_path):
     handled = tmp_path / "handled.json"
     snoozed = tmp_path / "snoozed.json"
     cr = cmod.ChatRouter(
-        agent=None,
         session_map=cmod.SessionMap(tmp_path / "sessions.json"),
         vault="/v",
         handled_path=handled,
@@ -2004,7 +1715,7 @@ def test_chatrouter_snooze_roundtrip_unsnooze_and_handled_cleanup(tmp_path):
     )
     cr.snooze("item-1", "2026-07-17T09:00:00+00:00")
     assert cmod.ChatRouter(
-        None, cmod.SessionMap(tmp_path / "sessions-2.json"), "/v",
+        cmod.SessionMap(tmp_path / "sessions-2.json"), "/v",
         handled, snoozed,
     ).snoozed()["item-1"]["until"] == "2026-07-17T09:00:00+00:00"
     cr.unsnooze("item-1")
@@ -2893,7 +2604,7 @@ def test_assistant_frontend_isolates_conversations_by_item_id():
     assert "convos[id]={log, busy:false, seeded:false, historyCount:0, queuedCount:0}" in html
 
 
-def test_assistant_has_persistent_general_chat_alongside_items(monkeypatch):
+def test_assistant_has_persistent_general_chat_alongside_items(monkeypatch, fake_chat_connection):
     html = (Path(__file__).resolve().parent.parent / "src" / "roosta" / "static" / "assistant.html").read_text()
     assert 'data-tab="chats"' in html
     assert "Ask anything…" in html
@@ -2965,7 +2676,7 @@ def test_assistant_opens_standing_threads_and_prefills_the_asked_question():
     assert "const DOC_PREFIX='doc:';" in html
 
 
-def test_board_chat_returns_202_when_turn_is_queued(monkeypatch):
+def test_board_chat_returns_202_when_turn_is_queued(monkeypatch, fake_chat_connection):
     class FakeRouter:
         def record_merges(self, merges):
             return {}
@@ -2987,7 +2698,7 @@ def test_board_chat_returns_202_when_turn_is_queued(monkeypatch):
     assert body == {"queued": True, "position": 2}
 
 
-def test_board_chat_continues_after_conductor_drops_item(monkeypatch):
+def test_board_chat_continues_after_conductor_drops_item(monkeypatch, fake_chat_connection):
     """A live conversation must survive the conductor dropping its item."""
     class FakeRouter:
         def record_merges(self, merges):
@@ -3028,7 +2739,7 @@ def test_board_chat_continues_after_conductor_drops_item(monkeypatch):
     assert router.turn[1]["title"] == "Holdout outcome"
 
 
-def test_board_chat_starts_for_file_backed_reminder(monkeypatch):
+def test_board_chat_starts_for_file_backed_reminder(monkeypatch, fake_chat_connection):
     class FakeRouter:
         def record_merges(self, merges):
             return {}
@@ -3116,7 +2827,7 @@ def test_document_chat_item_rejects_escape_missing_and_foreign_ids(tmp_path):
     assert chat_items.document_chat_item("notes/a.md", tmp_path) is None
 
 
-def test_board_chat_starts_a_document_thread_off_the_rail(monkeypatch, tmp_path):
+def test_board_chat_starts_a_document_thread_off_the_rail(monkeypatch, tmp_path, fake_chat_connection):
     (tmp_path / "notes").mkdir()
     (tmp_path / "notes" / "plan.md").write_text("# Plan\n", encoding="utf-8")
     router = _StandingChatRouter()
@@ -3175,7 +2886,7 @@ def test_worker_chat_item_rejects_unknown_and_foreign_ids(tmp_path):
     assert chat_items.is_chat_id("worker:team-wins-watch")
 
 
-def test_board_chat_starts_a_worker_one_to_one(monkeypatch, tmp_path):
+def test_board_chat_starts_a_worker_one_to_one(monkeypatch, tmp_path, fake_chat_connection):
     router = _StandingChatRouter()
     monkeypatch.setattr(appmod, "chat_router", router)
     monkeypatch.setattr(appmod.paths, "WORKSPACE", tmp_path)
@@ -3210,7 +2921,7 @@ def test_hire_chat_item_sets_up_a_new_worker_through_write_a_skill():
     assert not chat_items.is_chat_id("hire:nope")
 
 
-def test_board_chat_starts_a_new_worker_thread(monkeypatch):
+def test_board_chat_starts_a_new_worker_thread(monkeypatch, fake_chat_connection):
     router = _StandingChatRouter()
     monkeypatch.setattr(appmod, "chat_router", router)
 
@@ -3249,7 +2960,7 @@ def test_standing_thread_ids_accepts_only_reserved_namespaces():
     assert len(chat_items.standing_thread_ids(",".join(f"doc:notes/p{i}.md" for i in range(40)))) == 20
 
 
-def test_board_chat_404_for_unknown_item(monkeypatch):
+def test_board_chat_404_for_unknown_item(monkeypatch, fake_chat_connection):
     """An id with no live board entry and no conversation trace still 404s."""
     class FakeRouter:
         def record_merges(self, merges):
@@ -3277,7 +2988,7 @@ def test_board_chat_404_for_unknown_item(monkeypatch):
 def test_known_item_reconstructs_from_topic_and_rejects_unseen(tmp_path):
     topics = cmod.TopicStore(tmp_path / "topics.json")
     cr = cmod.ChatRouter(
-        agent=None, session_map=cmod.SessionMap(tmp_path / "s.json"),
+        session_map=cmod.SessionMap(tmp_path / "s.json"),
         vault="/v", handled_path=tmp_path / "handled.json", topic_store=topics)
     topics.begin("item-1", {"title": "Holdout outcome",
                             "project_ref": "projects/platform-roadmap"}, "ses_1")
@@ -3292,7 +3003,7 @@ def test_mark_handled_preserves_conversation_for_continuation(tmp_path):
     topics = cmod.TopicStore(tmp_path / "topics.json")
     sessions = cmod.SessionMap(tmp_path / "s.json")
     cr = cmod.ChatRouter(
-        agent=None, session_map=sessions, vault="/v",
+        session_map=sessions, vault="/v",
         handled_path=tmp_path / "handled.json", topic_store=topics)
     sessions.set("item-1", "ses_1")
     topics.begin("item-1", {"title": "Holdout outcome"}, "ses_1")
@@ -3302,7 +3013,7 @@ def test_mark_handled_preserves_conversation_for_continuation(tmp_path):
     assert cr.known_item("item-1")["id"] == "item-1"
 
 
-def test_board_returns_visible_history_for_open_chats_and_current_items(monkeypatch, tmp_path):
+def test_board_returns_visible_history_for_open_chats_and_current_items(monkeypatch, tmp_path, fake_chat_connection):
     topics = tmp_path / "topics.json"
     boundary = {"end": 1, "at": "2026-11-19T12:00:00Z"}
     topics.write_text(json.dumps({"item-1": {"boundaries": [boundary], "summary": "private"},
@@ -3458,7 +3169,7 @@ def test_closed_snapshot_keeps_context_fields_and_drops_junk():
 
 def test_mark_handled_stores_snapshot_and_unhandle_returns_it(tmp_path):
     p = tmp_path / "handled.json"
-    cr = cmod.ChatRouter(agent=None, session_map=cmod.SessionMap(tmp_path / "s.json"),
+    cr = cmod.ChatRouter(session_map=cmod.SessionMap(tmp_path / "s.json"),
                          vault="/v", handled_path=p)
     cr.mark_handled("item-1", "Closed by Sam", {"title": "Holdout outcome", "why": "deadline"})
     record = cr.handled()["item-1"]
@@ -3564,16 +3275,8 @@ def test_assistant_records_coarse_usage_without_item_content():
 
 
 
-def test_chat_failure_explains_silent_signal_kill():
-    killed = cmod.failure_reason("Claude Code", -9, "")
-    assert "stopped by macOS (signal 9)" in killed
-    assert "rephrasing" in killed
-    assert cmod.failure_reason("Claude Code", 1, "") == "Claude Code could not finish this reply."
-    assert cmod.failure_reason("Claude Code", -9, "partial") == "Claude Code could not finish this reply."
-
-
 def test_pending_approvals_are_reoffered_by_item(tmp_path):
-    router = cmod.ChatRouter(object(), cmod.SessionMap(tmp_path / "sessions.json"), "/vault")
+    router = cmod.ChatRouter(cmod.SessionMap(tmp_path / "sessions.json"), "/vault")
     router._paused["run-room"] = {
         "item_id": "chat:0123456789ab",
         "action": {"kind": "action", "verb": "Book room", "summary": "Add the Jedi room"},
@@ -3693,13 +3396,7 @@ def test_board_health_names_an_expired_github_signin_from_real_run_summaries():
     assert "h.github_signin_expired" in html
 
 
-def test_fresh_install_defaults_chats_to_claude(tmp_path, monkeypatch):
-    monkeypatch.delenv("AI_BACKEND", raising=False)
-    monkeypatch.setattr(appmod.ai_backend.cursor_agent, "CURSOR_ENV_FILE", tmp_path / ".env")
-    assert appmod.ai_backend.current(tmp_path / "missing.json") == "claude"
-
-
-def test_chat_retries_the_engine_and_names_what_is_missing(monkeypatch):
+def test_chat_retries_starting_and_names_what_is_missing(monkeypatch):
     starts = []
 
     async def failing_start():
@@ -3707,27 +3404,14 @@ def test_chat_retries_the_engine_and_names_what_is_missing(monkeypatch):
 
     monkeypatch.setattr(appmod, "chat_router", None)
     monkeypatch.setattr(appmod, "_start_chat_router", failing_start)
-    monkeypatch.setattr(appmod.ai_backend, "current", lambda path=None: "claude")
+    monkeypatch.setattr(appmod.ai_connections, "load", lambda: {"default": "", "connections": []})
     response = asyncio.run(appmod.api_board_chat({"item_id": "chat:0123456789ab", "message": "hi"}))
     assert response.status_code == 503 and starts == [1]
-    assert "Claude Code CLI unavailable" in json.loads(response.body)["error"]
-
-
-def test_cursor_unavailable_says_the_key_belongs_in_the_workspace_env(tmp_path, monkeypatch):
-    monkeypatch.setattr(appmod.ai_backend.cursor_agent, "CURSOR_AGENT", "/bin/sh")
-    monkeypatch.setattr(appmod.ai_backend.cursor_agent, "CURSOR_ENV_FILE", tmp_path / ".env")
-    message = appmod.ai_backend.unavailable_message("cursor")
-    assert "CURSOR_API_KEY" in message and str(tmp_path / ".env") in message
-    monkeypatch.setattr(appmod.ai_backend.cursor_agent, "CURSOR_AGENT", "/no/such/agent")
-    assert "install it" in appmod.ai_backend.unavailable_message("cursor")
+    assert "Choose an AI connection in Settings" in json.loads(response.body)["error"]
 
 
 def test_chats_run_at_the_workspace_root_not_the_state_folder(monkeypatch, tmp_path):
-    async def ready():
-        return None
-
     monkeypatch.setattr(appmod, "chat_router", None)
-    monkeypatch.setattr(appmod.agent, "start", ready)
     monkeypatch.setattr(appmod.paths, "WORKSPACE", tmp_path)
     asyncio.run(appmod._start_chat_router())
     assert appmod.chat_router._vault == str(tmp_path)

@@ -249,11 +249,10 @@ def test_workspace_manager_is_never_run(workspace, monkeypatch):
     subprocess.run.assert_not_called()
 
 
-def test_doctor_worker_needs_missing_runtime(workspace, capsys):
-    (workspace / ".roosta/tasks.yaml").write_text("tasks: [{id: writer, skill: setup, harness: claude}]")
+def test_doctor_worker_without_an_ai_connection_fails(workspace, capsys):
+    (workspace / ".roosta/tasks.yaml").write_text("tasks: [{id: writer, skill: setup}]")
     assert cli.main(["doctor", "--offline"]) == 1
-    text = capsys.readouterr().out
-    assert "FAIL  claude" in text and "SKIP  pi" in text
+    assert "Add an AI connection in Settings" in capsys.readouterr().out
 
 
 @pytest.mark.parametrize("response", [
@@ -321,3 +320,9 @@ def test_doctor_rejects_nonfinite_yaml_timeouts(workspace, field, value, capsys)
     (workspace / ".roosta/tasks.yaml").write_text(f"tasks: [{{id: writer, skill: setup, {field}: {value}}}]")
     assert cli.main(["doctor", "--offline"]) == 1
     assert f"Correct {field}" in capsys.readouterr().out
+
+
+def test_doctor_warns_that_retired_push_flags_grant_nothing(workspace, capsys):
+    (workspace / ".roosta/tasks.yaml").write_text("tasks: [{id: writer, skill: setup, allow_git_push: true}]")
+    cli.main(["doctor", "--offline"])
+    assert "allow_git_push and push_on_schedule are ignored" in capsys.readouterr().out

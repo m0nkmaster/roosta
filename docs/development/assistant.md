@@ -97,16 +97,17 @@ starting `assistant/` are under the workspace's `.roosta/state/`. Also see
 
 ## First-run AI prerequisite
 
-`setup_item()` first checks whether workspace setup is pending (an empty profile or an existing
-setup conversation). It offers the deterministic `roosta-ai-setup` card until the default named
-account is connected and has installed software and a model when its provider requires one. A detected system Claude Code account
+`setup_item()` offers the deterministic `roosta-ai-setup` card whenever no AI connection can run,
+including in an established workspace, because every chat and worker needs one; otherwise it
+checks whether workspace setup is pending (an empty profile or an existing setup conversation).
+The AI card stays until the default named account is connected and has installed software and a model when its provider requires one. A detected system Claude Code account
 explains login reuse; otherwise the card asks the user to connect AI. Its fixed Settings link needs
 no model, and the page hides its composer and Close/Not now controls. The disclosed connection check
 is optional. `/api/ai/connections.workspace_setup_ready` lets Settings show Continue workspace setup, a page-level notice above Your AI, only when the prerequisite
 is satisfied, `roosta-setup` is not yet handled and `workspace_setup_missing` lists a concrete gap (name in PROFILE.md, an item under `## My priorities`, or no tasks; see `setup_gaps()`), which the notice names; the board then replaces the AI card with `roosta-setup`. Only this prerequisite pane
 auto-advances when its source disappears. Cached/model items cannot replace either reserved setup id.
 New first-run chats and stale setup requests return a Settings destination before creating a session
-or invoking a harness. Existing conversations and established workspaces keep their legacy bindings.
+or invoking a harness. Existing conversations keep their history.
 
 ## Conversation lifecycle
 
@@ -114,9 +115,9 @@ or invoking a harness. Existing conversations and established workspaces keep th
   server-side and run automatically when the current reply finishes. The UI shows a dashed
   "Queued…" bubble immediately; background turns rely on `/api/board` polling for the current reply’s progress.
 
-- **Chat** (`chat.py`, `ChatRouter` + the `actor` skill): under Cursor each turn runs
-  `agent --print --output-format stream-json --stream-partial-output --resume <chat-id>`; under
-  Claude, the equivalent `claude --print` stream with `--resume`.
+- **Chat** (`chat.py`, `ChatRouter` + the `actor` skill): each turn runs on the chat's AI
+  connection through `ai_backend.prepare` and `stream`, resuming that connection's session
+  (Claude `--resume`, Pi `--session-id`, Cursor `--resume <chat-id>`).
   `start_turn` owns the run in a background task and puts events on a queue consumed by SSE, so
   changing page or losing the browser stream cannot cancel the model process. `GET /api/board`
   exposes active item ids and `chat_progress`, keyed by item id with the current `run_id` and
@@ -154,9 +155,7 @@ or invoking a harness. Existing conversations and established workspaces keep th
   "Investigating..." or "Updating the project README", including across streamed chunks. On
   Claude, `ToolRoundHold` drops any message text under 160 characters that is followed by a tool
   call, so progress lines go whatever their wording.
-  A live turn retries once for known Cursor DNS, ping or explicit no-progress transport failures,
-  but only before any model output. Never retry after model progress because local actions may
-  already have occurred.
+  A failed turn is never retried automatically, because local actions may already have occurred.
 
 - **Every question is its own chat.** The Chats tab's *Ask anything…* box (or `?item=new`, which
   Workspace links use) mints `chat:<12 hex>` in the page; the server learns of it with the first

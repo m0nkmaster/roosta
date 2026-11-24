@@ -186,12 +186,15 @@ def task_checks(root, add, connectors):
         problem = task_field_error(row)
         if problem:
             add(label, "FAIL", f"Correct {problem} in this worker's tasks.yaml entry.")
+        elif row.get("allow_git_push") or row.get("push_on_schedule"):
+            add(label, "WARN", "allow_git_push and push_on_schedule are ignored; set unrestricted: true "
+                "to give this worker standing approval.")
     add("Worker definitions", "PASS", f"Read {len(rows)} worker definitions")
     return rows
 
 
 def task_field_error(row):
-    for key in ("writer", "sensor", "unrestricted", "allow_git_push", "push_on_schedule", "weekdays_only"):
+    for key in ("writer", "sensor", "unrestricted", "weekdays_only"):
         if type(row.get(key, False)) is not bool:
             return f"the boolean {key} flag"
     for key in ("idle_timeout", "max_timeout"):
@@ -199,8 +202,6 @@ def task_field_error(row):
             return key
     if row.get("script"):
         return "the obsolete script field (choose a skill)"
-    if row.get("harness", "") not in ("", "claude", "cursor", "opencode-ollama"):
-        return "the harness"
     if not isinstance(row.get("connection", ""), str):
         return "the connection id"
     interval = row.get("interval", 1800)
@@ -236,9 +237,9 @@ def ai_checks(root, add, tasks):
     except FileNotFoundError:
         data = {"connections": []}
     rows = entries(data, "connections")
-    providers = {"anthropic": "claude", "openai": "pi", "openrouter": "pi", "ollama": "pi"}
+    providers = {"anthropic": "claude", "openai": "pi", "openrouter": "pi", "ollama": "pi", "cursor": "agent"}
     auth_types = {"anthropic": ("cli", "system", "api_key"), "openai": ("cli", "api_key"),
-                  "openrouter": ("api_key",), "ollama": ("local",)}
+                  "openrouter": ("api_key",), "ollama": ("local",), "cursor": ("api_key",)}
     connected = {}
     required = set()
     worker_tools = set()
@@ -261,7 +262,6 @@ def ai_checks(root, add, tasks):
     if not isinstance(default, str):
         raise ValueError
     tested = {r["id"] for r in rows if r.get("tested") is True}
-    harness_tools = {"claude": ("claude",), "cursor": ("agent",), "opencode-ollama": ("opencode", "ollama")}
     for i, task in enumerate(tasks, 1):
         connection = task.get("connection")
         if not connection or connection == "default":
@@ -271,8 +271,8 @@ def ai_checks(root, add, tasks):
                 worker_tools.update(connected[connection])
             else:
                 add(f"Worker {i} account", "FAIL", "Select a connected AI account in worker settings.")
-        elif isinstance(task.get("harness"), str):
-            worker_tools.update(harness_tools.get(task["harness"], ()))
+        else:
+            add(f"Worker {i} account", "FAIL", "Add an AI connection in Settings and make it the default.")
     add("AI accounts", "WARN" if len(rows) > len(connected) else "PASS" if rows else "SKIP",
         f"{len(connected)} connected, {len(rows)-len(connected)} disconnected in metadata. "
         "Use AI Settings to test authentication.")
@@ -282,7 +282,7 @@ def ai_checks(root, add, tasks):
         add("Default AI account", "WARN", "Test and select a connected default in AI Settings.")
     else:
         add("Default AI account", "SKIP", "No named accounts configured")
-    for tool in ("claude", "pi", "ollama", "opencode", "agent"):
+    for tool in ("claude", "pi", "ollama", "agent"):
         cache = root / ".roosta/state/cache/runtimes"
         found = shutil.which(tool)
         if not found and tool in ("claude", "pi") and cache.resolve() == cache:

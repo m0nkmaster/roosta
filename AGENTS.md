@@ -16,12 +16,10 @@ never inside a user's workspace.
 - Every shipped dashboard change needs a dated `CHANGELOG.md` entry and version bump.
   Follow the rules at the top of that file; check for concurrent edits before writing.
 - By default, keep external writes behind the board's explicit draft/approval/sender flow. Scheduled
-  skills report findings as board items. The runner may apply scoped issue comments and the `in review` label under an explicit
-  per-worker repository grant (see Runner). A task with explicit
-  `allow_git_push` approval may run exactly `git push origin main` in its named repository;
-  timer pushes also require `push_on_schedule`. On manual and scheduled runs,
-  `unrestricted: true` takes precedence and puts nothing off limits. Every profile lets workers change
-  anything local except Roosta's own connection and package roots; the default also guards `.env` and key files.
+  skills report findings as board items. Workers have two profiles only: the default lets them change
+  anything local, and `unrestricted: true` puts nothing off limits. Both keep Roosta's own connection
+  and package roots protected; the default also guards `.env` and key files. Do not add per-task
+  permission flags.
 - Treat workspace paths and model output as untrusted. Preserve resolved-symlink validation,
   attachment limits, Markdown sanitisation and sender-action validation.
 - A worker is a skill on a schedule: UI says **worker** and always names the skill;
@@ -38,7 +36,7 @@ never inside a user's workspace.
 | Working on | Reference |
 | --- | --- |
 | Scheduling, task settings, connectors, activity, task YAML | [Runner](docs/development/runner.md) |
-| Claude/Cursor/Ollama commands, models, policies, sessions | [AI harnesses](docs/development/harnesses.md) |
+| AI connections: Claude, Pi, Cursor commands, models, policies, sessions | [AI harnesses](docs/development/harnesses.md) |
 | Board feeds, chats, markers, approvals, reminders | [Assistant](docs/development/assistant.md) |
 | Any page, shared components, themes, custom pages, Workspace, Pulse | [UI](docs/development/ui.md) |
 | Office simulation, sprites, casting, visual checks | [Office](docs/development/office.md) |
@@ -58,7 +56,7 @@ Paths below are relative to `src/roosta/` unless stated otherwise.
 | `cli.py`, `skeleton/` | Init/adopt, start, service install, workspace scaffolding |
 | `skills.py`, `skills/`, `operating-model.md` | Shipped skills and workspace sync |
 | `app.py` | FastAPI routes, lifespan and the shared runner, chat router and activity instances |
-| `scheduler.py` | `TaskRunner` loop, writer serialisation, prompts and one harness run per task |
+| `scheduler.py` | `TaskRunner` loop, writer serialisation, prompts and one AI connection run per task |
 | `task_config.py` | Task model, `tasks.yaml` loading and comment-preserving edits, skill lookup |
 | `chat.py` | `ChatRouter`, markers, approvals, conversation stores |
 | `board.py` | Board card normalisation, feed merging, reminders, setup card and board health |
@@ -67,9 +65,8 @@ Paths below are relative to `src/roosta/` unless stated otherwise.
 | `ai_settings.py` | Worker runtime checks and options, model lists and validation, Settings setup jobs |
 | `workspace_settings.py` | How Roosta is run, skill ownership and the workspace folder browser |
 | `pi_agent.py`, `pi_guard.mjs` | Pi RPC transport and permission hook |
-| `cursor_agent.py`, `cursor_sessions.py` | Cursor invocation, environment, transcript reading |
+| `cursor_agent.py`, `cursor_sessions.py` | Cursor invocation, shared permission policy, transcript reading |
 | `claude_code.py`, `claude_guard.py` | Claude invocation, stream parsing, permission settings/hook |
-| `opencode_ollama.py` | Local model invocation, environment, compatibility |
 | `connectors.py` | Generic sign-in probes and external-write denials |
 | `workspace.py` | Document catalogue, vault path validation and bounded attachments |
 | `document_editor.py` | Raw Markdown reads and revision-checked atomic saves |

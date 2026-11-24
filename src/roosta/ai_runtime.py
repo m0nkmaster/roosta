@@ -21,6 +21,7 @@ INSTALLING: set[str] = set()
 CLAUDE_MODELS: dict[str, tuple[float, dict]] = {}
 RUNTIMES = ("pi", "claude")
 RUNTIME_ROOT = paths.CACHE_DIR / "runtimes"
+OLLAMA = shutil.which("ollama") or "/usr/local/bin/ollama"
 CLAUDE_RELEASES = "https://downloads.claude.ai/claude-code-releases"
 
 
@@ -71,6 +72,9 @@ def _runtime_path_allowed(binary: Path) -> bool:
 
 
 def find(runtime: str) -> str:
+    if runtime == "cursor":  # user-installed from cursor.com/cli; Roosta never manages it
+        binary = shutil.which("agent") or str(Path.home() / ".local/bin/agent")
+        return binary if Path(binary).is_file() else ""
     if runtime not in RUNTIMES:
         raise ValueError("Unknown AI runtime")
     candidates = []
@@ -279,3 +283,9 @@ def model_efforts(provider: str, model: str) -> list[str]:
                 if isinstance(levels, list) and all(isinstance(level, str) and level in {"off", "minimal", "low", "medium", "high", "xhigh", "max"} for level in levels):
                     return levels if levels != ["off"] else []
     raise ValueError("Could not load supported effort levels")
+
+
+def parse_ollama_models(stdout: str) -> list[dict[str, str]]:
+    """Parse the first column of `ollama list` output."""
+    return [{"id": columns[0], "label": columns[0]} for line in stdout.splitlines()[1:]
+            if (columns := line.split()) and re.fullmatch(r"[A-Za-z0-9._:/-]{1,120}", columns[0])]

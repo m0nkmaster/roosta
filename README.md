@@ -53,7 +53,7 @@ On first launch, Roosta uses your configured workspace or creates `~/workspace`.
 2. **Tell Roosta about your work.** Choose **Continue workspace setup**, then open **Set up your workspace** on the board. Roosta helps you describe your priorities, projects and tools, sets up a starter schedule and creates your first board card.
 3. **Build your team.** Open Workers and choose **New worker** to describe a job. Each worker runs a named skill on a schedule. Visit the Office to find its desk and chat about the job.
 
-Bring your own AI accounts. Use an OpenAI or Anthropic subscription, or pay separately for API usage. OpenAI models run through the [Pi](https://pi.dev/) agent harness.
+Bring your own AI accounts. Use an OpenAI or Anthropic subscription, or pay separately for API usage. OpenAI, OpenRouter and local Ollama models run through the [Pi](https://pi.dev/) agent harness. A Cursor account runs through the [Cursor Agent CLI](https://cursor.com/cli) with a Cursor API key.
 
 ### Updating and diagnosing Python installations
 
@@ -191,7 +191,7 @@ into review. Confirming records your profile reviewer and today's date.
 
 ## Safety
 
-- By default, external writes (messages, tickets, pages, email) pause for **Send/Cancel** on the board. Only then does the `sender` skill run. A worker can have standing approval to comment on open `ready` issues and add `in review` in one repository. See [worker grants](docs/development/runner.md#standing-approval-for-issue-updates). A separately approved task may run exactly `git push origin main` in one named repository; scheduled pushes also require `push_on_schedule`.
+- By default, external writes (messages, tickets, pages, email) pause for **Send/Cancel** on the board. Only then does the `sender` skill run.
 - In **Workers**, expand a worker and open **Settings → Unrestricted** to grant standing approval for any action, local or external; nothing is off limits. Clear the checkbox to revoke approval. Choose **Save** to apply the change to future runs. A worker already executing or waiting for another writer keeps its current permissions.
 - Standard runs use permission guardrails that allow any local change but block secret access, external writes (git push, GitHub creates, curl/wget), write-shaped MCP tools and configured connector write commands. These are tool policies, not an OS sandbox; explicitly unrestricted tasks bypass them.
 - Tasks marked as writers run one at a time; other tasks may run concurrently.

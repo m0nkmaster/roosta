@@ -490,22 +490,24 @@ AI_SETUP_ITEM_ID = "roosta-ai-setup"
 
 
 def setup_item(router=None) -> dict | None:
-    """The first-run card: shown until PROFILE.md names the user, and kept once a setup
-    conversation has started, because setup writes the name in its first step. The card goes
-    when setup ends with DONE (or the user closes it), through the usual handled store."""
-    if profile.load().name:
-        history = getattr(router, "conversation_history", None)
-        if not (history and history(SETUP_ITEM_ID)):
-            return None
+    """The AI card while no AI connection can run; otherwise the first-run card, shown until
+    PROFILE.md names the user and kept once a setup conversation has started, because setup
+    writes the name in its first step. The card goes when setup ends with DONE (or the user
+    closes it), through the usual handled store."""
     ready = ai_backend.connection_available()
     needs_model = False
     if ready:
         try:
             selected = ai_connections.get()
-            needs_model = selected["provider"] != "anthropic" and not ai_connections.default_model(selected["provider"])
+            needs_model = (selected["provider"] not in ("anthropic", "cursor")
+                           and not ai_connections.default_model(selected["provider"]))
         except ValueError:
             ready = False
-    if not ready or needs_model:
+    if ready and not needs_model and profile.load().name:
+        history = getattr(router, "conversation_history", None)
+        if not (history and history(SETUP_ITEM_ID)):
+            return None
+    if not ready or needs_model:  # workers and chats need a working AI connection, even after setup
         try:
             existing = any(c["auth"] == "system" and c["connected"]
                            for c in ai_connections.load()["connections"])

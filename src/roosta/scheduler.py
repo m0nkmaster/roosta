@@ -1,4 +1,4 @@
-"""Scheduler: the task runner loop, writer serialisation, and one unattended harness run per task."""
+"""Scheduler: the task runner loop, writer serialisation, and one unattended AI run per task."""
 
 from __future__ import annotations
 
@@ -8,7 +8,6 @@ import logging
 import re
 import shlex
 import shutil
-import subprocess
 import time
 from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager, nullcontext
@@ -16,51 +15,22 @@ from dataclasses import asdict, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from roosta import ai_backend, ai_connections, github_issues, paths, profile, skills
+from roosta import ai_backend, ai_connections, paths, profile, skills
 from roosta import connectors as connectors_mod
 from roosta.activity_log import ActivityLog
 from roosta.ai_settings import check_task_runtime, runtime_unavailable_message
 from roosta.board import carry_forward_board_items
-from roosta.claude_code import (
-    CLAUDE_SIGNIN_MESSAGE,
-    claude_args,
-    claude_env,
-    claude_result_text,
-    claude_stream_has_progress,
-    is_claude_auth_failure,
-    is_transient_claude_failure,
-)
-from roosta.cursor_agent import (
-    CURSOR_AGENT,
-    cursor_args,
-    cursor_env,
-    cursor_result_text,
-    cursor_stream_has_progress,
-    is_transient_agent_failure,
-)
-from roosta.opencode_ollama import (
-    is_unexecuted_tool_call,
-    opencode_ollama_args,
-    opencode_ollama_env,
-    opencode_result_text,
-)
 from roosta.task_config import (
-    CLAUDE_HARNESS,
-    CURSOR_HARNESS,
-    OPENCODE_OLLAMA_HARNESS,
     TASK_SETTING_FLAGS,
     TaskConfig,
     TaskState,
     connection_task_model,
     load_tasks,
     remove_task,
-    runtime_model_key,
     skill_description,
     task_engine,
     task_settings_changes,
     update_task_fields,
-    update_task_runtime,
-    valid_runtime,
 )
 
 log = logging.getLogger(__name__)
@@ -71,7 +41,6 @@ CACHE_DIR = paths.CACHE_DIR
 # reaped. TASK_MAX_TIMEOUT is an absolute backstop against a pathological loop.
 TASK_IDLE_TIMEOUT = 300    # seconds of no stdout before a run is presumed hung
 TASK_MAX_TIMEOUT = 3600    # absolute ceiling regardless of activity
-OPENCODE_OLLAMA_IDLE_TIMEOUT = 1800  # local inference may be silent for up to 30 minutes
 
 
 PROMPT_TEMPLATE = (
@@ -94,38 +63,6 @@ UNRESTRICTED_PROMPT_TEMPLATE = (
     "Keep credentials and secrets out of messages, files and output. "
     "Return blockers as Assistant board items. "
     "Wrap your final output in <task-output> tags as JSON with keys: summary, status, details."
-)
-GIT_PUSH_PROMPT_COMMON = (
-    "Execute the '{skill}' skill from its resolved instructions below. "
-    "Do not ask questions - make autonomous decisions. "
-    "Never push another repository or create any other external content or state, "
-    "including chat messages, tickets, wiki pages, email, GitHub API changes, deployments or "
-    "jobs. "
-    "When complete, wrap your final output in <task-output> tags as JSON "
-    "with keys: summary, status, details."
-)
-GIT_PUSH_SCHEDULED_PROMPT_TEMPLATE = (
-    "You are running as an unattended scheduled background task. "
-    + GIT_PUSH_PROMPT_COMMON
-    + " This pass is timer-driven only: follow the skill's scheduled-run rules. "
-    "Do not commit or push even when data is stale; return the "
-    "Assistant board item instead. "
-)
-GIT_PUSH_SCHEDULED_PUSH_PROMPT_TEMPLATE = (
-    "You are running as an unattended scheduled background task. "
-    + GIT_PUSH_PROMPT_COMMON
-    + " Follow the skill's scheduled-run rules. Where they call for it, commit on main "
-    "and run exactly 'git push origin main' for the single repository named by the skill. "
-    "Return blockers as Assistant board items instead. "
-)
-GIT_PUSH_MANUAL_PROMPT_TEMPLATE = (
-    "{user} triggered Run now on the skill runner. That is explicit approval to run the "
-    "skill in full, commit on main, and run exactly "
-    "'git push origin main' for the single repository named by the skill. "
-    + GIT_PUSH_PROMPT_COMMON
-    + " Skip the skill's scheduled-run section and perform the full run when "
-    "preconditions pass. An automatic deployment caused by the approved push is expected. "
-    "Return blockers as Assistant board items instead. "
 )
 
 
@@ -198,30 +135,15 @@ def missed_weekly_slot(days: list[str], run_at: str, last_run: str, now_local: d
 
 
 def task_idle_timeout(task: TaskConfig, override: float | None = None) -> float:
-    """Resolve the silence timeout, allowing longer local-model inference."""
+    """Resolve the silence timeout: an explicit override, the task's own, else the default."""
     if override is not None:
         return override
-    default = (
-        OPENCODE_OLLAMA_IDLE_TIMEOUT
-        if task.harness == OPENCODE_OLLAMA_HARNESS
-        else TASK_IDLE_TIMEOUT
-    )
-    return task.idle_timeout or default
+    return task.idle_timeout or TASK_IDLE_TIMEOUT
 
 
 def task_prompt(task: TaskConfig, *, run_source: str = "scheduled") -> str:
     """Build the harness prompt, distinguishing manual Run now from the timer."""
-    template = PROMPT_TEMPLATE
-    if task.unrestricted:
-        template = UNRESTRICTED_PROMPT_TEMPLATE
-    elif task.allow_git_push:
-        template = (
-            GIT_PUSH_MANUAL_PROMPT_TEMPLATE
-            if run_source == "manual"
-            else GIT_PUSH_SCHEDULED_PUSH_PROMPT_TEMPLATE
-            if task.push_on_schedule
-            else GIT_PUSH_SCHEDULED_PROMPT_TEMPLATE
-        )
+    template = UNRESTRICTED_PROMPT_TEMPLATE if task.unrestricted else PROMPT_TEMPLATE
     return (template.format(skill=task.skill, user=profile.load().user) + "\n"
             + skills.instructions(task.skill, task.dir, paths.WORKSPACE))
 
@@ -246,198 +168,23 @@ async def run_task(
     maxt = max_timeout if max_timeout is not None else (task.max_timeout or TASK_MAX_TIMEOUT)
     chat_id = session_id or ""
     prompt = task_prompt(task, run_source=run_source)
-    claude_stdin = None
-    if task.connection or task.harness == "connection":
-        try:
-            run = ai_backend.prepare(task.connection, task.dir, session_id=chat_id,
-                model=connection_task_model(task, ai_connections.get(task.connection)),
-                profile="unrestricted" if task.unrestricted else "git-push" if task.allow_git_push else "safe")
-            repo = github_issues.approved_repo(run.connection["id"], task.id, task.skill)
-            if repo:
-                prompt += (f" For one open ready issue in {repo}, the runner has standing approval "
-                           "to post your clarification or completion comment and, on completion, add "
-                           "the in review label. Leave the GitHub write to the runner. Request it in "
-                           'details.issue_update as {"issue": positive integer, "comment": text, '
-                           '"complete": boolean} in a successful result. Omit it when no update is needed.')
-            chat_id = run.session_id
-            stdout = "".join([line async for line in ai_backend.stream(run, prompt, idle=idle, maximum=maxt)])
-        except (ValueError, OSError) as exc:
-            return "error", {}, str(exc), chat_id
-        text = run.text(stdout)
-        output = parse_task_output(text)
-        status = TASK_STATUS_ALIASES.get(str(output.get("status", "")).strip().lower(), output.get("status"))
-        if "<task-output>" not in text or status not in ("success", "error"):
-            return "error", output, "Harness did not return a valid <task-output> result", chat_id
-        details = output.get("details")
-        if status == "success" and isinstance(details, dict) and "issue_update" in details:
-            try:
-                if not repo or github_issues.approved_repo(run.connection["id"], task.id, task.skill) != repo:
-                    raise ValueError("No current standing approval for this worker's GitHub issue update")
-                receipt = await asyncio.to_thread(github_issues.apply_update, repo, details["issue_update"])
-            except (OSError, ValueError, subprocess.SubprocessError) as exc:
-                error = f"GitHub issue update incomplete: {exc}"
-                output.update(status="error", summary=f"{output.get('summary', '')} {error}".strip())
-                return "error", output, error, chat_id
-            output["summary"] = f"{output.get('summary', '')} {receipt}".strip()
-        return status, output, "" if status == "success" else str(output.get("summary", ""))[:500], chat_id
-    if task.harness == OPENCODE_OLLAMA_HARNESS:
-        if task.allow_git_push:
-            return (
-                "error",
-                {},
-                "OpenCode using Ollama does not support the privileged git-push profile",
-                "",
-            )
-        cmd = opencode_ollama_args(prompt, workspace=task.dir, model=task.model)
-        child_env = opencode_ollama_env(workspace=task.dir, skill=task.skill)
-        result_text = opencode_result_text
-        chat_id = ""
-        has_progress, transient = cursor_stream_has_progress, is_transient_agent_failure
-    elif task.harness == CLAUDE_HARNESS:
-        # Empty claude_model means CLAUDE_MODEL; Cursor model names never reach Claude.
-        chat_id = chat_id or await ai_backend.create_session(task.dir, ai_backend.CLAUDE)
-        cmd = claude_args(
-            session_id=chat_id,
-            model=task.claude_model or None,
-            profile="unrestricted" if task.unrestricted
-            else "git-push" if task.allow_git_push else "safe",
-        )
-        claude_stdin = prompt.encode()
-        child_env = claude_env()
-        # Print mode exits when the turn ends, so a backgrounded command's completion
-        # notification never arrives and the run ends without <task-output>.
-        child_env["CLAUDE_CODE_DISABLE_BACKGROUND_TASKS"] = "1"
-        # Allow long foreground commands while reserving time for the task report.
-        child_env["BASH_MAX_TIMEOUT_MS"] = str(int(max(600, maxt - 120) * 1000))
-        result_text = claude_result_text
-        has_progress, transient = claude_stream_has_progress, is_transient_claude_failure
-    elif task.harness == CURSOR_HARNESS:
-        if not chat_id:
-            try:
-                chat_id = await ai_backend.create_session(task.dir, ai_backend.CURSOR)
-            except Exception as exc:
-                log.warning("Task %s: could not create Cursor chat (%s); running without resume",
-                            task.id, exc)
-        cmd = cursor_args(
-            prompt,
-            workspace=task.dir,
-            session_id=chat_id or None,
-            model=task.model,
-            force=True,
-            approve_mcps=True,
-            binary=CURSOR_AGENT,
-        )
-        child_env = (cursor_env(safe_config=False) if task.unrestricted
-                     else cursor_env(allow_git_push=task.allow_git_push))
-        result_text = cursor_result_text
-        has_progress, transient = cursor_stream_has_progress, is_transient_agent_failure
-    else:
-        return "error", {}, runtime_unavailable_message(task), ""
-
-    attempts = 2 if task.harness != OPENCODE_OLLAMA_HARNESS else 1
-    for attempt in range(attempts):
-        proc = None
-        stderr_task = None
-        stderr_chunks: list[bytes] = []
-        try:
-            # SECURITY-REVIEW: subprocess uses a fixed local binary and structured
-            # arguments. The configured workspace is not interpreted by a shell, stdin
-            # is closed (Claude reads its prompt from it first), and credentials remain
-            # only in the child environment.
-            proc = await asyncio.create_subprocess_exec(
-                *cmd,
-                stdin=asyncio.subprocess.PIPE if claude_stdin else asyncio.subprocess.DEVNULL,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                cwd=task.dir,
-                env=child_env,
-                start_new_session=True,
-            )
-            if claude_stdin:
-                proc.stdin.write(claude_stdin)
-                await proc.stdin.drain()
-                proc.stdin.close()
-
-            # Drain stderr concurrently so a full stderr pipe can never block the child
-            # (and be misread as an idle stdout / "hang").
-            async def _drain_stderr() -> None:
-                while True:
-                    b = await proc.stderr.read(65536)
-                    if not b:
-                        return
-                    stderr_chunks.append(b)
-
-            stderr_task = asyncio.create_task(_drain_stderr())
-
-            stdout_chunks: list[bytes] = []
-            deadline = time.monotonic() + maxt
-            last_output = time.monotonic()
-            while True:
-                remaining = deadline - time.monotonic()
-                if remaining <= 0:
-                    await ai_backend.kill(proc)
-                    return "error", {}, f"Task exceeded max runtime of {maxt:g}s", chat_id
-                try:
-                    chunk = await asyncio.wait_for(
-                        proc.stdout.read(65536), timeout=min(idle, remaining)
-                    )
-                except asyncio.TimeoutError:
-                    # On macOS the wait timer includes sleep. Measure awake silence
-                    # with the monotonic clock before declaring the child hung.
-                    if time.monotonic() - last_output < idle / 2:
-                        continue
-                    await ai_backend.kill(proc)
-                    if time.monotonic() >= deadline:
-                        return "error", {}, f"Task exceeded max runtime of {maxt:g}s", chat_id
-                    return "error", {}, f"Task produced no output for {idle:g}s - presumed hung", chat_id
-                if not chunk:
-                    break  # EOF - child is exiting
-                stdout_chunks.append(chunk)
-                last_output = time.monotonic()
-
-            await proc.wait()
-            stdout = b"".join(stdout_chunks)
-        except Exception as e:
-            await ai_backend.kill(proc)
-            return "error", {}, str(e), chat_id
-        finally:
-            if stderr_task is not None:
-                try:
-                    await asyncio.wait_for(asyncio.shield(stderr_task), timeout=5)
-                except (asyncio.TimeoutError, asyncio.CancelledError):
-                    stderr_task.cancel()
-
-        stderr = b"".join(stderr_chunks)
-        if proc.returncode == 0:
-            break
-        failure = (stderr + stdout).decode(errors="replace")
-        made_progress = has_progress(stdout.decode(errors="replace"))
-        if attempt == 0 and not made_progress and transient(failure):
-            await asyncio.sleep(2)
-            continue
-        if result_text is claude_result_text and is_claude_auth_failure(failure):
-            return "error", {}, CLAUDE_SIGNIN_MESSAGE, chat_id
-        # Raw stream JSON is unreadable on the board; prefer stderr, then the model's last words.
-        reason = (stderr.decode(errors="replace").strip()
-                  or result_text(stdout.decode(errors="replace")).strip())
-        return "error", {}, reason[:500] or f"Exited with code {proc.returncode}", chat_id
-
-    full_text = result_text(stdout.decode(errors="replace"))
-    if not full_text.strip():
-        return "error", {}, "Harness returned no assistant output", chat_id
-    output = parse_task_output(full_text)
-    if "<task-output>" not in full_text:
-        error = "Harness did not return the required <task-output> result"
-        if task.harness == OPENCODE_OLLAMA_HARNESS and is_unexecuted_tool_call(full_text):
-            error = "OpenCode returned an unexecuted tool call; choose a stronger Ollama model"
-        return "error", output, error, chat_id
-    # Models drift from the contract ("ok", "complete"); keep the run rather than discard it.
-    status = TASK_STATUS_ALIASES.get(str(output.get("status", "")).strip().lower(), output.get("status", "unknown"))
-    if status not in ("success", "error"):
-        return "error", output, "Harness returned an invalid <task-output> result", chat_id
-    # A reported failure explains itself; show that rather than a bare "last run failed".
-    error = "" if status == "success" else str(output.get("summary", "")).strip()[:500]
-    return status, output, error, chat_id
+    try:
+        run = ai_backend.prepare(task.connection, task.dir, session_id=chat_id,
+            model=connection_task_model(task, ai_connections.get(task.connection)),
+            profile="unrestricted" if task.unrestricted else "safe", subject="task")
+        chat_id = run.session_id
+        if run.backend == ai_backend.CLAUDE:  # let long foreground scripts run, leaving time for the report
+            run.env["BASH_MAX_TIMEOUT_MS"] = str(int(max(600, maxt - 120) * 1000))
+        stdout = "".join([line async for line in ai_backend.stream(run, prompt, idle=idle, maximum=maxt)])
+        chat_id = run.session_id  # Cursor names its chat only once the turn starts
+    except (ValueError, OSError) as exc:
+        return "error", {}, str(exc), chat_id
+    text = run.text(stdout)
+    output = parse_task_output(text)
+    status = TASK_STATUS_ALIASES.get(str(output.get("status", "")).strip().lower(), output.get("status"))
+    if "<task-output>" not in text or status not in ("success", "error"):
+        return "error", output, "Harness did not return a valid <task-output> result", chat_id
+    return status, output, "" if status == "success" else str(output.get("summary", ""))[:500], chat_id
 
 
 OFFLINE_FAILURES = (
@@ -612,22 +359,6 @@ class TaskRunner:
         ev.clear()
         return True
 
-    def set_runtime(self, task_id: str, harness: str, model: str) -> dict | None:
-        """Persist a task's harness/model choice for future runs."""
-        state = self._states.get(task_id)
-        if state is None or not valid_runtime(harness, model):
-            return None
-        if state.status == "running" or self.is_queued(task_id):
-            raise RuntimeError("task is running or queued")
-        model_key = runtime_model_key(harness)
-        try:
-            update_task_runtime(self._tasks_file, task_id, harness, model, model_key)
-        except (OSError, ValueError) as exc:
-            raise RuntimeError(str(exc)) from exc
-        state.harness = harness
-        setattr(state, model_key, model)
-        return self.get_state(task_id)
-
     def remove(self, task_id: str) -> bool:
         """Fire a worker: drop it from tasks.yaml and the board now; its poll loop exits
         on its next cycle. Raises RuntimeError while it is running or queued."""
@@ -652,7 +383,7 @@ class TaskRunner:
 
     def set_settings(self, task_id: str, body: dict) -> dict | None:
         """Persist the Skill runner settings form: name, nickname, description,
-        schedule and, when changed, harness and model. Raises ValueError for bad
+        schedule, connection and model. Raises ValueError for bad
         input and RuntimeError when the task file cannot take the edit."""
         state = self._states.get(task_id)
         if state is None:
@@ -679,33 +410,17 @@ class TaskRunner:
             if not current:
                 raise ValueError("Choose an AI connection before choosing its model")
             provider = ai_connections.get("" if current == "default" else current, connected=False)["provider"]
-            model_field = "claude_model" if provider == "anthropic" else "model"
             if connection_model.strip():
                 ai_connections.runtime(provider, connection_model.strip())
-                values[model_field] = connection_model.strip()
-            elif getattr(state, model_field, ""):
-                remove.add(model_field)
-        harness = str(body.get("harness", "") or "").strip()
-        model = str(body.get("model", "") or "").strip()
-        model_key = ""
-        if harness or model:
-            if not valid_runtime(harness, model):
-                raise ValueError("invalid harness or model")
-            model_key = runtime_model_key(harness)
-            if (harness, model) != (state.harness, getattr(state, model_key)):
-                if state.status == "running" or self.is_queued(task_id):
-                    raise RuntimeError("harness and model cannot change while the task is running or queued")
-                values.update({"harness": harness, model_key: model})
+                values["model"] = connection_model.strip()
+            elif state.model:
+                remove.add("model")
         if values or remove:
             try:
                 update_task_fields(self._tasks_file, task_id, values, remove)
             except (OSError, ValueError) as exc:
                 raise RuntimeError(str(exc)) from exc
-        if "connection" in values or "connection" in remove:
-            state.connection = values.get("connection", "")
-            if state.connection or ai_backend.default_connection():
-                state.harness = "connection"
-        for key in ("model", "claude_model"):
+        for key in ("connection", "model"):
             if key in values or key in remove:
                 setattr(state, key, values.get(key, ""))
         # Apply now; the poll loop re-reads tasks.yaml on its next cycle anyway.
@@ -725,9 +440,6 @@ class TaskRunner:
         for key in TASK_SETTING_FLAGS:
             if key in values or key in remove:
                 setattr(state, key, key in values)
-        if model_key and "harness" in values:
-            state.harness = harness
-            setattr(state, model_key, model)
         return self.get_state(task_id)
 
     def _spawn_new_tasks(self) -> None:
@@ -826,10 +538,8 @@ class TaskRunner:
                     name=task.name,
                     nickname=task.nickname,
                     custom_description=task.custom_description,
-                    harness=task.harness,
                     connection=task.connection,
                     model=task.model,
-                    claude_model=task.claude_model,
                     run_at=task.run_at,
                     weekdays_only=task.weekdays_only,
                     days_of_week=task.days_of_week,
@@ -859,10 +569,8 @@ class TaskRunner:
             name=task.name,
             nickname=task.nickname,
             custom_description=task.custom_description,
-            harness=task.harness,
             connection=task.connection,
             model=task.model,
-            claude_model=task.claude_model,
             run_at=task.run_at,
             weekdays_only=task.weekdays_only,
             days_of_week=task.days_of_week,
@@ -890,10 +598,8 @@ class TaskRunner:
                 return
             state = self._states[task_id]
             state.interval = task.interval
-            state.harness = task.harness
             state.connection = task.connection
             state.model = task.model
-            state.claude_model = task.claude_model
             state.run_at = task.run_at
             state.weekdays_only = task.weekdays_only
             state.days_of_week = task.days_of_week
@@ -1022,9 +728,12 @@ class TaskRunner:
                     self._cancelled.discard(task_id)
                     self._triggers[task_id].clear()
                 else:
-                    if task.harness == "connection" and not task.connection:
+                    if not task.connection:
                         # Bind once after the writer queue, before activity and execution.
-                        task = replace(task, connection=ai_connections.get(connected=False)["id"])
+                        try:
+                            task = replace(task, connection=ai_connections.get(connected=False)["id"])
+                        except ValueError:
+                            pass  # run_task reports the missing connection
                     source = "manual" if self._triggers[task_id].is_set() else "scheduled"
                     self._triggers[task_id].clear()
                     state.status = "running"

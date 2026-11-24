@@ -39,10 +39,6 @@ from roosta.claude_code import (
     read_claude_transcript,
     session_exists as claude_session_exists,
 )
-from roosta.cursor_agent import (
-    GIT_PUSH_CONFIG_DIR,
-    SAFE_CONFIG_DIR,
-)
 from roosta.cursor_sessions import read_cursor_transcript, valid_session_id
 from roosta.board import (
     AI_SETUP_ITEM_ID,
@@ -80,12 +76,11 @@ from roosta.ai_settings import (available_runtime_options, model_efforts, provid
 from roosta.workspace_settings import captured, list_folders, workspace_managed_by, workspace_target
 from roosta.scheduler import TaskRunner, outcome_summary, parse_task_output
 from roosta.task_config import (
-    CLAUDE_HARNESS,
     load_tasks,
     load_tasks_map,
     skill_files,
+    strip_obsolete_runtime_fields,
     unscheduled_skills,
-    valid_runtime,
     workspace_skills,
 )
 from roosta.pulse import build_pulse, markdown_title, project_brief, review_project
@@ -115,7 +110,6 @@ REMINDERS_FILE = ASSISTANT_DIR / "reminders.json"
 product_usage = UsageStore(PRODUCT_USAGE_FILE)
 ARCHIVED_CHATS_FILE = ASSISTANT_DIR / "archived-chats.json"
 
-agent = ai_backend.AIAgent()
 chat_router: ChatRouter | None = None  # set in lifespan once the AI backend is available
 
 
@@ -150,7 +144,6 @@ async def _start_chat_router() -> None:
     try:
         # History and per-chat connections remain available even when the default is disconnected.
         chat_router = ChatRouter(
-            agent,
             SessionMap(SESSIONS_FILE),
             str(paths.WORKSPACE),  # chats run at the workspace root
             HANDLED_FILE,
@@ -186,7 +179,7 @@ def prune_cursor_session_stores(
     keep = referenced or {e.get("session_id", "") for e in activity._entries.values()}
     cutoff = time.time() - retention_days * 86400
     removed = 0
-    for config_dir in (SAFE_CONFIG_DIR, GIT_PUSH_CONFIG_DIR):
+    for config_dir in ai_connections.CONNECTIONS_DIR.glob("*/cursor"):
         chats = config_dir / "chats"
         if not chats.is_dir():
             continue
@@ -217,6 +210,9 @@ async def lifespan(app: FastAPI):
 async def running_app(app: FastAPI):
     for move in await asyncio.to_thread(skills.migrate, paths.CORE_SKILLS_DIR, paths.WORKSPACE):
         log.info("Skill migration: %s", move)
+    if paths.TASKS_FILE.is_file():
+        for task_id in await asyncio.to_thread(strip_obsolete_runtime_fields, paths.TASKS_FILE):
+            log.info("Task %s: removed obsolete harness settings from tasks.yaml", task_id)
     activity.compact()  # before runner.start(), so no spawn is appending
     prune_cursor_session_stores()    # reclaim unread Cursor CLI scratch, same timing
     try:
@@ -233,7 +229,7 @@ async def running_app(app: FastAPI):
     for task in jobs:
         task.cancel()
     await asyncio.gather(*jobs, return_exceptions=True)
-    await agent.stop()
+    await ai_backend.stop_all()
     await runner.stop()
 
 
@@ -262,23 +258,6 @@ app.add_middleware(NoCacheHtmlMiddleware)
 @app.get("/api/tasks")
 async def api_tasks():
     return JSONResponse(runner.get_states())
-
-
-@app.get("/api/ai-backend")
-async def api_ai_backend():
-    return JSONResponse(ai_backend.status())
-
-
-@app.post("/api/ai-backend")
-async def api_set_ai_backend(body: dict):
-    """Switch every dashboard AI turn (tasks, chats, sends) between engines."""
-    backend = str(body.get("backend", "")).strip() if isinstance(body, dict) else ""
-    if backend not in ai_backend.BACKENDS:
-        return JSONResponse({"error": "invalid backend"}, status_code=400)
-    ai_backend.set_backend(backend)
-    log.info("AI backend switched to %s", ai_backend.label(backend))
-    await _start_chat_router()
-    return JSONResponse(ai_backend.status())
 
 
 def local_ai_settings(request: Request) -> None:
@@ -313,7 +292,7 @@ AFFECTED_CHAT_LIMIT = 10
 def connection_affected(connection_id: str) -> dict:
     default = ai_backend.default_connection()
     workers = [t.id for t in load_tasks() if t.connection == connection_id or
-               (t.harness == "connection" and t.connection in ("", "default") and default == connection_id)]
+               (not t.connection and default == connection_id)]
     chats = [item for item, selected in chat_router._sessions._connections.items() if selected == connection_id] if chat_router else []
     pending = [run for run, pause in chat_router._paused.items() if pause.get("connection") == connection_id] if chat_router else []
     chat_count = len(chats)
@@ -458,7 +437,7 @@ async def api_settings_skills_sync():
 async def api_ai_connections(item_id: str = ""):
     try:
         await ai_connections.offer_system()
-        engines = {name: await asyncio.to_thread(ai_runtime.describe, name) for name in ai_runtime.RUNTIMES}
+        engines = {name: await asyncio.to_thread(ai_runtime.describe, name) for name in (*ai_runtime.RUNTIMES, "cursor")}
         runtimes = {name: {"version": engine["version"], "installed": engine["installed"]}
                     for name, engine in engines.items()}
         onboarding = await asyncio.to_thread(setup_item, chat_router)
@@ -466,8 +445,7 @@ async def api_ai_connections(item_id: str = ""):
         selected, selected_model = "", ""
         if item_id and chat_router:
             sessions = chat_router._sessions
-            selected = sessions._connections.get(item_id) or (
-                f"legacy:{ai_backend.current()}" if sessions.get(item_id) else ai_backend.default_connection())
+            selected = sessions.selected(item_id)
             selected_model = sessions.model(item_id)
         data = {**data, "connections": [{**c, "signed_in": ai_backend.signed_in(c)} for c in data["connections"]]}
         missing = setup_gaps() if (onboarding and onboarding["id"] == SETUP_ITEM_ID
@@ -476,7 +454,6 @@ async def api_ai_connections(item_id: str = ""):
             "engines": engines, "terminal_available": sys.platform == "darwin",
             "workspace_setup_ready": bool(missing), "workspace_setup_missing": missing,
             "jobs": ai_settings.jobs, "selected": selected, "selected_model": selected_model,
-            "legacy": ai_backend.current(),
             "affected": {c["id"]: connection_affected(c["id"]) for c in data["connections"]}})
     except ValueError as exc:
         return ai_settings_result({"error": str(exc)}, 400)
@@ -485,11 +462,7 @@ async def api_ai_connections(item_id: str = ""):
 @app.get("/api/ai/models", dependencies=[Depends(local_ai_settings)])
 async def api_ai_models(provider: str = "", connection: str = "", general: int = 0, refresh: int = 0):
     try:
-        if connection == "legacy:cursor":
-            return ai_settings_result({"default": "", "models": []})
-        if connection == "legacy:claude":
-            provider = "anthropic"
-        elif connection:
+        if connection:
             selected = ai_connections.get("" if connection == "default" else connection, connected=False)
             provider, connection = selected["provider"], selected["id"]
         if provider not in ai_connections.PROVIDERS:
@@ -574,24 +547,12 @@ async def api_ai_chat_model(body: dict):
     try:
         if model:
             selected = chat_router._sessions.connection(item_id)
-            if selected == "legacy:cursor":
-                raise ValueError("Choose a model after switching this chat to a connection")
             current = chat_router._sessions.model(item_id)
-            if selected == "legacy:claude":
-                await validate_model("anthropic", model, "legacy:claude", current)
-            else:
-                await validate_model(ai_connections.get(selected, connected=False)["provider"], model, selected, current)
+            await validate_model(ai_connections.get(selected, connected=False)["provider"], model, selected, current)
         chat_router._sessions.set_model(item_id, model)
         return ai_settings_result({"ok": True, "model": model})
     except ValueError as exc:
         return ai_settings_result({"error": str(exc)}, 400)
-
-
-async def validate_claude_task_model(task_id: str, harness: str, model: str) -> None:
-    """Cursor model names must not reach Claude: a new Claude pick has to be in Claude Code's own list."""
-    if harness == CLAUDE_HARNESS and model:
-        existing = runner.get_state(task_id) if runner else None
-        await validate_model("anthropic", model, "legacy:claude", (existing or {}).get("claude_model", ""))
 
 
 @app.post("/api/ai/operations", dependencies=[Depends(local_ai_settings)])
@@ -772,27 +733,6 @@ async def api_workspace_skill(skill: str):
     return skill_preview(skill, paths.WORKSPACE)
 
 
-@app.post("/api/tasks/{task_id}/runtime")
-async def api_task_runtime(task_id: str, body: dict):
-    """Persist the harness and model used by this task's future runs."""
-    if not isinstance(body, dict):
-        return JSONResponse({"error": "invalid request"}, status_code=400)
-    harness = str(body.get("harness", "")).strip()
-    model = str(body.get("model", "")).strip()
-    if not valid_runtime(harness, model):
-        return JSONResponse({"error": "invalid harness or model"}, status_code=400)
-    try:
-        await validate_claude_task_model(task_id, harness, model)
-        state = runner.set_runtime(task_id, harness, model)
-    except ValueError as exc:
-        return JSONResponse({"error": str(exc)}, status_code=400)
-    except RuntimeError as exc:
-        return JSONResponse({"error": str(exc)}, status_code=409)
-    if state is None:
-        return JSONResponse({"error": "not found"}, status_code=404)
-    return JSONResponse(state)
-
-
 @app.post("/api/tasks/{task_id}/settings")
 async def api_task_settings(task_id: str, body: dict, request: Request):
     """Persist changes from the worker settings form."""
@@ -801,14 +741,12 @@ async def api_task_settings(task_id: str, body: dict, request: Request):
     if "connection" in body or "unrestricted" in body:
         local_ai_settings(request)
     try:
-        await validate_claude_task_model(task_id, str(body.get("harness", "") or "").strip(),
-                                         str(body.get("model", "") or "").strip())
         if isinstance(body.get("connection_model"), str) and body["connection_model"].strip():
             existing = runner.get_state(task_id)
             chosen = body["connection"] if isinstance(body.get("connection"), str) else (existing or {}).get("connection", "")
             if existing and chosen:
                 connection = ai_connections.get("" if chosen == "default" else chosen, connected=False)
-                current = (existing.get("claude_model") if connection["provider"] == "anthropic" else existing.get("model")) or ""
+                current = existing.get("model") or ""
                 await validate_model(connection["provider"], body["connection_model"].strip(), connection["id"], current)
         state = runner.set_settings(task_id, body)
     except ValueError as exc:
@@ -906,18 +844,17 @@ async def api_activity_transcript(activity_id: str):
         return JSONResponse({"error": "no session"}, status_code=404)
     if entry.get("connection_id"):
         directory = ai_connections.directory(entry["connection_id"])
-        turns = (read_claude_transcript(session_id, directory / "claude/projects")
-                 if entry.get("backend") == ai_backend.CLAUDE else pi_agent.read_transcript(directory / "pi", session_id))
+        backend = entry.get("backend")
+        turns = (read_claude_transcript(session_id, directory / "claude/projects") if backend == ai_backend.CLAUDE
+                 else read_cursor_transcript(session_id) if backend == ai_backend.CURSOR
+                 else pi_agent.read_transcript(directory / "pi", session_id))
         resume = "Continue this conversation in Roosta using its original connection"
-    elif entry.get("backend") == ai_backend.CLAUDE or claude_session_exists(session_id):
+    elif entry.get("backend") == ai_backend.CLAUDE or claude_session_exists(session_id):  # runs from before connections
         turns = read_claude_transcript(session_id)
         resume = f"cd {shlex.quote(str(paths.WORKSPACE))} && claude --resume {session_id}"
     else:
         turns = read_cursor_transcript(session_id)
-        resume = (
-            f"CURSOR_CONFIG_DIR={CACHE_DIR / 'cursor-agent-config'} "
-            f"agent --resume {session_id}"
-        )
+        resume = f"agent --resume {session_id}"
     return JSONResponse({
         "activity_id": activity_id,
         "session_id": session_id,
@@ -1163,7 +1100,7 @@ async def api_board(threads: str = "", thread: Annotated[list[str] | None, Query
     return JSONResponse({
         "status": (state or {}).get("status", "idle"),
         "last_run": (state or {}).get("last_run", ""),
-        "agent_up": agent.alive,
+        "agent_up": ai_backend.connection_available(),
         "ai_backend": ai_backend.label(),
         "health": {**board_health(states), "restart_pending": restart_pending()},
         "chat_progress": chat_router.active_progress if chat_router else {},

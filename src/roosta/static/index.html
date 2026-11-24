@@ -472,7 +472,7 @@
     <script>
         const requestedTask = new URLSearchParams(location.search).get('task');
         let requestedTaskFocused = false;
-        let runtimeOptions = { backend: '', harnesses: [] };
+        let runtimeOptions = { connections: [], default_connection: '' };
         let latestTasks = [];
         let renderedSignature = '';
         const expanded = new Set();
@@ -716,7 +716,7 @@
                     <div class="settings-actions">
                         <button class="btn btn-sm btn-primary" type="submit">Save</button>
                         <button class="btn btn-sm btn-ghost-secondary" type="button" data-reset>Reset</button>
-                        <span class="runtime-status" aria-live="polite">${busy && t.harness ? 'AI connection unlocks when the run ends' : ''}</span>
+                        <span class="runtime-status" aria-live="polite">${busy ? 'AI connection unlocks when the run ends' : ''}</span>
                         <button class="btn btn-sm btn-ghost-danger ms-auto" type="button" data-fire="${esc(t.id)}" title="Remove this worker from the schedule; its skill is kept">Fire worker</button>
                     </div>
                 </form>
@@ -726,7 +726,7 @@
         function workerModel(t) {
             const id = t.connection || runtimeOptions.default_connection;
             const connection = (runtimeOptions.connections || []).find(c => c.id === id);
-            return connection ? (connection.provider === 'anthropic' ? t.claude_model : t.model) || '' : '';
+            return connection ? t.model || '' : '';
         }
 
         const modelListings = new WeakMap();

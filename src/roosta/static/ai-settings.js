@@ -61,8 +61,8 @@
   function engineRow(engine) {
     const d = state.engines?.[engine.id] || {}, job = state.jobs[engine.id];
     let status, action = '';
-    if (d.installed) { status = d.source === 'yours' ? `Using your ${engine.name} ${esc(d.version)}` : `Installed by Roosta ${esc(d.version)}`; action = `<button class="btn btn-sm btn-link" data-op="install" data-id="${engine.id}" ${job?.status === 'running' ? 'disabled' : ''}>Update to latest</button>`; }
-    else { status = 'Not installed'; action = `<button class="btn btn-sm" data-op="install" data-id="${engine.id}" ${job?.status === 'running' ? 'disabled' : ''}>Install</button>`; }
+    if (d.installed) { status = d.source === 'yours' ? `Using your ${engine.name} ${esc(d.version)}` : `Installed by Roosta ${esc(d.version)}`; action = engine.install ? '' : `<button class="btn btn-sm btn-link" data-op="install" data-id="${engine.id}" ${job?.status === 'running' ? 'disabled' : ''}>Update to latest</button>`; }
+    else { status = 'Not installed'; action = engine.install ? `<a class="btn btn-sm" href="${engine.install}" target="_blank" rel="noopener">Install from Cursor</a>` : `<button class="btn btn-sm" data-op="install" data-id="${engine.id}" ${job?.status === 'running' ? 'disabled' : ''}>Install</button>`; }
     return `<div class="list-group-item px-0 d-flex align-items-center justify-content-between gap-2">
       <div><strong>${engine.name}</strong> <span class="text-secondary">· for ${engine.for}</span>
         <div class="text-secondary">${status}${job ? ` · ${esc(job.status)}` : ''}</div>
@@ -73,7 +73,10 @@
       </div></div>`;
   }
   function software(c) {
-    return c.provider === 'anthropic' ? 'Claude Code' : 'Pi';
+    return {claude: 'Claude Code', cursor: 'Cursor Agent'}[engineOf(c)] || 'Pi';
+  }
+  function engineOf(c) {
+    return {anthropic: 'claude', cursor: 'cursor'}[c.provider] || 'pi';
   }
   function accountExplanation(c) {
     return c.auth === 'system'
@@ -117,7 +120,7 @@
     return c.signed_in ? 'Signed in · untested' : 'Untested';
   }
   function connectionRow(c) {
-    const engine = c.provider === 'anthropic' ? 'claude' : 'pi';
+    const engine = engineOf(c);
     const installed = state.engines?.[engine]?.installed;
     const job = state.jobs[engine]?.status === 'running' ? state.jobs[engine] : state.jobs[c.id];
     const busy = job?.status === 'running';
@@ -142,6 +145,7 @@
       ${job?.error || state.jobs[engine]?.error ? `<p class="text-danger mt-2 mb-0">${esc(job?.error || state.jobs[engine].error)}</p>` : ''}
       <div class="ai-account-actions">
         ${!c.connected ? action('Reconnect', `data-change="${esc(c.id)}"`, true) :
+          !installed && engine === 'cursor' ? '<a class="btn btn-sm btn-primary" href="https://cursor.com/cli" target="_blank" rel="noopener">Install Cursor Agent</a>' :
           !installed ? action(`Install ${software(c)}`, `data-op="install" data-id="${engine}"`, true) :
           c.auth === 'cli' && c.signed_in === false ? op('login', 'Sign in', true) :
           ''}
@@ -230,14 +234,15 @@
     const firstLoad = !state;
     state = next;
     if (!$('ai-provider').options.length) {
-      const names = {anthropic:'Claude', openai:'ChatGPT / OpenAI', openrouter:'OpenRouter', ollama:'Local models (Ollama)'};
-      $('ai-provider').innerHTML = ['anthropic', 'openai', 'openrouter', 'ollama'].filter(id => state.providers[id]).map(id => `<option value="${id}">${names[id]}</option>`).join('');
+      const names = {anthropic:'Claude', openai:'ChatGPT / OpenAI', openrouter:'OpenRouter', cursor:'Cursor', ollama:'Local models (Ollama)'};
+      $('ai-provider').innerHTML = ['anthropic', 'openai', 'openrouter', 'cursor', 'ollama'].filter(id => state.providers[id]).map(id => `<option value="${id}">${names[id]}</option>`).join('');
       providerChanged();
     }
     $('ai-current').innerHTML = currentAI();
     $('setup-notice').hidden = !state.workspace_setup_ready;
     $('setup-missing').textContent = 'Still missing: ' + (state.workspace_setup_missing || []).join(', ') + '.';
-    const engines = [{id:'claude', name:'Claude Code', for:'Anthropic models'}, {id:'pi', name:'Pi', for:'OpenAI, OpenRouter and local models'}];
+    const engines = [{id:'claude', name:'Claude Code', for:'Anthropic models'}, {id:'pi', name:'Pi', for:'OpenAI, OpenRouter and local models'},
+                     {id:'cursor', name:'Cursor Agent', for:'Cursor accounts', install:'https://cursor.com/cli'}];
     const openEngines = new Set([...document.querySelectorAll('[data-engine-details][open]')].map(el => el.dataset.engineDetails));
     $('ai-engines').innerHTML = engines.map(engineRow).join('');
     document.querySelectorAll('[data-engine-details]').forEach(el => { el.open = openEngines.has(el.dataset.engineDetails); });
