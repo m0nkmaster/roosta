@@ -38,21 +38,22 @@ function renderDraftPreview(preview, draft, render){
 
 function documentEditor(host, reader, render, reload){
   host.classList.add('document-editor');
-  host.innerHTML=`<button type="button" class="btn btn-sm" data-edit>Edit</button>
-    <span role="status"></span>
+  host.innerHTML=`<span role="status"></span>
     <section hidden aria-label="Edit Markdown">
       <div class="editor-path"></div>
       <div class="editor-tools">
-        <button type="button" class="btn btn-sm" data-source aria-pressed="true">Source</button>
-        <button type="button" class="btn btn-sm" data-preview-draft aria-pressed="false">Preview</button>
-        <button type="button" class="btn btn-sm btn-primary" data-save>Save</button>
-        <button type="button" class="btn btn-sm btn-ghost-secondary" data-cancel>Cancel</button>
-        <button type="button" class="btn btn-sm" data-copy>Copy draft</button>
+        <div class="btn-group" role="group" aria-label="Editor view">
+          <button type="button" class="btn btn-sm" data-source aria-pressed="true">Source</button>
+          <button type="button" class="btn btn-sm" data-preview-draft aria-pressed="false">Preview</button>
+        </div>
+        <button type="button" class="btn btn-sm btn-icon btn-primary" data-save aria-label="Save changes" title="Save changes"><svg class="icon" aria-hidden="true"><use href="/static/ui-icons.svg#save"/></svg></button>
+        <button type="button" class="btn btn-sm btn-icon btn-ghost-secondary" data-cancel aria-label="Cancel editing" title="Cancel editing"><svg class="icon" aria-hidden="true"><use href="/static/ui-icons.svg#close"/></svg></button>
+        <button type="button" class="btn btn-sm btn-icon btn-ghost-secondary" data-copy aria-label="Copy draft" title="Copy draft"><svg class="icon" aria-hidden="true"><use href="/static/ui-icons.svg#copy"/></svg></button>
       </div>
       <textarea class="form-control" aria-label="Markdown source" spellcheck="false"></textarea>
       <article class="prose" hidden></article>
     </section>`;
-  const q=s=>host.querySelector(s), edit=q('[data-edit]'), panel=q('section'), field=q('textarea');
+  const q=s=>host.querySelector(s), edit=document.querySelector('[data-edit]'), panel=q('section'), field=q('textarea');
   const status=q('[role=status]'), preview=q('article'), save=q('[data-save]');
   let path='', title='', generation=0, original='', draft='', revision='', saving=false;
   const active=()=>!panel.hidden;

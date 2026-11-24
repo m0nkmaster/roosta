@@ -124,7 +124,7 @@ See [Assistant contracts](assistant.md) and [Office rendering](office.md) for pa
   request-supplied path) in the OS file browser
 
 - **Manual document editing** uses `static/document-editor.js` in Workspace, the standalone viewer and
-  the Assistant document pane. The editor loads raw UTF-8 from local-only
+  the Assistant document pane. Each document header groups Edit and Copy. In edit mode, Copy draft replaces the reader copy action. Icon controls have accessible names and hover titles. The editor loads raw UTF-8 from local-only
   `GET /api/workspace/document-source?path=…`. Save sends the source as UTF-8 plain text to
   the same URL with PUT and a quoted revision in If-Match. The 2 MB limit applies in both
   directions. Only visible Markdown files on macOS or Linux filesystems with atomic exchange qualify. Paths containing

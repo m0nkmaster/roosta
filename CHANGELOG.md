@@ -10,6 +10,10 @@ Record each release newest first. Bump minor for features and visible behaviour,
 
 - Pi workers and Assistant chats can scan history with the bundled Workspace Learner helper and inspect individual installed source files while package writes remain blocked.
 
+## 0.19.2 - 2026-11-24
+
+- Document toolbars in Workspace, Assistant and the vault viewer group Edit and Copy together and use compact icons for saving, copying a draft and cancelling edits. Open full document stays in the current window.
+
 ## 0.19.1 - 2026-11-24
 
 - Workspace Learner now retains queued human messages from Claude Code, preserving their order without counting duplicate representations.

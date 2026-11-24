@@ -340,7 +340,7 @@ body.column-resizing { cursor: col-resize; user-select: none; }
 }
 
 .document-editor { min-width:0; overflow-wrap:anywhere }
-.document-editor:not(:has([data-edit][hidden])) { margin-bottom:.5rem }
+:is(.document-shell,.preview-card,.docpane):has(.document-editor section:not([hidden])) [data-copy-document] { display:none }
 .document-editor [role=status] { color:var(--tblr-secondary-color); font-size:.875rem }
 .document-editor [hidden] { display:none!important }
 .editor-tools { display:flex; flex-wrap:wrap; gap:.375rem; margin:.5rem 0 }
