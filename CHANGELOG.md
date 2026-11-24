@@ -2,6 +2,10 @@
 
 Record each release newest first. Bump minor for features and visible behaviour, patch for fixes and polish.
 
+## 0.19.3 - 2026-11-24
+
+- Pi workers and Assistant chats can scan history with the bundled Workspace Learner helper and inspect individual installed source files while package writes remain blocked.
+
 ## 0.19.1 - 2026-11-24
 
 - Workspace Learner now retains queued human messages from Claude Code, preserving their order without counting duplicate representations.

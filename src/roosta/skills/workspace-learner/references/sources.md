@@ -7,12 +7,12 @@ Use the independent cursors and gap rules in `checkpoints.md`. Never infer that 
 The bundled helper reads genuine interactive sessions from OpenCode, Cursor, Claude Code and the Assistant's `.roosta/state/assistant/chat-history.json`, while excluding subagents, scheduled Roosta runs (matched by `BG_PHRASES` in `sessions.py`) and trivial sessions:
 
 ```bash
-# Set helper to the absolute path of sessions.py beside this skill’s SKILL.md.
+# Replace the example script path with the absolute path beside this skill’s SKILL.md.
 # Run from the workspace.
-python3 "$helper" status
-python3 "$helper" list [SINCE] --source SOURCE --before TIME --json
-python3 "$helper" transcript SOURCE:ID
-python3 "$helper" transcript SOURCE:ID --tools
+python3 "/absolute/path/to/sessions.py" status
+python3 "/absolute/path/to/sessions.py" list [SINCE] --source SOURCE --before TIME --json
+python3 "/absolute/path/to/sessions.py" transcript SOURCE:ID
+python3 "/absolute/path/to/sessions.py" transcript SOURCE:ID --tools
 ```
 
 Each list row contains `SOURCE:ID`; pass that full token to `transcript`. Add `--tools` when a session suggests a query, path or tool failure.

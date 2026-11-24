@@ -101,7 +101,11 @@ managed-runtime directories under every profile. File tools can read installed s
 references and the operating model under `paths.APP_ROOT`. Edits and writes to that package
 are denied unless its resolved path is inside the selected workspace (an editable checkout).
 Pi also blocks shell commands that mention an absolute private root or the external package
-root, including direct invocation of a packaged helper. Use Pi’s read tool for package files.
+root. With the external package, Pi accepts a standalone `python3` invocation of the literal
+absolute path to `skills/workspace-learner/sessions.py` for `status`, `list` and `transcript`.
+Use the workspace as the working directory and quote paths containing spaces. For source inspection
+use the read tool, `cat FILE`, or `grep -F -- PATTERN FILE` with one absolute package file.
+These shell reads accept literal arguments only. Redirection and chained commands remain blocked.
 A product engineering worker can use the ordinary profile with a separate Git worktree
 and launch from the workspace to discover its custom skill. Ordinary Claude runs use `dontAsk`, including the legacy path.
 
