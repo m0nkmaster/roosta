@@ -11,6 +11,14 @@ from roosta import cursor_agent as camod
 from roosta.activity_log import ActivityLog
 
 
+@pytest.fixture(autouse=True)
+def ai_connected(request, monkeypatch):
+    """Board tests assume a working AI connection; the setup-card test exercises the real check."""
+    if request.node.name != "test_setup_card_survives_setup_writing_the_name":
+        monkeypatch.setattr(board, "setup_item", lambda *_: None)
+        monkeypatch.setattr(appmod, "setup_item", lambda *_: None)
+
+
 def test_cursor_result_text_prefers_completed_stream_over_stale_result():
     final = '<task-output>{"summary":"blocked","status":"error","details":{}}</task-output>'
     stdout = "\n".join([
