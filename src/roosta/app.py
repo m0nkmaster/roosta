@@ -26,7 +26,7 @@ from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Stre
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
 
-from roosta import attachments, updates
+from roosta import attachments, document_editor, updates
 from roosta import connectors as connectors_mod
 from roosta import cli, paths, profile, skills
 from roosta import __version__
@@ -1542,6 +1542,28 @@ async def api_board_approve(run_id: str, body: dict):
     edit = body.get("edit") if isinstance(body, dict) else None
     result = await chat_router.approve(run_id, approved, edit)
     return JSONResponse(result, status_code=200 if result.get("ok") else 409)
+
+
+@app.api_route("/api/workspace/document-source", methods=["GET", "PUT"], dependencies=[Depends(local_ai_settings)])
+async def api_document_source(request: Request, path: str = Query(max_length=500)):
+    revision = content = None
+    if request.method == "PUT":
+        match = re.fullmatch(r'"([a-f0-9]{64})"', request.headers.get("if-match", ""))
+        if not match:
+            raise HTTPException(400, "Reopen the document to obtain a valid revision.")
+        revision = match[1]
+        if request.headers.get("content-type", "").split(";")[0] != "text/plain":
+            raise HTTPException(415, "Send UTF-8 plain text.")
+        content = bytearray()
+        async for chunk in request.stream():
+            if len(content) + len(chunk) > document_editor.MAX_DOCUMENT_BYTES:
+                raise HTTPException(413, "The editor supports documents up to 2 MB.")
+            content.extend(chunk)
+    try:
+        result = await asyncio.to_thread(document_editor.edit_document, paths.WORKSPACE, path, revision, content)
+    except document_editor.EditError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=exc.status, headers={"Cache-Control": "no-store"})
+    return JSONResponse(result, headers={"Cache-Control": "no-store"})
 
 
 @app.get("/api/vault-document")

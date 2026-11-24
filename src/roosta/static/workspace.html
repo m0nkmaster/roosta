@@ -7,6 +7,7 @@
 <link rel="stylesheet" href="/static/vendor/tabler/tabler.min.css">
 <link rel="stylesheet" href="/static/shell.css">
 <script src="/static/theme.js"></script>
+<script src="/static/document-editor.js"></script>
 <script src="/static/nav-count.js" defer></script>
 <script src="/static/column-resize.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
@@ -83,8 +84,8 @@
     </section>
     <section class="card results-card" id="results-card" aria-label="Search results"><div class="card-header justify-content-between"><h2 class="card-title mb-0" id="result-count" aria-live="polite">Markdown documents</h2><span class="text-secondary small" id="search-time"></span></div><div class="scope-heading"><div class="d-flex align-items-start justify-content-between gap-2"><h3 id="scope-title">Collections</h3><span id="scope-status"></span></div><p id="scope-summary">Explore your workspace collections.</p><button class="btn btn-sm mt-2" id="scope-overview" type="button" hidden>Read overview</button></div><div class="navigator-scroll list-group list-group-flush" id="results"><div class="navigator-empty">Loading documents…</div></div><div id="results-divider"></div></section>
     <section class="card preview-card" aria-label="Document preview">
-      <div class="card-header justify-content-between"><h2 class="card-title mb-0">Preview</h2><div class="d-flex gap-2"><button class="btn btn-sm" id="copy-document" type="button" hidden title="Copy the document as Markdown">Copy</button><a class="btn btn-sm" id="open-document" hidden>Open source</a><button class="btn btn-sm btn-primary" id="chat-document" type="button" hidden>Chat about this</button></div></div>
-      <div class="navigator-scroll" id="preview"><div class="navigator-empty">Choose a document to read it here.<br><span class="small">Tick files to bring them into a conversation.</span></div></div>
+      <div class="card-header justify-content-between"><h2 class="card-title mb-0">Preview</h2><div class="d-flex gap-2 flex-wrap"><button class="btn btn-sm" id="copy-document" type="button" hidden title="Copy the document as Markdown">Copy</button><a class="btn btn-sm" id="open-document" hidden>Open document</a><button class="btn btn-sm btn-primary" id="chat-document" type="button" hidden>Chat about this</button></div></div>
+      <div class="navigator-scroll"><div id="editor" class="px-3"></div><div id="preview"><div class="navigator-empty">Choose a document to read it here.<br><span class="small">Tick files to bring them into a conversation.</span></div></div></div>
     </section>
   </div>
   <section class="card context-tray" aria-label="Chat context"><div class="card-body">

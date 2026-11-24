@@ -174,6 +174,14 @@ function createMainWindow() {
     },
   });
   hardenWindow(mainWindow);
+  mainWindow.webContents.on("will-prevent-unload", (event) => {
+    const choice = dialog.showMessageBoxSync(mainWindow, {
+      type: "question", buttons: ["Keep editing", "Discard changes"],
+      defaultId: 0, cancelId: 0, message: "Discard unsaved document changes?",
+    });
+    if (choice === 1) event.preventDefault(); // Electron lets the navigation proceed.
+    else isQuitting = false;
+  });
   mainWindow.loadFile(path.join(__dirname, "recovery.html"));
   mainWindow.once("ready-to-show", () => mainWindow.show());
   mainWindow.on("resize", saveSettings);
@@ -751,13 +759,13 @@ app.on("activate", () => {
   if (!mainWindow.isVisible()) showPage("/assistant");
 });
 
-app.on("before-quit", (event) => {
+app.on("before-quit", () => { isQuitting = true; });
+app.on("will-quit", (event) => {
   if (shutdownComplete) return;
   event.preventDefault();
-  isQuitting = true;
   clearInterval(pollTimer);
-  supervisor?.stop().finally(() => {
+  Promise.resolve(supervisor?.stop()).finally(() => {
     shutdownComplete = true;
-    app.quit();
+    setImmediate(() => app.quit()); // Electron must finish the current quit attempt first.
   });
 });

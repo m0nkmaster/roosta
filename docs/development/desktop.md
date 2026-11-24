@@ -13,7 +13,8 @@ on that port before relaunching, so dashboard HTML/API changes load without manu
 keep stale nav.
 
 - The window opens on `/assistant`; closing it leaves the app and runner in the menu bar. Explicit
-  Quit stops a runner the app owns.
+  Quit stops a runner the app owns after the window accepts closing. A renderer with unsaved
+  document edits can request a native discard confirmation during navigation or quit.
 - **View → Find in Page** targets the focused dashboard, recovery or logs window. `find.js`
   searches its WebContents and accepts commands only from the separate local find bar.
   Keep the controls outside the searched document and keep Find IPC out of the dashboard preload.

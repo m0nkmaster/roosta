@@ -4014,6 +4014,7 @@ class Element {
 }
 const elements={},document={getElementById:id=>elements[id],createElement:()=>new Element(),body:new Element()};
 const id='doc:notes/u & "v",w.md', other='worker:alice', title='<hello>', NEW_CHAT='new';
+const docEditor={leave:()=>true};
 let activeId=other,chats=[{id},{id:other}],ok=true,archived=true,destination='';
 const location={assign:url=>destination=url}, trackUsage=()=>{}, renderRail=()=>{}, load=async()=>{};
 const chatItem=()=>({title}),openItem=id=>activeId=id,esc=s=>s.replaceAll('<','&lt;');

@@ -27,7 +27,7 @@ starting `assistant/` are under the workspace's `.roosta/state/`. Also see
 
 - **The chat shows its document alongside.** `showDocPane` in `static/assistant.html` renders the
   first linked vault document (a `doc:` thread's own path, or an item's first `documents` entry) in a
-  right-hand pane via `/api/vault-document`; hidden under 1100px, ✕ hides it until the next item opens.
+  right-hand pane via `/api/vault-document`; hidden under 1100px, ✕ hides it until the next item opens. The pane shares the [manual Markdown editor](ui.md#workspace-and-documents). Editing works independently of the chat and its history.
 
 - **The rail has two tabs: Inbox and Chats.** Inbox is what the assistant raises; Chats is what the user
   starts. `/api/board` returns `chats` (`chat_list`): every `chat:`, `worker:`, `hire:` and `doc:` thread with

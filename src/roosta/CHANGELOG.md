@@ -2,6 +2,10 @@
 
 Record each release newest first. Bump minor for features and visible behaviour, patch for fixes and polish.
 
+## 0.19.0 - 2026-11-24
+
+- Edit Markdown source in Workspace, the document page and the Assistant document pane. Preview changes before saving and keep your draft if the file changes elsewhere.
+
 ## 0.18.1 - 2026-11-23
 
 - Settings now shows `roosta update` for supported Python installations.
