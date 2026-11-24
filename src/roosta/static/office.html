@@ -180,7 +180,7 @@
                     <span><i>Meeting room</i> call screen · whiteboard (opens the Assistant board)</span>
                     <span><i>Kitchen</i> coffee machine · fridge</span>
                     <span><i>Lounge</i> fireplace · grandfather clock · TV (Ceefax)</span>
-                    <span><i>Games room</i> dartboard · console TV · table tennis · foosball</span>
+                    <span><i>Games room</i> arcades · dartboard · console TV · table tennis · foosball</span>
                     <span><i>Anywhere</i> the cat</span>
                 </span>
                 <span class="credit">Art: <a class="text-link" href="https://github.com/ElizaWy/LPC">LPC Revised</a> (OGA-BY 3.0)</span>
@@ -2069,6 +2069,36 @@
             if (c && now >= c.quipUntil) { c.emote = "q"; c.emoteUntil = now + 2200; say(c, pick(["no one free for a game", "everyone's busy", "fancy a game later?"], Math.random()), now); }
         }
 
+        // Click an arcade cabinet to drop in a coin (world-only): whoever is playing gets an extra life and plays on, and a
+        // free cabinet lights its coin slot and tempts the nearest idle colleague over (lifted into tests/test_office.py).
+        const hitArcade = (p) => ARCADES.find((a) => p.x >= a.x && p.x <= a.x + 24 && p.y >= a.y && p.y <= a.y + 46) || null;
+        function arcadeCoin(played, walking, recruit) {
+            return played ? "continue" : walking ? "walking" : recruit ? "recruit" : "credit";
+        }
+        function insertCoin(a, now) {
+            const ws = [...workers.values()], spot = POIS.find((q) => q.arcade === a), cx = a.x + 12, cy = a.y - 4;
+            const cur = spot && spot.taken && workers.get(spot.taken), f = !cur && spot ? coffeeRunner(spot, ws) : null;
+            const out = arcadeCoin(!!(cur && !cur.path.length), !!cur, !!f);
+            a.coinT = 0; // stamped on the next drawn frame
+            if (out === "continue") {
+                floatText(cx, cy, "*clink* CONTINUE?", "#ffd166");
+                cur.dwellUntil = Math.max(cur.dwellUntil || 0, now + 20000);
+                cur.emote = "star"; cur.emoteUntil = now + 2200;
+                if (now >= cur.quipUntil) say(cur, pick(["extra life! cheers {user}", "one more go", "I was on my last life!"], Math.random()), now);
+                return;
+            }
+            a.credit = true;
+            floatText(cx, cy, "*clink* CREDIT 1", "#ffd166");
+            if (out === "recruit") {
+                leaveSpot(f); f.carry = null; f.item = null; sendTo(f, spot); f.emote = "star"; f.emoteUntil = now + 2400;
+                say(f, pick(["ooh, a free go!", "is that a credit? mine", "high score's mine"], Math.random()), now);
+                return;
+            }
+            if (out === "walking") return;
+            const c = cheerer({ x: cx, y: a.y + 60 }, ws, 200);
+            if (c && now >= c.quipUntil) { c.emote = "q"; c.emoteUntil = now + 2200; say(c, pick(["I'll have that go later", "no one free for a go", "save me that credit"], Math.random()), now); }
+        }
+
         // ================================================================ foosball and darts (games room, ambient)
         const foos = { x: 0, y: 0, vx: 0, vy: 0, active: false, pause: 0, rods: [0, 0, 0, 0], score: [0, 0], pair: "", gameAt: 0, spin: 0, spinBy: 0 };
         // Foosball scoring (lifted into tests/test_office.py): pub rules, first to five, and a goal off a spun rod
@@ -2963,6 +2993,9 @@
         const arcadePlayer = (a) => { const p = POIS.find((q) => q.arcade === a); const w = p && p.taken && workers.get(p.taken); return !!(w && !w.path.length); };
         function drawArcade(a, now) {
             const { x, y, col } = a, played = arcadePlayer(a);
+            if (played) a.credit = false; // the credit is spent the moment someone plays
+            if (a.coinT === 0) a.coinT = now;
+            const flash = a.coinT && now - a.coinT < 900 && Math.floor((now - a.coinT) / 150) % 2 === 0;
             ctx.fillStyle = "#0d0b16"; ctx.fillRect(x - 1, y - 1, 26, 47);
             ctx.fillStyle = "#2a1f4a"; ctx.fillRect(x, y, 24, 46);
             ctx.fillStyle = "#3b2d66"; ctx.fillRect(x + 1, y, 2, 46); ctx.fillRect(x + 21, y, 2, 46);
@@ -2983,16 +3016,17 @@
                     ctx.fillStyle = "#ff4d4d"; ctx.fillRect(sx + 7 + Math.round(Math.sin(now / 400) * 2), sy + sh - 4, 2, 3);
                 }
             } else {
-                ctx.fillStyle = Math.floor(now / 600) % 2 ? col : "#3d3566"; ctx.fillRect(sx + 3, sy + 5, 10, 2);
+                ctx.fillStyle = Math.floor(now / (a.credit ? 250 : 600)) % 2 ? (a.credit ? "#ffd166" : col) : "#3d3566"; ctx.fillRect(sx + 3, sy + 5, 10, 2);
                 ctx.fillStyle = "#3d3566"; ctx.fillRect(sx + 1 + Math.floor(now / 150) % 14, sy + 10, 2, 1);
             }
             ctx.fillStyle = "#ffffff14"; ctx.fillRect(sx, sy, sw, 1);
+            if (flash) { ctx.fillStyle = "#ffd16655"; ctx.fillRect(sx, sy, sw, sh); }
             // control panel and cabinet base
             ctx.fillStyle = "#4b3d80"; ctx.fillRect(x + 1, y + 23, 22, 6); ctx.fillStyle = "#5c4d96"; ctx.fillRect(x + 1, y + 23, 22, 1);
             ctx.fillStyle = "#d94848"; ctx.fillRect(x + 5, y + 24 + (played && Math.floor(now / 160) % 2 ? 1 : 0), 2, 2);
             ctx.fillStyle = "#ffd166"; ctx.fillRect(x + 13, y + 25, 2, 2); ctx.fillStyle = "#7ee0b5"; ctx.fillRect(x + 17, y + 25, 2, 2);
             ctx.fillStyle = "#1e1636"; ctx.fillRect(x + 3, y + 30, 18, 15);
-            ctx.fillStyle = "#0d0b16"; ctx.fillRect(x + 10, y + 34, 4, 3); ctx.fillStyle = "#ff4d4d"; ctx.fillRect(x + 11, y + 35, 2, 1);
+            ctx.fillStyle = "#0d0b16"; ctx.fillRect(x + 10, y + 34, 4, 3); ctx.fillStyle = a.credit || flash ? "#ffd166" : "#ff4d4d"; ctx.fillRect(x + 11, y + 35, 2, 1);
         }
         function drawBeanbag(b) {
             pxEllipse(ctx, b.x, b.y, 10, 3, "#00000035");
@@ -4129,7 +4163,7 @@
             if (kind === "call") return st === "locked" ? (demo ? "click: inspect the frozen call" : "click: re-check sign-in") : "click: test the video call";
             if (kind === "copier") return "click: print a test page";
             if (kind === "door") return "click: check badge reader";
-            return { cat: "click: pet the cat", darts: "click: throw a dart", console: "click: swap game and call players", pong: "click: call the rally", foos: "click: call a game or spin the rods", coffee: "click: brew a fresh pot", fridge: "click: open the fridge", fire: "click: poke the fire", clock: "click: strike the hour", tv: "click: Ceefax", board: "click: open the Assistant board", frame: "click: employee of the week", egg: "click: pick up the egg" }[kind] || null;
+            return { cat: "click: pet the cat", darts: "click: throw a dart", console: "click: swap game and call players", arcade: "click: insert a coin", pong: "click: call the rally", foos: "click: call a game or spin the rods", coffee: "click: brew a fresh pot", fridge: "click: open the fridge", fire: "click: poke the fire", clock: "click: strike the hour", tv: "click: Ceefax", board: "click: open the Assistant board", frame: "click: employee of the week", egg: "click: pick up the egg" }[kind] || null;
         }
         // drag a worker onto the ops floor to arm its Run now confirm, or a queued worker off it to arm Cancel; never fires itself (lifted into tests/test_office.py)
         function dropAction(st, room, demo, canCancel = true) {
@@ -4147,7 +4181,7 @@
         const hintCount = {}; // cached so the render loop never touches localStorage
         const hintUses = (kind) => { if (!(kind in hintCount)) { try { hintCount[kind] = Number(localStorage.getItem("office-hint-" + kind)) || 0; } catch (e) { hintCount[kind] = HINT_LEARNT; } } return hintCount[kind]; };
         function hintUsed(kind) { if (kind) { hintCount[kind] = hintUses(kind) + 1; try { localStorage.setItem("office-hint-" + kind, hintCount[kind]); } catch (e) { /* ignore */ } } hint.since = Infinity; }
-        function hintKind(p, w, c) { return c ? "cat" : w ? "worker" : hitEgg(p) ? "egg" : hitFrame(p) ? "frame" : hitCall(p) ? "call" : hitCopier(p) ? "copier" : hitDoor(p) ? "door" : hitDartboard(p) ? "darts" : hitConsole(p) ? "console" : hitPong(p) ? "pong" : hitFoos(p) ? "foos" : hitCoffee(p) ? "coffee" : hitFridge(p) ? "fridge" : hitFire(p) ? "fire" : hitClock(p) ? "clock" : hitTV(p) ? "tv" : hitBoard(p) ? "board" : null; }
+        function hintKind(p, w, c) { return c ? "cat" : w ? "worker" : hitEgg(p) ? "egg" : hitFrame(p) ? "frame" : hitCall(p) ? "call" : hitCopier(p) ? "copier" : hitDoor(p) ? "door" : hitDartboard(p) ? "darts" : hitConsole(p) ? "console" : hitArcade(p) ? "arcade" : hitPong(p) ? "pong" : hitFoos(p) ? "foos" : hitCoffee(p) ? "coffee" : hitFridge(p) ? "fridge" : hitFire(p) ? "fire" : hitClock(p) ? "clock" : hitTV(p) ? "tv" : hitBoard(p) ? "board" : null; }
         view.addEventListener("mousemove", (e) => {
             const p = worldPoint(e), c = hitCat(p), w = c ? null : hit(p), cl = !c && !w && hitCall(p), cp = !c && !w && !cl && hitCopier(p), dr = !c && !w && !cl && !cp && hitDoor(p), cn = !c && !w && !cl && !cp && !dr && hitConsole(p);
             hoverEgg = !c && !w ? hitEgg(p) : null;
@@ -4208,6 +4242,7 @@
             if (hitDoor(p)) { clickDoor(now); return; }
             if (hitDartboard(p)) { throwDart(now); return; }
             if (hitConsole(p)) { swapConsole(now); return; }
+            { const a = hitArcade(p); if (a) { insertCoin(a, now); return; } }
             if (hitPong(p)) { clickPong(now); return; }
             if (hitFoos(p)) { clickFoos(now); return; }
             if (hitCoffee(p)) { brewCoffee(now); return; }

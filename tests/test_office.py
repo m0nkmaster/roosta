@@ -938,6 +938,34 @@ process.stdout.write(JSON.stringify({sent, spots:PONG_POIS.map(p => p.taken || n
                    else {"sent": [], "spots": [None, None]})
 
 
+def test_arcade_coin_extends_a_game_or_tempts_a_colleague_over():
+    js = (f"{_lift('arcadeCoin')}{_lift('actionFor')}{_lift('hintFor')}"
+          "process.stdout.write(JSON.stringify([arcadeCoin(true, true, false), arcadeCoin(false, true, true), arcadeCoin(false, false, true),"
+          " arcadeCoin(false, false, false), hintFor('arcade', null, false)]))")
+    assert _node(js) == ["continue", "walking", "recruit", "credit", "click: insert a coin"]
+
+
+@pytest.mark.parametrize("case", ["playing", "free", "nobody"])
+def test_insert_coin_is_world_only_and_never_moves_a_busy_worker(case):
+    js = (f"{_lift('coffeeRunner')}{_lift('arcadeCoin')}{_lift('insertCoin')}" + """
+const a = {x:100,y:100}, spot = {x:112,y:158,arcade:a}, POIS = [spot];
+const CASE = 'X', ws = [];
+if (CASE === 'playing') { ws.push({id:'p',state:'resting',x:112,y:158,path:[],dwellUntil:5000,quipUntil:0}); spot.taken = 'p'; }
+if (CASE === 'free') ws.push({id:'f',state:'resting',x:200,y:200,path:[],quipUntil:0});
+ws.push({id:'busy',state:'running',x:110,y:150,path:[],quipUntil:0});
+const workers = new Map(ws.map(w => [w.id, w]));
+const sent = [], floats = [], floatText = (x,y,t) => floats.push(t), cheerer = () => null, say = () => {}, pick = l => l[0];
+const leaveSpot = () => {}, sendTo = (w,p) => {p.taken = w.id; w.path = [1]; sent.push(w.id);};
+const fetch = () => { throw new Error('no runner calls'); };
+insertCoin(a, 1000);
+process.stdout.write(JSON.stringify({sent, floats, credit: !!a.credit, dwell: workers.get('p') ? workers.get('p').dwellUntil : null}));
+""".replace("'X'", repr(case)))
+    out = _node(js)
+    assert out == {"playing": {"sent": [], "floats": ["*clink* CONTINUE?"], "credit": False, "dwell": 21000},
+                   "free": {"sent": ["f"], "floats": ["*clink* CREDIT 1"], "credit": True, "dwell": None},
+                   "nobody": {"sent": [], "floats": ["*clink* CREDIT 1"], "credit": True, "dwell": None}}[case]
+
+
 def test_foos_goal_is_first_to_five_and_spun_goals_never_count():
     js = (f"{_lift('foosGoal')}"
           "process.stdout.write(JSON.stringify([foosGoal([0, 0], 0, false), foosGoal([4, 3], 1, false), foosGoal([4, 3], 0, false), foosGoal([4, 3], 0, true)]))")
