@@ -33,17 +33,21 @@ Commit those changes before `ship`. Version preparation does not stage unrelated
 `.github/workflows/ci.yml` checks pushes to `main` and pull requests with Python 3.11 and 3.12,
 the Python tests, desktop tests and release-metadata consistency.
 
-`.github/workflows/desktop-release.yml` runs on `v*` tags. Both native macOS architectures must
-pass tests, backend freezing, app signing, disk-image verification and a packaged-backend smoke
-test in an isolated home. Temporary `hdiutil` resource contention retries twice, ten seconds apart.
-A Linux job tests Python 3.11, builds and validates the wheel/source archive, then installs the
-wheel in a fresh environment and checks the CLI and workspace initialisation.
+`.github/workflows/desktop-release.yml` runs on `v*` tags. Each native macOS architecture runs
+the same reusable build (`desktop-build.yml`): tests, backend freezing, app signing, disk-image
+verification and a packaged-backend smoke test in an isolated home. Temporary `hdiutil` resource
+contention retries twice, ten seconds apart. A Linux job tests Python 3.11, builds and validates
+the wheel/source archive, then installs the wheel in a fresh environment and checks the CLI and
+workspace initialisation.
 
-Only after every build succeeds does the workflow publish the Python distributions to PyPI,
-verify their published hashes, and publish the GitHub release with both DMGs, checksums, wheel
-and source archive. Notes come from the current changelog entry plus installation instructions.
-The GitHub release stays private as a draft until every asset is uploaded. Older releases never
-replace a newer release's Latest designation. This does not add an in-app updater or notarisation.
+Only after the arm64 and Python builds succeed does the workflow publish the Python distributions
+to PyPI, verify their published hashes, and publish the GitHub release with the arm64 DMG,
+checksums, wheel and source archive — plus the Intel DMG when its build has already finished.
+The slower Intel runner never gates publication: a `release-intel` job attaches its DMG and
+checksum to the release once `build-intel` completes. Notes come from the current changelog entry
+plus installation instructions. The GitHub release stays private as a draft until every asset is
+uploaded. Older releases never replace a newer release's Latest designation. This does not add an
+in-app updater or notarisation.
 
 Use **Actions → Release → Run workflow** on `main` to build and test artifacts without publishing.
 This is also the path for clean-Mac acceptance before tagging changes affecting launch or sign-in.
@@ -69,8 +73,10 @@ macOS signing is configured separately as described in the [desktop README](../.
 
 ## Recovering a failed release
 
-The command exits unsuccessfully if CI fails and leaves its workflow URL in the terminal.
-For transient build or upload failures, rerun failed jobs:
+The command exits unsuccessfully if CI fails before publication and leaves its workflow URL in
+the terminal. Once the release is published, a failed non-gating job such as the Intel build only
+warns that the release may be missing assets. For transient build or upload failures, rerun failed
+jobs:
 
 ```sh
 gh run rerun RUN_ID --failed

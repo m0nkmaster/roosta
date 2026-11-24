@@ -113,10 +113,12 @@ def ship(version: str | None, notes: list[str]) -> None:
         match = next((r for r in runs if r["headSha"] == sha), None)
         if match:
             print(match["url"], flush=True)
-            subprocess.run(["gh", "run", "watch", str(match["databaseId"]), "--exit-status"], cwd=ROOT, check=True)
+            watched = subprocess.run(["gh", "run", "watch", str(match["databaseId"]), "--exit-status"], cwd=ROOT)
             release = json.loads(run("gh", "release", "view", tag, "--json", "url,isDraft"))
             if release["isDraft"]:
                 raise ValueError("The workflow finished but the release is still a draft")
+            if watched.returncode:
+                print("Some workflow jobs failed; the release may be missing assets", file=sys.stderr)
             print(f"Published {release['url']}")
             return
         time.sleep(5)
@@ -125,16 +127,19 @@ def ship(version: str | None, notes: list[str]) -> None:
 
 def artifacts(directory: Path) -> list[Path]:
     version = check()
-    expected = {f"Roosta-{version}-{arch}.dmg{suffix}" for arch in ("arm64", "x64") for suffix in ("", ".sha256")}
-    expected |= {f"roosta-{version}-py3-none-any.whl", f"roosta-{version}.tar.gz"}
+    required = {f"Roosta-{version}-arm64.dmg{suffix}" for suffix in ("", ".sha256")}
+    required |= {f"roosta-{version}-py3-none-any.whl", f"roosta-{version}.tar.gz"}
+    intel = {f"Roosta-{version}-x64.dmg{suffix}" for suffix in ("", ".sha256")}
     files = {p.name: p for p in directory.iterdir() if p.is_file()}
-    if set(files) != expected:
-        raise ValueError("Release needs exactly both DMGs, both checksums, the wheel and source archive")
+    present = set(files)
+    if not required <= present or present - required - intel or 0 < len(intel & present) < len(intel):
+        raise ValueError("Release needs the arm64 DMG and checksum, the wheel and source archive; Intel assets are optional but must be complete")
     for arch in ("arm64", "x64"):
         name = f"Roosta-{version}-{arch}.dmg"
-        digest = hashlib.sha256(files[name].read_bytes()).hexdigest()
-        if files[name + ".sha256"].read_text().strip() != f"{digest}  {name}":
-            raise ValueError(f"Checksum mismatch: {name}")
+        if name in files:
+            digest = hashlib.sha256(files[name].read_bytes()).hexdigest()
+            if files[name + ".sha256"].read_text().strip() != f"{digest}  {name}":
+                raise ValueError(f"Checksum mismatch: {name}")
     return list(files.values())
 
 
@@ -167,7 +172,8 @@ def publish(directory: Path) -> None:
     existing = next((r for r in releases if r["tag_name"] == tag), None)
     if existing and not existing["draft"]:
         remote = {a["name"]: a.get("digest") for a in existing["assets"]}
-        if remote != local:
+        # Assets attached later (a slower Intel build) do not count as drift.
+        if any(remote.get(name) != digest for name, digest in local.items()):
             raise ValueError("Published release differs; refusing to overwrite its assets")
         print(existing["html_url"])
         return
