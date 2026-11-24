@@ -1953,12 +1953,25 @@
             const s = score.slice(); s[side]++;
             return { score: s, won: s[side] >= 11 && s[side] - s[1 - side] >= 2 ? side : -1 };
         }
+        // The umpire's call for a score (lifted into tests/test_office.py): "deuce" when level from 10-10, "advantage" one
+        // ahead past it, "game point" when the leader needs one more; side is who holds it (-1 for none).
+        function pongCall(score) {
+            const [a, b] = score, hi = Math.max(a, b), side = a > b ? 0 : 1;
+            if (a >= 10 && b >= 10) return a === b ? { call: "deuce", side: -1 } : { call: "advantage", side };
+            return hi >= 10 && a !== b ? { call: "game point", side } : { call: "", side: -1 };
+        }
         // Award a point on the flip counter; a won game gets a cheer and both players head off soon after. Ambient.
         function scorePoint(side, now) {
             const [pl, pr] = PONG_POIS.map((p) => p.taken && workers.get(p.taken));
-            const r = pongPoint(pong.score, side), winner = side ? pr : pl, loser = side ? pl : pr;
+            const r = pongPoint(pong.score, side), winner = side ? pr : pl, loser = side ? pl : pr, was = pongCall(pong.score);
             pong.score = r.score;
-            if (r.won < 0) return false;
+            if (r.won < 0) { // the umpire calls the big points; saving a game point gets its own moment
+                const c = pongCall(r.score), who = c.side < 0 ? null : c.side ? pr : pl;
+                if (c.call) floatText(PONG.x + (PONG.w >> 1), PONG.y - 14, (c.call === "deuce" ? "DEUCE" : c.call.toUpperCase() + (who ? " " + whoOf(who) : "")), "#ffd166");
+                if (was.side === 1 - side && was.call !== "deuce" && winner) { winner.emote = "star"; winner.emoteUntil = now + 2200; say(winner, pick(["saved it!", "not today!", "still alive!", "not over yet"], Math.random()), now); }
+                else if (c.call === "game point" && who) { who.emote = "star"; who.emoteUntil = now + 1800; say(who, pick(["one more", "serve it up", "here we go"], Math.random()), now); }
+                return false;
+            }
             floatText(PONG.x + (PONG.w >> 1), PONG.y - 14, "GAME! " + Math.max(...r.score) + "-" + Math.min(...r.score), "#ffd166");
             starBurst(PONG.x + (PONG.w >> 1), PONG.y + 8);
             if (winner) { winner.emote = "star"; winner.emoteUntil = now + 2600; say(winner, pick(["get in!", "game, set, tea", "winner stays on!", "you make the tea"], Math.random()), now); }
@@ -2031,13 +2044,18 @@
             if (!pong.active) for (const spot of free) { const f = coffeeRunner(spot, ws.filter((o) => !fans.some(([fan]) => fan === o))); if (f) fans.push([f, spot]); }
             const out = pongClickOutcome(pong.active, pong.rally, PONG_POIS.length - free.length + fans.length, fans.length);
             if (out === "jinx") {
-                const loser = pong.dir > 0 ? pr : pl; // the ball was heading their way
-                floatText(cx, cy, "rally " + pong.rally + "! *tok* ...out", "#fffaf0");
+                const loser = pong.dir > 0 ? pr : pl, big = pongCall(pong.score).call; // the ball was heading their way
+                floatText(cx, cy, "rally " + pong.rally + (big ? " at " + big : "") + "! *tok* ...out", "#fffaf0");
                 pong.pause = 1.5; pong.serve = pong.dir > 0 ? 1 : 0; pong.rally = 0;
                 if (scorePoint(pong.dir > 0 ? 0 : 1, now)) return;
                 react(loser, "bang", ["you jinxed it!", "don't count out loud!", "that was going so well"]); return;
             }
-            if (out === "cheer") { floatText(cx, cy, "come on!", "#fffaf0"); react(pong.dir > 0 ? pl : pr, "star", ["watch this", "no pressure then", "spin incoming"]); return; }
+            if (out === "cheer") { // the verdict reads the score
+                const c = pongCall(pong.score), who = c.side < 0 ? null : c.side ? pr : pl;
+                if (c.call === "deuce") { floatText(cx, cy, "deuce! anyone's game", "#fffaf0"); react(pong.dir > 0 ? pl : pr, "bang", ["shh!", "not helping", "my hands are shaking"]); return; }
+                if (who) { floatText(cx, cy, c.call + ", no pressure", "#fffaf0"); react(who, "bang", ["don't say that!", "thanks a lot", "now I'm nervous"]); return; }
+                floatText(cx, cy, "come on!", "#fffaf0"); react(pong.dir > 0 ? pl : pr, "star", ["watch this", "no pressure then", "spin incoming"]); return;
+            }
             if (out === "game") {
                 for (const [f, spot] of fans) { leaveSpot(f); f.carry = null; f.item = null; sendTo(f, spot); f.emote = "star"; f.emoteUntil = now + 2400; }
                 if (fans[0]) say(fans[0][0], pick(["fancy a game?", "first to eleven?", "loser makes the tea"], Math.random()), now);
