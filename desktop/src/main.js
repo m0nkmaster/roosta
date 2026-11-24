@@ -219,13 +219,20 @@ function createApplicationMenu() {
     { role: "editMenu" },
     {
       label: "View",
-      submenu: [{
-        label: "Find in Page…",
-        accelerator: "CommandOrControl+F",
-        click: (_item, window) => {
-          if (window && (window === mainWindow || window === logsWindow)) showFind(window, WebContentsView);
+      submenu: [
+        {
+          label: "Find in Page…",
+          accelerator: "CommandOrControl+F",
+          click: (_item, window) => {
+            if (window && (window === mainWindow || window === logsWindow)) showFind(window, WebContentsView);
+          },
         },
-      }],
+        { type: "separator" },
+        { role: "resetZoom" },
+        { role: "zoomIn" },
+        { role: "zoomIn", accelerator: "CommandOrControl+=", visible: false },
+        { role: "zoomOut" },
+      ],
     },
     { role: "windowMenu" },
   ]));

@@ -11,6 +11,7 @@ Release builds bundle Python and the Roosta backend. They can initialise a works
 - Starts and supervises the FastAPI skills runner
 - Opens `/assistant` as the main window
 - Finds text in the current window with **View → Find in Page** or **Command+F** (**Ctrl+F** on Windows or Linux). Press **Enter** for the next match, **Shift+Enter** for the previous match and **Escape** to return to the page.
+- Zooms the dashboard with **View → Zoom In**, **Zoom Out** and **Actual Size**. Press **⌘+** or **⌘=** to enlarge, **⌘−** to shrink and **⌘0** to return to 100%. The size carries across dashboard pages. Constellation’s own zoom still controls the map.
 - Continues running in the menu bar after the window closes
 - Sends native notifications once per confirmed new Assistant item and authentication failure
   episode, even while the window is focused; failed deliveries remain eligible for retry

@@ -19,6 +19,7 @@ keep stale nav.
   Keep the controls outside the searched document and keep Find IPC out of the dashboard preload.
   Closing the bar clears highlights and returns focus to the page. Navigation, hiding or closing
   the window discards its search.
+- View uses Electron’s native page zoom roles on the focused web contents. The hidden **⌘=** accelerator also accepts the unshifted plus key. Electron controls zoom steps, bounds and profile lifetime. Dashboard navigation and reload share the loopback host’s zoom level. Logs and recovery use local files, so zooming them leaves the dashboard level intact. Roosta stores no zoom preference and makes no separate guarantee across restarts.
 - Both the macOS application menu and menu-bar icon expose Restart Roosta.
 - View Logs leads with each task's latest skill output plus recent run history. Raw Python/uvicorn
   output is secondary under a collapsed Runner diagnostics section.

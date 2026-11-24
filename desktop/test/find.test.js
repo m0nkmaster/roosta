@@ -8,7 +8,7 @@ const { showFind } = require("../src/find");
 
 const source = name => fs.readFileSync(path.join(__dirname, "../src", name), "utf8");
 
-test("View → Find targets the focused Roosta window with the platform shortcut", () => {
+test("View exposes native zoom shortcuts and targets Find at the focused Roosta window", () => {
   const main = source("main.js");
   const mainWindow = {}, logsWindow = {};
   const opened = [];
@@ -19,7 +19,12 @@ test("View → Find targets the focused Roosta window with the platform shortcut
     Menu: { buildFromTemplate: items => items, setApplicationMenu: items => { menuItems = items; } },
     restartRunner() {}, showLogs() {},
   });
-  const find = menuItems.find(item => item.label === "View").submenu.find(item => item.label === "Find in Page…");
+  const view = menuItems.find(item => item.label === "View").submenu;
+  for (const role of ["resetZoom", "zoomIn", "zoomOut"]) {
+    assert.ok(view.some(item => item.role === role && item.visible !== false && !item.accelerator));
+  }
+  assert.ok(view.some(item => item.role === "zoomIn" && item.accelerator === "CommandOrControl+=" && item.visible === false));
+  const find = view.find(item => item.label === "Find in Page…");
   assert.equal(find.accelerator, "CommandOrControl+F");
   for (const win of [logsWindow, {}, undefined, mainWindow]) find.click(null, win);
   assert.deepEqual(opened, [logsWindow, mainWindow]);
