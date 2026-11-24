@@ -2,6 +2,14 @@
 
 Record each release newest first. Bump minor for features and visible behaviour, patch for fixes and polish.
 
+## 0.21.0 - 2026-11-24
+
+- A failed worker run keeps its last board cards instead of clearing them, so one AI error no longer empties the Assistant board.
+- Workers can change anything in the workspace: deleting files, `git reset` and `git clean` no longer need approval. External writes stay blocked.
+- Unrestricted workers have standing approval for any action, local or external. Roosta's own AI account credentials and package folder stay protected.
+- The Assistant reads the live board with `roosta snapshot board`, which every worker may run.
+- Setup counts a tool as connected only when it is callable in the session or its check passes.
+
 ## 0.19.4 - 2026-11-24
 
 - History listings provide the full transcript ID workers need. Workers can read the live board and task status with a local snapshot command.

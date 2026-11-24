@@ -20,8 +20,8 @@ never inside a user's workspace.
   per-worker repository grant (see Runner). A task with explicit
   `allow_git_push` approval may run exactly `git push origin main` in its named repository;
   timer pushes also require `push_on_schedule`. On manual and scheduled runs,
-  `unrestricted: true` takes precedence and authorises only external actions explicitly directed
-  by the worker's instructions, subject to user and workspace restrictions.
+  `unrestricted: true` takes precedence and puts nothing off limits. Every profile lets workers change
+  anything local except Roosta's own connection and package roots; the default also guards `.env` and key files.
 - Treat workspace paths and model output as untrusted. Preserve resolved-symlink validation,
   attachment limits, Markdown sanitisation and sender-action validation.
 - A worker is a skill on a schedule: UI says **worker** and always names the skill;

@@ -117,7 +117,7 @@ Flat, descriptive, one purpose each: `projects/`, `notes/`, `drafts/`, `analysis
 
 ## Safety
 
-- **No external side effects without the owner's explicit approval.** For a worker configured with `unrestricted: true`, the owner grants standing approval only for external actions explicitly directed by that worker's instructions. User and workspace restrictions still apply. In the Assistant, drafts pause for Send/Cancel.
+- **No external side effects without the owner's explicit approval.** Inside the workspace, act freely: edit, delete, run local tools and call the local Roosta API. For a worker configured with `unrestricted: true`, nothing is off limits: the owner grants standing approval for any external action its work needs. In the Assistant, drafts pause for Send/Cancel.
 - **Never print a process environment.** `env`, `printenv`, `ps eww` and dumping `.env` put every secret into the transcript. Test a variable with `[ -n "$VAR" ]` instead.
 - **Attribute AI-written posts.** Every message the assistant sends on the owner's behalf ends with the visible footer `[AI]`.
 - **Install on approval.** Find and install a CLI or MCP server when a task needs it, but only after the owner approves that install.

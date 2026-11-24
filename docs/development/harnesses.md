@@ -145,7 +145,7 @@ backend API and saved selection remain for compatibility; new selections use nam
   `opencode_ollama_env` sets `PWD` to the task's `dir` so OpenCode finds the workspace skill. The wrapper supplies
   the Ollama provider inline without changing OpenCode's user config. The tracked
   `opencode-runner.json` policy is seeded into a gitignored, highest-precedence config directory
-  with the dashboard's secret, destructive-git and external-write denials, plus the selected
+  with the dashboard's secret and external-write denials, plus the selected
   workspace skill directory so OpenCode can discover it. This policy also applies to
   `unrestricted: true` tasks. OpenCode is not available for
   `allow_git_push` tasks. The child PATH puts `~/.opencode/bin` first when present;
@@ -168,9 +168,12 @@ backend API and saved selection remain for compatibility; new selections use nam
   The settings are generated from the Cursor profiles below (Shell rules become `Bash(... :*)`
   denials, Write rules become Edit and Write denials), and the `Mcp(*:*keyword*)` denials become
   a `claude_guard.py` hook, because Claude permission rules cannot wildcard inside MCP tool names.
+  `curl` and `wget` stay denied; workers read the local board and task status with
+  `roosta snapshot board|tasks`. Local commands such as `rm`, `git reset` and `git clean` are not
+  denied in any profile.
   The guard ignores case, so it is stricter than Cursor (`get_comments` is blocked too). The
   approved sender uses the `unrestricted` profile. Tasks marked `unrestricted: true` use the
-  same profile and have standing approval only for external actions their instructions explicitly direct. `is_claude_model` is an argv-safety format check only (no family or effort names); a new
+  same profile and have standing approval for any action; nothing is off limits. `is_claude_model` is an argv-safety format check only (no family or effort names); a new
   Claude choice is validated against Claude Code's own list (`validate_model`, including the
   `/runtime` and `/settings` task endpoints), so Cursor model names never reach Claude; an already
   stored value stays accepted:
@@ -198,7 +201,7 @@ backend API and saved selection remain for compatibility; new selections use nam
 - **Under Cursor, live board turns run with**
   the tracked `cursor-permissions.json` policy. `cursor_agent.py` seeds it into gitignored
   `cache/cursor-agent-config/` because the CLI adds account/runtime state to its config file. The
-  profile allows local reads/writes but denies secret access, destructive git, git push, known
+  profile allows local reads, writes and commands but denies secret access, git push, curl/wget, known
   external-write CLI commands and write-shaped MCP tools. A task with `allow_git_push: true` uses
   `cursor-permissions-git-push.json`, which permits only `git push origin main`; its prompt must
   confine that standing approval to one named repository. The approved sender path deliberately

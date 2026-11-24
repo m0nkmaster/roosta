@@ -69,6 +69,8 @@ def test_profiles_keep_push_denied_except_for_git_push_task(claude):
     guard = safe["hooks"]["PreToolUse"][0]
     assert guard["matcher"] == "mcp__.*"
     assert "send" in guard["hooks"][0]["command"]
+    assert not {"Bash(rm:*)", "Bash(git reset:*)", "Bash(git clean:*)"} & set(safe["permissions"]["deny"])
+    assert "Bash(curl:*)" in safe["permissions"]["deny"]
 
 
 def test_guard_blocks_write_shaped_mcp_tools_case_insensitively():
@@ -153,9 +155,9 @@ class Stdin:
 @pytest.mark.parametrize("run_source", ["manual", "scheduled"])
 @pytest.mark.parametrize("flags,profile,prompt_rule", [
     ({"allow_git_push": True}, "git-push", "Never push another repository"),
-    ({"unrestricted": True}, "unrestricted", "standing approval only for external actions"),
+    ({"unrestricted": True}, "unrestricted", "nothing is off limits"),
     ({"unrestricted": True, "allow_git_push": True, "push_on_schedule": True},
-     "unrestricted", "standing approval only for external actions"),
+     "unrestricted", "nothing is off limits"),
     ({}, "safe", "Never create or modify external content or state"),
 ])
 def test_run_task_uses_claude_harness(claude, monkeypatch, flags, profile, prompt_rule, run_source):
@@ -201,7 +203,7 @@ def test_run_task_uses_claude_harness(claude, monkeypatch, flags, profile, promp
     if profile == "unrestricted":
         assert prompt.startswith("You are running as an unattended background task.")
         assert "Do not ask questions - make autonomous decisions." in prompt
-        assert "explicitly directed by this worker's instructions" in prompt
+        assert "any local or external action" in prompt and "Keep credentials" in prompt
         assert "blockers as Assistant board items" in prompt
         assert "Never create or modify external" not in prompt
         assert "git push origin main" not in prompt

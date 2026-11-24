@@ -192,8 +192,8 @@ into review. Confirming records your profile reviewer and today's date.
 ## Safety
 
 - By default, external writes (messages, tickets, pages, email) pause for **Send/Cancel** on the board. Only then does the `sender` skill run. A worker can have standing approval to comment on open `ready` issues and add `in review` in one repository. See [worker grants](docs/development/runner.md#standing-approval-for-issue-updates). A separately approved task may run exactly `git push origin main` in one named repository; scheduled pushes also require `push_on_schedule`.
-- In **Workers**, expand a worker and open **Settings → Unrestricted** to grant standing approval for external actions explicitly directed by its instructions, subject to user and workspace restrictions. Clear the checkbox to revoke approval. Choose **Save** to apply the change to future runs. A worker already executing or waiting for another writer keeps its current permissions.
-- Standard runs use permission guardrails that block secret access, destructive git, write-shaped MCP tools and configured connector write commands. These are tool policies, not an OS sandbox; explicitly unrestricted tasks bypass them.
+- In **Workers**, expand a worker and open **Settings → Unrestricted** to grant standing approval for any action, local or external; nothing is off limits. Clear the checkbox to revoke approval. Choose **Save** to apply the change to future runs. A worker already executing or waiting for another writer keeps its current permissions.
+- Standard runs use permission guardrails that allow any local change but block secret access, external writes (git push, GitHub creates, curl/wget), write-shaped MCP tools and configured connector write commands. These are tool policies, not an OS sandbox; explicitly unrestricted tasks bypass them.
 - Tasks marked as writers run one at a time; other tasks may run concurrently.
 - Posts the assistant sends end with `[AI]`.
 

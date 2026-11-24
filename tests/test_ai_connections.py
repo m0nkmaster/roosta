@@ -183,6 +183,7 @@ const policy = JSON.parse(fs.readFileSync('./src/roosta/cursor-permissions.json'
 policy.deny.push('Shell(tool:send*)');
 assert(denied({toolName:'bash',input:{command:'git status && git push origin main'}},policy));
 assert(denied({toolName:'bash',input:{command:'/usr/bin/curl https://example.com'}},policy));
+assert.equal(denied({toolName:'bash',input:{command:'rm -rf build && git reset --hard && git clean -fd'}},policy),'');
 assert(denied({toolName:'bash',input:{command:'tool send --message hello'}},policy));
 assert(denied({toolName:'mcp__slack__sendMessage',input:{}},policy));
 assert(denied({toolName:'mcp__jira__addComment',input:{}},policy));

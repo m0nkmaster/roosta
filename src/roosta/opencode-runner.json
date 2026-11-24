@@ -19,10 +19,7 @@
     },
     "bash": {
       "*": "allow",
-      "rm *": "deny",
       "git push *": "deny",
-      "git reset *": "deny",
-      "git clean *": "deny",
       "gh pr create *": "deny",
       "gh issue create *": "deny",
       "gh workflow run *": "deny",

@@ -522,6 +522,36 @@ def test_unchanged_precheck_skips_agent_and_preserves_board_items(tmp_path):
     asyncio.run(scenario())
 
 
+@pytest.mark.parametrize("failed_output", [{}, {"summary": "blocked", "status": "error",
+                                                    "details": {"reason": "could not read the board"}}])
+def test_failed_run_keeps_the_previous_board_items(tmp_path, failed_output):
+    async def scenario():
+        cache_dir = tmp_path / "cache"
+        cache_dir.mkdir()
+        item = {"id": "existing-card", "title": "Existing card"}
+        (cache_dir / "assistant.json").write_text(json.dumps({
+            "status": "success", "last_run": "2020-01-01T00:00:00+00:00", "last_duration": 5.0,
+            "last_output": {"summary": "ok", "status": "success", "details": {"items": [item]}},
+            "run_count": 1, "last_error": "",
+        }))
+
+        async def executor(_task: task_config.TaskConfig, **_):
+            return "error", dict(failed_output), "AI request failed", ""
+
+        runner = make_runner(tmp_path, [task_config.TaskConfig(id="assistant", skill="assistant", interval=600)],
+                             executor)
+        runner.start()
+        try:
+            await wait_until(lambda: runner.get_state("assistant")["run_count"] == 2)
+            state = runner.get_state("assistant")
+            assert state["status"] == "error" and state["last_error"] == "AI request failed"
+            assert state["last_output"]["details"]["items"] == [item]
+        finally:
+            await runner.stop()
+
+    asyncio.run(scenario())
+
+
 def test_poll_loop_survives_a_crashing_precheck_and_still_serves_manual_runs(tmp_path):
     async def scenario():
         cached_state(tmp_path / "cache", "self-chat-commands")

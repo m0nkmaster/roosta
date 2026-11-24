@@ -83,6 +83,10 @@ files without replacing existing configuration.
   forward (an unchanged pre-check) drop any old `details.error`, because the conductor reads
   every sensor cache and would re-raise it as a board card.
 
+- **A failed run keeps its last cards.** When an `error` run returns no `details.items`, the
+  runner keeps the previous items (not the old `details.error`), so one AI failure cannot empty
+  the Assistant board or blind the conductor's next pass.
+
 - **Skill descriptions stay canonical.** The runner reads each task skill's `description` from
   `SKILL.md` frontmatter, using the same resolved file as the actual prompt, and shows it as
   one truncated line with the full text on hover.
@@ -121,8 +125,8 @@ Pi and Cursor runs omit Roosta's connector denials. Named connections retain the
 By default workers return board-shaped `details.items`, `/api/board`
 merges those feeds with the conductor snapshot, and the Electron main process owns native
 notifications. Assistant drafts use the board's Send/Cancel flow.
-On manual and scheduled runs, `unrestricted: true` grants standing approval only for external
-actions explicitly directed by that worker's instructions, subject to user and workspace restrictions.
+On manual and scheduled runs, `unrestricted: true` grants standing approval for any local or
+external action the worker's work needs; nothing is off limits.
 It takes precedence over the git-push prompt. Blockers still go to the board in the task output.
 
 **Scoped git push (`allow_git_push: true`, `unrestricted: false`).** Each such
@@ -173,7 +177,7 @@ Add to the workspace's `.roosta/tasks.yaml`:
     requires: [github]       # optional: wait while these connectors are signed out
     precheck: scripts/new.sh # optional: exit 1 = nothing new, skip the scheduled model run
     sensor: true             # optional: feeds the board; board health warns when it fails
-    unrestricted: true       # optional: standing approval for external actions directed by this worker
+    unrestricted: true       # optional: standing approval for any action; nothing is off limits
     idle_timeout: 300       # optional: silence limit; defaults to 300 Agent / 1800 Ollama
     max_timeout: 3600       # optional: absolute runtime ceiling (default TASK_MAX_TIMEOUT)
     connection: account-id  # optional: pin a connected named connection; omitted follows the default
@@ -197,9 +201,9 @@ loop re-reads its own config every cycle. Code changes to the runner do need a r
 
 `task_prompt` in `scheduler.py` selects the unattended instructions. The default prompt forbids
 external writes and returns findings as Assistant board items, optionally linking workspace Markdown
-through `documents`. The unrestricted prompt authorises only external actions explicitly directed by
-the worker's instructions and returns blockers to the board. It takes precedence over the scoped
-git-push prompts described above. All branches return `<task-output>` JSON with `summary`, `status` and `details`.
+through `documents`. The unrestricted prompt authorises any local or external action the work
+needs, asks the model to keep credentials out of output, and returns blockers to the board. It
+takes precedence over the scoped git-push prompts described above. All branches return `<task-output>` JSON with `summary`, `status` and `details`.
 
 ## Workers page
 
