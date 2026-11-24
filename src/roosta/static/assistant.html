@@ -6,6 +6,7 @@
 <link rel="stylesheet" href="/static/vendor/tabler/tabler.min.css">
 <link rel="stylesheet" href="/static/shell.css">
 <script src="/static/theme.js"></script>
+<script src="/static/document-editor.js"></script>
 <script src="/static/nav-count.js" defer></script>
 <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/turndown@7.2.0/dist/turndown.js"></script>
@@ -214,7 +215,7 @@
   .docpane p{margin:.7rem 0}.docpane ul,.docpane ol{padding-left:1.2rem}
   .docpane pre{overflow:auto;background:var(--panel);padding:.75rem}.docpane table{display:block;overflow:auto}
   .docpane th,.docpane td{border:1px solid var(--line);padding:.4rem;font-size:.75rem}
-  @media (max-width:1100px){.docpane,#docpane-divider{display:none}}
+  @media (max-width:1100px){.docpane,#docpane-divider{display:none}.docpane:has(.document-editor section:not([hidden])){display:block;position:fixed;inset:var(--shell-header-height) 0 0;z-index:5}}
   @media (min-width:1101px){.pane{min-width:360px}.docpane{flex-shrink:1}} /* a wide inbox squeezes the document, never the chat */
   @media (max-width:900px){
     .attention-queue{width:var(--inbox-width,260px)}.queue-header{padding:1rem}
@@ -256,7 +257,7 @@
   <div id="inbox-divider"></div>
   <div class="pane" id="pane"><div class="empty"><svg class="icon" aria-hidden="true"><use href="/static/ui-icons.svg#assistant"/></svg><h2>Your workspace is ready</h2><p>Select an inbox item or start a chat.</p></div></div>
   <div id="docpane-divider"></div>
-  <aside class="docpane" id="docpane" hidden aria-label="Linked document"></aside>
+  <aside class="docpane" id="docpane" hidden aria-label="Linked document"><div class="docpane-head"></div><div id="docpane-editor"></div><div class="md"></div></aside>
 </div>
 <dialog id="context-dialog" aria-labelledby="context-title">
   <h2 class="h3" id="context-title"></h2>
@@ -497,7 +498,7 @@ async function loadChatIdeas(){
 // An idea fills the composer of the new chat already open, else opens one; never sends.
 function useIdea(text,source){
   trackUsage('idea_used',{source});
-  if(!(isGeneralChatId(activeId)&&!(chatHistories[activeId]||[]).length&&!chats.some(r=>r.id===activeId))) openItem(NEW_CHAT);
+  if(!(isGeneralChatId(activeId)&&!(chatHistories[activeId]||[]).length&&!chats.some(r=>r.id===activeId)) && openItem(NEW_CHAT)===false) return;
   const input=document.getElementById('input'); if(!input) return;
   input.value=text; input.dispatchEvent(new Event('input')); autosizeComposer(input); input.focus();
 }
@@ -574,6 +575,7 @@ function setRailTab(tab){
   renderRail();
 }
 async function archiveChat(id){
+  if(activeId===id && !docEditor.leave()) return;
   const title=chatItem(id)?.title||'Chat';
   let archived;
   try{
@@ -1168,6 +1170,7 @@ function renderRail(){
 }
 // Items that link a vault document (and document threads) show it beside the
 // chat. ponytail: first linked document only, tabs if an item ever needs more.
+const docEditor=documentEditor(document.getElementById('docpane-editor'),document.querySelector('#docpane .md'),text=>md(text,false),refreshDocPane);
 let docPaneToken=0,docPaneMarkdown='';
 // Anywhere on the board copies as Markdown: items, chats and the document pane.
 markdownCopy.watch('.main');
@@ -1178,23 +1181,27 @@ document.querySelector('.main').addEventListener('click',event=>{
 function showDocPane(it){
   const el=document.getElementById('docpane');
   const path=it&&(it.path||(it.documents&&it.documents[0]&&it.documents[0].path));
+  if(docEditor.active()) return;
+  docEditor.setPath('');
   const token=++docPaneToken;
-  if(!path){ el.hidden=true; el.innerHTML=''; return; }
+  el.hidden=true;
+  if(!path) return;
   fetch('/api/vault-document?path='+encodeURIComponent(path))
     .then(r=>r.ok?r.json():Promise.reject())
     .then(d=>{
       if(token!==docPaneToken) return;
-      el.innerHTML=`<div class="docpane-head"><span class="path" title="${escAttr(d.path)}">${esc(d.path)}</span>
+      el.querySelector('.docpane-head').innerHTML=`<span class="path" title="${escAttr(d.path)}">${esc(d.path)}</span>
         <button class="btn btn-sm" type="button" id="docpane-copy" title="Copy the document as Markdown">Copy</button>
         <a class="btn btn-sm" href="${documentHref(d.path,it.id)}" target="_blank" rel="noopener">Open full</a>
-        <button class="btn btn-sm btn-ghost-secondary" type="button" id="docpane-hide" title="Hide document" aria-label="Hide document">${icon('close')}</button></div>
-        <div class="md">${md(d.content,false)}</div>`;
+        <button class="btn btn-sm btn-ghost-secondary" type="button" id="docpane-hide" title="Hide document" aria-label="Hide document">${icon('close')}</button>`;
+      el.querySelector('.md').innerHTML=md(d.content,false);
+      docEditor.setPath(path,d.title);
       el.hidden=false;
       docPaneMarkdown=d.content;
       document.getElementById('docpane-copy').onclick=()=>markdownCopy.copyMarkdown(docPaneMarkdown.trim()+'\n','Document copied as Markdown');
-      document.getElementById('docpane-hide').onclick=()=>{ el.hidden=true; }; // reopens with the next item
+      document.getElementById('docpane-hide').onclick=()=>{ if(docEditor.leave()) el.hidden=true; }; // reopens with the next item
     })
-    .catch(()=>{ if(token===docPaneToken){ el.hidden=true; el.innerHTML=''; } });
+    .catch(()=>{ if(token===docPaneToken){ el.hidden=true; } });
 }
 // The chat often edits the document beside it, so re-read it after each reply.
 // Only the body is swapped, and only when the file changed, so scroll holds.
@@ -1216,6 +1223,7 @@ function refreshDocPane(){
     .catch(()=>{});
 }
 function openItem(id){
+  if(id!==activeId && !docEditor.leave()) return false;
   if(id===NEW_CHAT) id=mintChatId();
   if(id===NEW_HIRE) id=mintHireId();
   const persistent=isChatId(id);
@@ -1382,10 +1390,10 @@ function openItem(id){
 function askNewChat(text){
   const message=String(text||'').trim(); if(!message) return;
   trackUsage('chat_started',{});
-  openItem(NEW_CHAT);
-  send(activeId,message);
+  if(openItem(NEW_CHAT)!==false) send(activeId,message);
 }
 async function closeItem(id){
+  if(activeId===id && !docEditor.leave()) return;
   let ok=false;
   try{
     const res=await fetch('/api/board/close',{method:'POST',headers:{'Content-Type':'application/json'},
@@ -1397,6 +1405,7 @@ async function closeItem(id){
   dropItem(id);
 }
 async function snoozeItem(id,preset){
+  if(activeId===id && !docEditor.leave()) return;
   let out={};
   try{ out=await (await fetch('/api/board/snooze',{method:'POST',
     headers:{'Content-Type':'application/json'},body:JSON.stringify({item_id:id,preset})})).json(); }

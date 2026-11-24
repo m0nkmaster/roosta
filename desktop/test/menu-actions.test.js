@@ -133,3 +133,61 @@ test("ordinary external navigation only opens HTTP and HTTPS", () => {
     "x-apple.systempreferences:com.apple.Notifications-Settings.extension", "invalid"]) open(url);
   assert.deepEqual(opened, ["https://example.org/", "http://example.org/"]);
 });
+
+test("Keep editing cancels quit before stopping the runner until a close is accepted", async () => {
+  const vm = require("node:vm");
+  const { EventEmitter } = require("node:events");
+  const main = fs.readFileSync(path.join(__dirname, "..", "src", "main.js"), "utf8");
+  const windowCode = main.slice(main.indexOf("function createMainWindow()"), main.indexOf("function createTray()"));
+  const quitCode = main.slice(main.indexOf('app.on("before-quit"'));
+  const app = new EventEmitter();
+  const scheduled = [];
+  let stopped = 0, quits = 0, hidden = 0, choice = 0, finishStop;
+  const context = {
+    app, path, __dirname, settings: {}, hardenWindow() {}, saveSettings() {}, clearInterval() {}, pollTimer: 1,
+    setImmediate: callback => scheduled.push(callback),
+    BrowserWindow: class extends EventEmitter {
+      webContents = new EventEmitter();
+      loadFile() {}
+      hide() { hidden++; }
+    },
+    dialog: { showMessageBoxSync(_window, options) {
+      assert.equal(options.buttons[options.cancelId], "Keep editing");
+      return choice;
+    } },
+    supervisor: { stop() { stopped++; return new Promise(resolve => { finishStop = resolve; }); } },
+  };
+  app.quit = () => { quits++; };
+  const win = vm.runInNewContext(`let mainWindow, isQuitting=false, shutdownComplete=false;
+    ${windowCode}\n${quitCode}\ncreateMainWindow(); mainWindow`, context);
+  function prevented(emitter, name) {
+    let result = false;
+    emitter.emit(name, { preventDefault() { result = true; } });
+    return result;
+  }
+
+  app.emit("before-quit");
+  assert.equal(prevented(win, "close"), false);
+  assert.equal(prevented(win.webContents, "will-prevent-unload"), false);
+  assert.equal(prevented(win, "close"), true);
+  assert.equal(hidden, 1);
+  assert.equal(stopped, 0);
+  assert.equal(quits, 0);
+
+  choice = 1;
+  app.emit("before-quit");
+  assert.equal(prevented(win, "close"), false);
+  assert.equal(prevented(win.webContents, "will-prevent-unload"), true);
+  assert.equal(stopped, 0);
+  assert.equal(prevented(app, "will-quit"), true);
+  assert.equal(stopped, 1);
+  assert.equal(quits, 0);
+  finishStop();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(quits, 0);
+  assert.equal(scheduled.length, 1);
+  scheduled[0]();
+  assert.equal(quits, 1);
+  assert.equal(prevented(app, "will-quit"), false);
+  assert.equal(stopped, 1);
+});

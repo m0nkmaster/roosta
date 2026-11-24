@@ -4,6 +4,7 @@ Record each release newest first. Bump minor for features and visible behaviour,
 
 ## 0.19.0 - 2026-11-24
 
+- Edit Markdown source in Workspace, the document page and the Assistant document pane. Preview changes before saving and keep your draft if the file changes elsewhere.
 - Zoom the macOS dashboard from the View menu or with Command and the plus, minus or zero key. The zoom level follows you between dashboard pages.
 
 ## 0.18.1 - 2026-11-23

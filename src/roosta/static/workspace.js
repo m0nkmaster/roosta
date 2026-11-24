@@ -35,6 +35,7 @@ function snippet(text,terms){
 }
 
 const params=new URLSearchParams(location.search);
+const editor=documentEditor($('editor'),$('preview'),safeMarkdown,loadWorkspace);
 const state={files:[],collections:[],view:params.get('view')||(params.has('q')||params.has('path')?'all':'collections'),collection:params.get('collection')||'',path:params.get('path')||'',selected:new Set(),preview:null,request:0};
 try{const saved=JSON.parse(sessionStorage.getItem('workspace-selection')||'[]');if(Array.isArray(saved)) state.selected=new Set(saved.filter(p=>typeof p==='string').slice(0,8));}catch(error){}
 if(params.has('item')) state.selected=new Set(params.getAll('file').slice(0,8));
@@ -117,9 +118,15 @@ function renderPreview(){
     const template=document.createElement('template');template.innerHTML=highlightText(node.textContent,terms);node.replaceWith(template.content);
   }
   const first=$('preview').querySelector('mark');
-  if(first) $('preview').scrollTop+=first.getBoundingClientRect().top-$('preview').getBoundingClientRect().top-80;
+  if(first && !editor.active()){
+    const scroll=$('preview').parentElement;
+    scroll.scrollTop+=first.getBoundingClientRect().top-scroll.getBoundingClientRect().top-80;
+  }
 }
 async function previewFile(path){
+  if(path===state.path && editor.active()) return;
+  if(!editor.leave()) return;
+  editor.setPath('');
   state.path=path;state.preview=null;const request=++state.request;
   $('open-document').hidden=true;$('chat-document').hidden=true;$('copy-document').hidden=true;
   $('preview').innerHTML='<div class="navigator-empty">Loading document…</div>';
@@ -128,7 +135,7 @@ async function previewFile(path){
     const response=await fetch('/api/vault-document?path='+encodeURIComponent(path)+'&visible=true');
     const data=await response.json();if(request!==state.request) return;
     if(!response.ok) throw new Error(data.error||'Could not open document.');
-    state.preview=data;renderPreview();
+    editor.setPath(path,data.title);state.preview=data;renderPreview();
     $('open-document').href='/document?'+new URLSearchParams({path,from:location.pathname+location.search});
     $('open-document').hidden=false;$('chat-document').hidden=false;$('copy-document').hidden=false;
   }catch(error){if(request===state.request) $('preview').textContent=error.message;}
@@ -177,8 +184,9 @@ async function loadWorkspace(){
     $('index-status').textContent=`${state.files.length} Markdown documents · Local search`;
     if(data.skipped) notice(`${data.skipped} unreadable or oversized document${data.skipped===1?' was':'s were'} skipped.`);
     renderCollections();renderResults();renderSelection();
+    if(editor.active()) return;
     if(paths.has(state.path)) previewFile(state.path);
-    else if(state.path){state.path='';state.preview=null;$('preview').textContent='This document is no longer available.';$('open-document').hidden=true;$('chat-document').hidden=true;$('copy-document').hidden=true;updateUrl();}
+    else if(state.path){editor.setPath('');state.path='';state.preview=null;$('preview').textContent='This document is no longer available.';$('open-document').hidden=true;$('chat-document').hidden=true;$('copy-document').hidden=true;updateUrl();}
   }catch(error){$('index-status').textContent='Workspace unavailable';notice(error.message);$('results').textContent='Use Refresh to try again.';}
   finally{$('refresh').disabled=false;}
 }
@@ -194,17 +202,22 @@ $('reveal-workspace').onclick=async()=>{
 };
 $('views').onclick=event=>{
   const button=event.target.closest('[data-view]');if(!button) return;
-  clearPreview();state.view=button.dataset.view;state.collection='';
+  if(!clearPreview()) return;
+  state.view=button.dataset.view;state.collection='';
   if(state.view==='collections'){const first=state.collections.find(c=>c.group==='collections');if(first)return openCollection(first.id);}
   renderCollections();renderResults();
 };
 function clearPreview(){
+  if(!editor.leave()) return false;
+  editor.setPath('');
   ++state.request;state.preview=null;state.path='';
   $('preview').innerHTML='<div class="navigator-empty">Choose a document to read it here.</div>';
   $('open-document').hidden=true;$('chat-document').hidden=true;$('copy-document').hidden=true;
+  return true;
 }
 function openCollection(id){
-  clearPreview();state.collection=id;state.view=currentCollection().group;
+  if(!clearPreview()) return;
+  state.collection=id;state.view=currentCollection().group;
   renderCollections();renderResults();
   const overview=currentCollection().overview;if(overview) previewFile(overview);
 }

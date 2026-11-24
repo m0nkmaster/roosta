@@ -71,7 +71,8 @@ Paths below are relative to `src/roosta/` unless stated otherwise.
 | `claude_code.py`, `claude_guard.py` | Claude invocation, stream parsing, permission settings/hook |
 | `opencode_ollama.py` | Local model invocation, environment, compatibility |
 | `connectors.py` | Generic sign-in probes and external-write denials |
-| `workspace.py` | Read-only document catalogue, vault path validation and bounded attachments |
+| `workspace.py` | Document catalogue, vault path validation and bounded attachments |
+| `document_editor.py` | Raw Markdown reads and revision-checked atomic saves |
 | `attachments.py` | Chat upload storage, limits and validation |
 | `pulse.py`, `usage.py` | Vault telemetry and privacy-preserving interaction signals |
 | `pages.py` | Custom pages and workspace overrides of shipped pages |

@@ -6,6 +6,7 @@
 <link rel="stylesheet" href="/static/vendor/tabler/tabler.min.css">
 <link rel="stylesheet" href="/static/shell.css">
 <script src="/static/theme.js"></script>
+<script src="/static/document-editor.js"></script>
 <script src="/static/nav-count.js" defer></script>
 <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 <script src="/static/vault-markdown.js"></script>
@@ -14,7 +15,7 @@
 <script src="/static/markdown-copy.js"></script>
 <style>
   .document-shell{max-width:1100px;margin:0 auto;padding:1.75rem var(--shell-gutter) 4rem}
-  .document-toolbar{display:flex;align-items:center;gap:.75rem;margin-bottom:1.25rem}
+  .document-toolbar{display:flex;flex-wrap:wrap;align-items:center;gap:.75rem;margin-bottom:1.25rem}
   .back{color:var(--console-tertiary);text-decoration:none;font-size:.7rem;font-weight:700;
     letter-spacing:0;text-transform:none}
   .back:hover{color:var(--console-text)}
@@ -53,6 +54,7 @@
     <button class="btn" id="copy" type="button" hidden title="Copy the document as Markdown">Copy</button>
     <a class="btn btn-primary" id="chat" hidden>Chat about this</a>
   </div>
+  <div id="editor"></div>
   <article class="card card-body prose" id="document"><div class="state">Loading document…</div></article>
 </main>
 <script>
@@ -106,7 +108,11 @@ function renderProperties(article,properties){
   });
   article.prepend(list);
 }
+const editor=documentEditor(document.getElementById('editor'),document.getElementById('document'),safeMarkdown,loadDocument);
+let loadToken=0;
 async function loadDocument(){
+  if(editor.active()) return;
+  const token=++loadToken;
   const params=new URLSearchParams(location.search);
   const path=params.get('path')||'';
   const item=params.get('item');
@@ -122,7 +128,9 @@ async function loadDocument(){
     const visible=from && ['/workspace','/pulse','/constellation'].includes(new URL(from,location.origin).pathname);
     const response=await fetch('/api/vault-document?path='+encodeURIComponent(path)+(visible?'&visible=true':''));
     const data=await response.json();
+    if(token!==loadToken || editor.active()) return;
     if(!response.ok) throw new Error(data.error||'Document could not be loaded');
+    editor.setPath(path,data.title);
     const version=JSON.stringify([data.content,data.properties]);
     if(version===shownVersion) return;
     shownVersion=version;
@@ -139,7 +147,8 @@ async function loadDocument(){
     renderProperties(article,data.properties);
     window.scrollTo(0,top);
   }catch(error){
-    shownVersion=null;
+    if(token!==loadToken || editor.active()) return;
+    editor.setPath('');shownVersion=null;
     article.innerHTML='';
     const state=document.createElement('div');
     state.className='state';

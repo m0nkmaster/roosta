@@ -114,7 +114,7 @@ See [Assistant contracts](assistant.md) and [Office rendering](office.md) for pa
 
 ## Workspace and documents
 
-- **`static/document.html`** - Read-only Markdown renderer for validated vault documents linked
+- **`static/document.html`** - Markdown viewer and source editor for validated vault documents linked
   from Assistant items
 
 - **`static/workspace.html` / `workspace.js`** - Fluid Tabler document navigator; in-memory literal
@@ -122,6 +122,18 @@ See [Assistant contracts](assistant.md) and [Office rendering](office.md) for pa
   up to eight selected files; collection names, descriptions and membership come from vault metadata.
   Open folder posts to local-only `/api/workspace/reveal`, which opens the active workspace (never a
   request-supplied path) in the OS file browser
+
+- **Manual document editing** uses `static/document-editor.js` in Workspace, the standalone viewer and
+  the Assistant document pane. The editor loads raw UTF-8 from local-only
+  `GET /api/workspace/document-source?path=…`. Save sends the source as UTF-8 plain text to
+  the same URL with PUT and a quoted revision in If-Match. The 2 MB limit applies in both
+  directions. Only visible Markdown files on macOS or Linux filesystems with atomic exchange qualify. Paths containing
+  symlinks, multiply linked files and read-only files stay view-only. Saves lock the parent
+  directory against other editor saves, stage in that directory, and recheck the live directory,
+  file identity and bytes. Atomic exchange requires both names to exist and retains the displaced file
+  for verification. A racing change rolls back. If another writer also interrupts rollback, the error
+  identifies the retained file for recovery. The lock is advisory for external writers.
+  Drafts live in the page until Save or confirmed discard. Copy draft includes frontmatter.
 
 - **`static/vault-markdown.js`** - Shared sanitised Markdown renderer for document and Workspace previews
 
