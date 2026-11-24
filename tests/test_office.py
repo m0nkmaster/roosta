@@ -1015,3 +1015,46 @@ def test_friday_cake_arrives_gets_cut_and_leaves_a_last_slice():
           "process.stdout.write(JSON.stringify([cakeStage(4, 15), cakeStage(5, 14.4), cakeStage(5, 14.5), cakeStage(5, 15.5),"
           " cakeStage(5, 16.8), cakeStage(5, 18), cakeStage(6, 15)]))")
     assert _node(js) == [None, None, "whole", "cut", "slice", None, None]
+
+
+def test_post_lands_mid_morning_monday_to_saturday_and_never_lingers():
+    hash_js = re.search(r"const hash = .*?;\n", PAGE.read_text()).group(0)
+    js = (f"{hash_js}{_lift('postFor')}{_lift('postWaiting')}" + """
+const days = [0,1,2,3,4,5,6].map((d) => postFor('2026-11-24', d));
+const tue = days[2], none = new Set();
+const out = {
+  sunday: days[0],
+  at: days.slice(1).map((p) => p.at),
+  counts: days.slice(1).map((p) => p.slots.length),
+  bys: days.slice(1).map((p) => [Math.min(...p.slots.map((s) => s.by - p.at)), Math.max(...p.slots.map((s) => s.by))]),
+  kinds: [...new Set(days.flatMap((p) => p ? p.slots.map((s) => s.kind) : []))].sort(),
+  before: postWaiting(tue, tue.at - 1, none).length,
+  landed: postWaiting(tue, tue.at, none).length,
+  taken: postWaiting(tue, tue.at, new Set([tue.slots[0].i])).length,
+  evening: postWaiting(tue, 17 * 60 + 30, none).length,
+  stable: JSON.stringify(postFor('2026-11-24', 2)) === JSON.stringify(tue),
+};
+process.stdout.write(JSON.stringify(out));
+""")
+    out = _node(js)
+    assert out["sunday"] is None
+    assert all(570 <= a <= 660 for a in out["at"][:5]) and 600 <= out["at"][5] <= 720
+    assert all(1 <= n <= 9 for n in out["counts"]) and out["counts"][0] >= 3  # Monday brings the weekend's post
+    assert all(lo >= 20 for lo, _ in out["bys"]) and all(hi <= 1050 for _, hi in out["bys"][:5]) and out["bys"][5][1] <= 780
+    assert set(out["kinds"]) <= {"letter", "flyer", "postcard"}
+    assert out["before"] == 0 and out["landed"] == out["counts"][1] and out["taken"] == out["landed"] - 1
+    assert out["evening"] == 0 and out["stable"]
+
+
+def test_collecting_post_takes_one_slot_and_makes_no_runner_calls():
+    js = (f"{_lift('collectPost')}" + """
+const slots = [{i: 2, kind: 'postcard', by: 900}], postTaken = new Set();
+const postLeft = () => slots.filter((s) => !postTaken.has(s.i));
+let said = []; const say = (w, t) => said.push(t), pick = (l) => l[0], lastQuip = 0;
+const POST_QUIPS = {letter: ['l'], flyer: ['f'], postcard: ['p'], none: ['n']};
+const fetch = () => { throw new Error('no runner calls'); };
+const a = {}, b = {};
+collectPost(a, 10000); collectPost(b, 20000);
+process.stdout.write(JSON.stringify({taken: [...postTaken], a: [a.item, a.emote], b: [b.item, b.emote], said}));
+""")
+    assert _node(js) == {"taken": [2], "a": ["papers", "heart"], "b": [None, "q"], "said": ["p", "n"]}
