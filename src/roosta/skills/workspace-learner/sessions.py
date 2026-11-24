@@ -251,21 +251,43 @@ def _cc_lines(path):
             if not line:
                 continue
             try:
-                yield json.loads(line)
+                record = json.loads(line)
             except json.JSONDecodeError:
                 continue
+            if isinstance(record, dict):
+                yield record
 
 
-def _cc_text_items(content):
-    """Normalise a Claude message.content into (kind, payload) items."""
+def _cc_items(record):
+    queued = record.get("type") == "attachment"
+    if queued:
+        attachment = record.get("attachment")
+        if not isinstance(attachment, dict):
+            return []
+        origin = attachment.get("origin")
+        if (
+            attachment.get("type") != "queued_command"
+            or attachment.get("humanTurn") is not True
+            or attachment.get("isMeta")
+            or attachment.get("commandMode", "prompt") != "prompt"
+            or (origin is not None and (not isinstance(origin, dict) or origin.get("kind") != "human"))
+        ):
+            return []
+        content = attachment.get("prompt")
+    else:
+        content = (record.get("message") or {}).get("content")
     if isinstance(content, str):
         return [("text", content)]
     items = []
-    for it in content or []:
+    if not isinstance(content, list):
+        return items
+    for it in content:
+        if not isinstance(it, dict):
+            continue
         t = it.get("type")
-        if t == "text":
-            items.append(("text", it.get("text") or ""))
-        elif t == "tool_use":
+        if t == "text" and isinstance(it.get("text"), str):
+            items.append(("text", it["text"]))
+        elif t == "tool_use" and not queued:
             items.append(("tool", it))
     return items
 
@@ -287,13 +309,13 @@ def cc_list(since):
             t = d.get("type")
             if t == "ai-title" and d.get("aiTitle"):
                 title = d["aiTitle"]
-            ts = iso_ms(d.get("timestamp"))
+            ts = iso_ms(d["timestamp"]) if isinstance(d.get("timestamp"), str) else None
             if ts:
                 last_ts = ts if last_ts is None else max(last_ts, ts)
             if t == "assistant" and not d.get("isSidechain"):
                 has_asst = True
-            if t == "user" and not d.get("isSidechain") and not d.get("isMeta"):
-                for kind, payload in _cc_text_items((d.get("message") or {}).get("content")):
+            if t in ("user", "attachment") and not d.get("isSidechain") and not d.get("isMeta"):
+                for kind, payload in _cc_items(d):
                     if kind == "text" and payload.strip() and not _CC_SKIP.match(payload):
                         if any(phrase in payload for phrase in BG_PHRASES):
                             is_bg = True
@@ -311,19 +333,28 @@ def cc_list(since):
 def cc_transcript(sid, tools):
     path = os.path.join(CLAUDE_DIR, sid + ".jsonl")
     toolcalls = []
+    user_ids, queued_ids = set(), set()
     for d in _cc_lines(path):
-        if d.get("isSidechain"):
+        if d.get("isSidechain") or d.get("isMeta"):
             continue
         t = d.get("type")
-        if t not in ("user", "assistant"):
+        if t not in ("user", "assistant", "attachment"):
             continue
-        role = (d.get("message") or {}).get("role", t)
-        if d.get("isMeta"):
-            continue
-        for kind, payload in _cc_text_items((d.get("message") or {}).get("content")):
+        queued = t == "attachment"
+        role = "user" if queued else (d.get("message") or {}).get("role", t)
+        uid = d.get("uuid")
+        if queued and isinstance(d.get("attachment"), dict):
+            uid = d["attachment"].get("source_uuid") or uid
+        identified = isinstance(uid, str) and bool(uid)
+        duplicate = identified and (uid in queued_ids or (queued and uid in user_ids))
+        for kind, payload in _cc_items(d):
             if kind == "text":
                 if _CC_SKIP.match(payload) or not payload.strip():
                     continue
+                if t in ("user", "attachment") and identified:
+                    if duplicate:
+                        continue
+                    (queued_ids if queued else user_ids).add(uid)
                 print(f"{role.upper()}: {payload}")
             elif kind == "tool":
                 name = payload.get("name", "?")
