@@ -44,11 +44,11 @@ State lives in `.roosta/engineer/`.
 
   ```bash
   python3 "/absolute/path/to/sessions.py" list <watermark-ms> --source <oc|cc|cursor|assistant> --json
-  python3 "/absolute/path/to/sessions.py" transcript <SOURCE:ID>
+  python3 "/absolute/path/to/sessions.py" transcript "<transcript_id from the JSON row>"
   ```
 
 - **Usage:** `roosta usage --days 14` summarises coarse local interaction events (no ids, titles or message text). Look for repeated paths, unused affordances, abandonment and workarounds.
-- **Failures:** task errors on the Workers page (`curl -s "127.0.0.1:${ROOSTA_PORT:-7667}/api/tasks"`) and the activity feed.
+- **Failures:** read live worker health with `roosta snapshot tasks` and current board items with `roosta snapshot board`. Run each command separately.
 
 ## One pass
 

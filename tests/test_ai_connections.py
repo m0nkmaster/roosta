@@ -250,6 +250,7 @@ for (const tool of ['read', 'edit', 'write']) {
 for (const root of [accounts, runtime]) assert(blocked('bash', 'cat ' + root + '/data'));
 if (editable === 'False') assert(blocked('bash', 'cat ' + pkg + '/runtime/data'));
 assert.equal(blocked('bash', 'python3 ' + pkg + '/skills/workspace-learner/sessions.py status'), false);
+for (const resource of ['board', 'tasks']) assert.equal(blocked('bash', 'roosta snapshot ' + resource), false);
 assert.equal(blocked('bash', 'git push origin main'), profile === 'safe');
 '''
     fresh = ai_backend.prepare(account['id'], str(workspace), profile=profile)
@@ -302,7 +303,7 @@ const helper = 'python3 ' + file;
 assert.equal(JSON.parse(run(helper + ' status')).assistant.available, true);
 const [row] = JSON.parse(run(helper + ' list 0 --source assistant --newest-first --limit 1 --json'));
 assert.equal(row.id, 'chat:fixture');
-assert.match(run(helper + ' transcript ' + row.source + ':' + row.id + ' --tools'), /The engineer runs daily/);
+assert.match(run(helper + ' transcript ' + row.transcript_id + ' --tools'), /The engineer runs daily/);
 assert.match(run("grep -F -- 'def cmd_list' " + file), /def cmd_list/);
 for (const command of [helper + ' status && echo done', helper + ' status > log', helper + ' status\ntouch log',
                        helper + ' list "$(date)"', helper + ' transcript cc:../file', helper + ' update',

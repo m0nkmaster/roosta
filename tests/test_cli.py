@@ -30,6 +30,26 @@ def isolated_config(tmp_path, monkeypatch):
     monkeypatch.setattr(cli, "CONFIG_FILE", tmp_path / "config" / "roosta.json")
 
 
+@pytest.mark.parametrize("resource", ["board", "tasks"])
+def test_snapshot_reads_only_local_runner(resource, monkeypatch, capsys):
+    import httpx
+
+    monkeypatch.setenv("ROOSTA_PORT", "7812")
+    def get(url, **options):
+        assert url == f"http://127.0.0.1:7812/api/{resource}"
+        assert options["trust_env"] is False and options["follow_redirects"] is False
+        return httpx.Response(200, json={"items": []}, request=httpx.Request("GET", url))
+
+    monkeypatch.setattr(httpx, "get", get)
+    assert cli.main(["snapshot", resource]) == 0
+    assert json.loads(capsys.readouterr().out) == {"items": []}
+    monkeypatch.setenv("ROOSTA_PORT", "7812@example.com")
+    assert cli.main(["snapshot", resource]) == 1
+    assert not capsys.readouterr().out
+    with pytest.raises(SystemExit):
+        cli.main(["snapshot", "board/refresh"])
+
+
 def test_init_creates_a_workspace_without_clobbering(tmp_path):
     target = tmp_path / "ws"
     assert cli.init(target, check=False) == 0
