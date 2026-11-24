@@ -919,6 +919,14 @@ def test_pong_point_is_first_to_eleven_win_by_two():
                          {"score": [12, 10], "won": 0}, {"score": [9, 13], "won": 1}]
 
 
+def test_pong_call_names_game_point_deuce_and_advantage():
+    js = (f"{_lift('pongCall')}"
+          "process.stdout.write(JSON.stringify([[0, 0], [9, 3], [10, 3], [4, 10], [10, 10], [11, 10], [12, 13], [10, 11], [13, 13]].map(pongCall)))")
+    assert _node(js) == [{"call": "", "side": -1}, {"call": "", "side": -1}, {"call": "game point", "side": 0},
+                         {"call": "game point", "side": 1}, {"call": "deuce", "side": -1}, {"call": "advantage", "side": 0},
+                         {"call": "advantage", "side": 1}, {"call": "advantage", "side": 1}, {"call": "deuce", "side": -1}]
+
+
 @pytest.mark.parametrize("game,click", [("pong", "clickPong"), ("foos", "clickFoos")])
 @pytest.mark.parametrize("available", [1, 2])
 def test_click_game_recruits_two_distinct_idle_workers_or_leaves_them_alone(game, click, available):
