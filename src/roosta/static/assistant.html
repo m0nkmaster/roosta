@@ -257,7 +257,13 @@
   <div id="inbox-divider"></div>
   <div class="pane" id="pane"><div class="empty"><svg class="icon" aria-hidden="true"><use href="/static/ui-icons.svg#assistant"/></svg><h2>Your workspace is ready</h2><p>Select an inbox item or start a chat.</p></div></div>
   <div id="docpane-divider"></div>
-  <aside class="docpane" id="docpane" hidden aria-label="Linked document"><div class="docpane-head"></div><div id="docpane-editor"></div><div class="md"></div></aside>
+  <aside class="docpane" id="docpane" hidden aria-label="Linked document"><div class="docpane-head">
+      <span class="path"></span>
+      <button type="button" class="btn btn-sm btn-icon btn-ghost-secondary" data-edit hidden aria-label="Edit document" title="Edit document"><svg class="icon" aria-hidden="true"><use href="/static/ui-icons.svg#edit"/></svg></button>
+      <button type="button" class="btn btn-sm btn-icon btn-ghost-secondary" id="docpane-copy" data-copy-document aria-label="Copy document as Markdown" title="Copy document as Markdown"><svg class="icon" aria-hidden="true"><use href="/static/ui-icons.svg#copy"/></svg></button>
+      <a class="btn btn-sm btn-icon btn-ghost-secondary" title="Open full document" aria-label="Open full document"><svg class="icon" aria-hidden="true"><use href="/static/ui-icons.svg#open"/></svg></a>
+      <button type="button" class="btn btn-sm btn-icon btn-ghost-secondary" id="docpane-hide" aria-label="Hide document" title="Hide document"><svg class="icon" aria-hidden="true"><use href="/static/ui-icons.svg#close"/></svg></button>
+    </div><div id="docpane-editor"></div><div class="md"></div></aside>
 </div>
 <dialog id="context-dialog" aria-labelledby="context-title">
   <h2 class="h3" id="context-title"></h2>
@@ -1190,10 +1196,9 @@ function showDocPane(it){
     .then(r=>r.ok?r.json():Promise.reject())
     .then(d=>{
       if(token!==docPaneToken) return;
-      el.querySelector('.docpane-head').innerHTML=`<span class="path" title="${escAttr(d.path)}">${esc(d.path)}</span>
-        <button class="btn btn-sm" type="button" id="docpane-copy" title="Copy the document as Markdown">Copy</button>
-        <a class="btn btn-sm" href="${documentHref(d.path,it.id)}" target="_blank" rel="noopener">Open full</a>
-        <button class="btn btn-sm btn-ghost-secondary" type="button" id="docpane-hide" title="Hide document" aria-label="Hide document">${icon('close')}</button>`;
+      const pathLabel=el.querySelector('.docpane-head .path');
+      pathLabel.textContent=pathLabel.title=d.path;
+      el.querySelector('.docpane-head a').href=documentHref(d.path,it.id);
       el.querySelector('.md').innerHTML=md(d.content,false);
       docEditor.setPath(path,d.title);
       el.hidden=false;

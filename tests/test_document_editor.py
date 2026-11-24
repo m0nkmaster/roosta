@@ -204,7 +204,7 @@ const host={classList:{add(){}},querySelector(key){
   if(!parts.has(key)) parts.set(key,element());
   return parts.get(key);
 }};
-const window={addEventListener(){}}, document={createElement:element};
+const window={addEventListener(){}}, document={createElement:element,querySelector:key=>host.querySelector(key)};
 const raw=front+'A\nB\rC',saved=[];
 const fetch=async(_,options)=>{
   if(options.method==='PUT') saved.push(options.body);

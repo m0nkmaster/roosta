@@ -213,6 +213,9 @@ def test_pi_package_and_private_permissions(accounts, tmp_path, monkeypatch, pro
     checkout = tmp_path / 'checkout'
     package = checkout / 'src/roosta'
     package.mkdir(parents=True)
+    helper = package / 'skills/workspace-learner/sessions.py'
+    helper.parent.mkdir(parents=True)
+    helper.touch()
     (package / 'pi_guard.mjs').symlink_to(paths.APP_ROOT / 'pi_guard.mjs')
     monkeypatch.setattr(paths, 'APP_ROOT', package)
     runtime = checkout / '.roosta/runtimes'
@@ -222,6 +225,7 @@ def test_pi_package_and_private_permissions(accounts, tmp_path, monkeypatch, pro
     workspace.mkdir(exist_ok=True)
     (workspace / 'core').symlink_to(package)
     (package / 'runtime').symlink_to(runtime)
+    (runtime / 'data').touch()
     (workspace / 'new-file').symlink_to(package / 'missing')
     script = r'''
 import assert from 'node:assert/strict';
@@ -244,7 +248,9 @@ for (const tool of ['read', 'edit', 'write']) {
   assert.equal(blocked(tool, pkg + '-sibling/file'), false);
 }
 for (const root of [accounts, runtime]) assert(blocked('bash', 'cat ' + root + '/data'));
-assert.equal(blocked('bash', 'python3 ' + pkg + '/skills/workspace-learner/sessions.py status'), editable === 'False');
+if (editable === 'False') assert(blocked('bash', 'cat ' + pkg + '/runtime/data'));
+assert.equal(blocked('bash', 'python3 ' + pkg + '/skills/workspace-learner/sessions.py status'), false);
+for (const resource of ['board', 'tasks']) assert.equal(blocked('bash', 'roosta snapshot ' + resource), false);
 assert.equal(blocked('bash', 'git push origin main'), profile === 'safe');
 '''
     fresh = ai_backend.prepare(account['id'], str(workspace), profile=profile)
@@ -258,6 +264,58 @@ assert.equal(blocked('bash', 'git push origin main'), profile === 'safe');
         subprocess.run([node, '--input-type=module', '-e', script, guard, str(package),
                         str(connections.CONNECTIONS_DIR), str(runtime), str(editable), profile],
                        cwd=workspace, env=run.env, check=True)
+
+
+@pytest.mark.parametrize('layout', ['source', 'site-packages'])
+def test_pi_engineer_evidence_scan(tmp_path, layout):
+    node = shutil.which('node')
+    if not node:
+        pytest.skip('node not available')
+    package = paths.APP_ROOT
+    helper = Path('skills/workspace-learner/sessions.py')
+    if layout == 'site-packages':
+        package = tmp_path / 'Python Libraries/site-packages/roosta'
+        (package / helper).parent.mkdir(parents=True)
+        shutil.copyfile(paths.APP_ROOT / helper, package / helper)
+
+    workspace = tmp_path / 'office'
+    workspace.mkdir()
+    history = workspace / '.roosta/state/assistant/chat-history.json'
+    history.parent.mkdir(parents=True)
+    history.write_text(json.dumps({'chat:fixture': [
+        {'role': 'user', 'text': 'Show the worker schedule'},
+        {'role': 'assistant', 'text': 'The engineer runs daily'},
+    ]}))
+    script = r"""
+import assert from 'node:assert/strict';
+import {execSync} from 'node:child_process';
+import {pathToFileURL} from 'node:url';
+const [guard, pkg] = process.argv.slice(1);
+const {denied} = await import(pathToFileURL(guard));
+const policy = {deny: [], readOnlyRoot: pkg};
+const check = command => denied({toolName: 'bash', input: {command}}, policy);
+function run(command) {
+  assert.equal(check(command), '');
+  return execSync(command, {encoding: 'utf8'});
+}
+const file = "'" + pkg + "/skills/workspace-learner/sessions.py'";
+const helper = 'python3 ' + file;
+assert.equal(JSON.parse(run(helper + ' status')).assistant.available, true);
+const [row] = JSON.parse(run(helper + ' list 0 --source assistant --newest-first --limit 1 --json'));
+assert.equal(row.id, 'chat:fixture');
+assert.match(run(helper + ' transcript ' + row.transcript_id + ' --tools'), /The engineer runs daily/);
+assert.match(run("grep -F -- 'def cmd_list' " + file), /def cmd_list/);
+for (const command of [helper + ' status && echo done', helper + ' status > log', helper + ' status\ntouch log',
+                       helper + ' list "$(date)"', helper + ' transcript cc:../file', helper + ' update',
+                       'python3 -i ' + file + ' status', 'touch ' + file, 'cat ' + file + ' | sh']) {
+  assert(check(command), command);
+}
+"""
+    env = dict(os.environ, HOME=str(tmp_path), ROOSTA_WORKSPACE=str(workspace),
+               ASSISTANT_HISTORY=str(history), OC_DB=str(tmp_path / 'absent.db'),
+               CLAUDE_PROJECTS_DIR=str(tmp_path / 'claude'), CURSOR_PROJECTS_DIR=str(tmp_path / 'cursor'))
+    subprocess.run([node, '--input-type=module', '-e', script, str(paths.APP_ROOT / 'pi_guard.mjs'),
+                    str(package)], cwd=workspace, env=env, check=True)
 
 
 def test_settings_reject_remote_and_cross_origin_requests(accounts):

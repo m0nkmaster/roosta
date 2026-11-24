@@ -272,6 +272,7 @@ here.
 
 ## Product usage and engineering runs
 
+- Workers can run `roosta snapshot board` or `roosta snapshot tasks` for the live JSON. Both issue a loopback GET on the runner port with proxies and redirects disabled.
 - **Dashboard evolution uses real product behaviour.** `/api/usage` accepts only allowlisted,
   coarse interaction metadata and stores it in gitignored `cache/product-usage.jsonl`; it rejects
   item ids, titles and message text. `roosta usage --days 14` gives the roosta-engineer a
