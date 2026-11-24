@@ -2,6 +2,10 @@
 
 Record each release newest first. Bump minor for features and visible behaviour, patch for fixes and polish.
 
+## 0.19.0 - 2026-11-24
+
+- Zoom the macOS dashboard from the View menu or with Command and the plus, minus or zero key. The zoom level follows you between dashboard pages.
+
 ## 0.18.1 - 2026-11-23
 
 - Settings now shows `roosta update` for supported Python installations.
