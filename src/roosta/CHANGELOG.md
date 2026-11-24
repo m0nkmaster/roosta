@@ -2,6 +2,10 @@
 
 Record each release newest first. Bump minor for features and visible behaviour, patch for fixes and polish.
 
+## 0.19.4 - 2026-11-24
+
+- History listings provide the full transcript ID workers need. Workers can read the live board and task status with a local snapshot command.
+
 ## 0.19.3 - 2026-11-24
 
 - Pi workers and Assistant chats can scan history with the bundled Workspace Learner helper and inspect individual installed source files while package writes remain blocked.

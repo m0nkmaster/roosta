@@ -532,6 +532,7 @@ def cmd_list(args):
                     {
                         "source": source_name,
                         "id": sid,
+                        "transcript_id": f"{source_name}:{sid}",
                         "timestamp_ms": ts,
                         "timestamp_utc": fmt_dt(ts),
                         "title": title,

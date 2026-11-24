@@ -15,7 +15,7 @@ python3 "/absolute/path/to/sessions.py" transcript SOURCE:ID
 python3 "/absolute/path/to/sessions.py" transcript SOURCE:ID --tools
 ```
 
-Each list row contains `SOURCE:ID`; pass that full token to `transcript`. Add `--tools` when a session suggests a query, path or tool failure.
+In JSON listings, pass the row’s `transcript_id` verbatim as one quoted argument to `transcript`. For example, an Assistant row with `id` of `chat:abc` has `transcript_id` of `assistant:chat:abc`. Add `--tools` when a session suggests a query, path or tool failure.
 
 The Assistant history has no per-message timestamps, so the helper treats every conversation as updated when the file's modification time crosses its checkpoint. Read each returned conversation completely and deduplicate already handled facts.
 

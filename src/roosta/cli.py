@@ -371,6 +371,9 @@ def main(argv: list[str] | None = None) -> int:
             command.add_argument("name")
     skills_sub.add_parser("path", help="print the folder holding Roosta's shipped core skills")
 
+    snapshot = sub.add_parser("snapshot", help="read live board or worker JSON from the local runner")
+    snapshot.add_argument("resource", choices=("board", "tasks"))
+
     p_usage = sub.add_parser("usage", help="summarise local Assistant usage (for the roosta-engineer)")
     p_usage.add_argument("--workspace", default=None)
     p_usage.add_argument("--days", type=int, default=14)
@@ -393,6 +396,21 @@ def main(argv: list[str] | None = None) -> int:
         return start(Path(args.workspace or default_workspace()), args.host or saved_host, args.port or saved_port)
     if args.command == "service":
         return service_install(Path(args.workspace), args.port)
+    if args.command == "snapshot":
+        import httpx
+
+        try:
+            port = int(os.environ.get("ROOSTA_PORT") or default_address()[1])
+            if not 1 <= port <= 65535:
+                raise ValueError("port must be between 1 and 65535")
+            response = httpx.get(f"http://127.0.0.1:{port}/api/{args.resource}",
+                                 trust_env=False, follow_redirects=False, timeout=10)
+            response.raise_for_status()
+            print(json.dumps(response.json()))
+        except (ValueError, httpx.HTTPError) as exc:
+            print(f"Cannot read local {args.resource} snapshot: {exc}", file=sys.stderr)
+            return 1
+        return 0
     if args.command == "usage":
         from roosta.usage import UsageStore
 
