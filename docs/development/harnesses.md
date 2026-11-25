@@ -47,7 +47,7 @@ sign-in/logout subprocess ever runs for them — disconnect only marks the recor
 the login operation is rejected. At server startup (before workers start), and when `/api/ai/connections` is loaded, if no `system` connection
 exists, one is auto-provisioned ("Claude Code") if `find("claude")` succeeds; a top-level
 `system_offered` flag in the connections file makes this happen once, so deleting it never
-re-creates it. Choose any connected account as default with `POST /api/ai/default {connection}`. This does not list models or run a test. The first successful test sets the default only if none has been chosen.
+re-creates it. An explicit **Add and use as default** submits `default_if_unset: true` on account creation. The account and default are saved together, preserving any default chosen in another window. Detection alone leaves the choice open. Choose any connected account as default with `POST /api/ai/default {connection}`. This does not list models or run a test. The first successful test sets the default only if none has been chosen.
 
 A connection is an account (provider plus sign-in or key) and carries no model; any legacy `model`
 key in the file is ignored on load. Settings stores a top-level `model_choice: {provider, model, effort}` alongside the default account via
