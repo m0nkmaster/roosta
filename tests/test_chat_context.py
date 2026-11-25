@@ -12,8 +12,19 @@ import pytest
 from roosta import app, chat
 
 
-def router_at(directory, agent=None):
-    return chat.ChatRouter(agent, chat.SessionMap(directory / "sessions.json"), str(directory),
+@pytest.fixture(autouse=True)
+def connected(fake_chat_connection):
+    return fake_chat_connection
+
+
+def use_sessions(monkeypatch, create):
+    async def new_session(_connection, _workspace):
+        return await create()
+    monkeypatch.setattr(chat.ai_backend, "new_session", new_session)
+
+
+def router_at(directory):
+    return chat.ChatRouter(chat.SessionMap(directory / "sessions.json"), str(directory),
                            handled_path=directory / "handled.json",
                            topic_store=chat.TopicStore(directory / "topics.json"),
                            persistent_history=chat.ConversationHistoryStore(directory / "history.json"))
@@ -38,7 +49,6 @@ def capture_turns(monkeypatch):
         return SimpleNamespace(stdout=lines(), returncode=0, wait=wait)
 
     monkeypatch.setattr(chat.asyncio, "create_subprocess_exec", spawn)
-    monkeypatch.setattr(chat, "cursor_env", lambda *_: {})
     return calls
 
 
@@ -49,8 +59,8 @@ def capture_turns(monkeypatch):
 def test_reset_restarts_only_selected_context(tmp_path, monkeypatch, item, mode):
     router = router_at(tmp_path)
     old = str(uuid.uuid4())
-    router._sessions.set(item, old)
     router._sessions.connection(item)
+    router._sessions.set(item, old)
     router._sessions.set_model(item, "chosen-model")
     router._sessions.set("other", old)
     router._topics.begin(item, {"title": "Subject"}, old)
@@ -69,13 +79,14 @@ def test_reset_restarts_only_selected_context(tmp_path, monkeypatch, item, mode)
     async def create():
         return fresh
 
-    router = router_at(tmp_path, SimpleNamespace(create_session=create))
+    use_sessions(monkeypatch, create)
+    router = router_at(tmp_path)
     # A second preview before the first new turn must never seed from archived messages.
     preview = context(router, item)
     assert "private old text" not in preview["handoff"]
     assert router.known_item(item)["title"] == "Subject"
     assert router._sessions.model(item) == "chosen-model"
-    assert router._sessions.connection(item) == "legacy:cursor"
+    assert router._sessions.connection(item) == "c" * 32
     assert router._sessions.get("other") == old
     assert router.handled()[item]["result"] == "Resolved"
     assert router.conversation_history("other") == messages
@@ -142,7 +153,9 @@ def test_session_creation_queue_and_senders_exclude_reset(tmp_path, monkeypatch)
             await release.wait()
             return sid
 
-        router = router_at(tmp_path, SimpleNamespace(create_session=create))
+        use_sessions(monkeypatch, create)
+        router = router_at(tmp_path)
+        router._sessions.connection(item)
         router._sessions.set(item, str(uuid.uuid4()))
         revision = context(router, item)["revision"]
         context(router, item, "fresh", revision)
@@ -189,8 +202,10 @@ def test_rotation_after_missing_summary_is_visible_and_marks_stale(tmp_path, mon
     async def create():
         return fresh
 
-    router = router_at(tmp_path, SimpleNamespace(create_session=create))
+    use_sessions(monkeypatch, create)
+    router = router_at(tmp_path)
     sid = str(uuid.uuid4())
+    router._sessions.connection(item)
     router._sessions.set(item, sid)
     router._topics.begin(item, {}, sid)
     router._topics.finish(item, "older state")

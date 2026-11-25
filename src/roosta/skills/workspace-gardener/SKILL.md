@@ -127,9 +127,9 @@ When you write or rewrite content in this workspace:
 A denial applies to that one call, never to the tool as a whole - keep using
 the tool for everything else, and record in the log exactly what was refused.
 
-- Delete tracked files with `git rm`; plain `rm` is denied.
+- Delete tracked files with `git rm` so the deletion is recorded.
 - Run each shell command on its own. One denied command in a `&&` or `;` chain
-  rejects the whole chain, so a denied `rm` also loses the `git log` after it.
+  rejects the whole chain, so a denied `git push` also loses the `git log` after it.
 - If an edit under `.agents/` or `.claude/` is refused, write the proposed skill
   change into the log for the user instead of retrying it.
 

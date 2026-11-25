@@ -53,7 +53,16 @@ On first launch, Roosta uses your configured workspace or creates `~/workspace`.
 2. **Tell Roosta about your work.** Choose **Continue workspace setup**, then open **Set up your workspace** on the board. Roosta helps you describe your priorities, projects and tools, sets up a starter schedule and creates your first board card.
 3. **Build your team.** Open Workers and choose **New worker** to describe a job. Each worker runs a named skill on a schedule. Visit the Office to find its desk and chat about the job.
 
-Bring your own AI accounts. Use an OpenAI or Anthropic subscription, or pay separately for API usage. OpenAI models run through the [Pi](https://pi.dev/) agent harness.
+Bring your own AI accounts. Use an OpenAI or Anthropic subscription, or pay separately for API usage. OpenAI, OpenRouter and local Ollama models run through the [Pi](https://pi.dev/) agent harness. A Cursor account runs through the [Cursor Agent CLI](https://cursor.com/cli) with a Cursor API key.
+
+### Upgrading to 0.21.0
+
+- Existing named accounts are retained. If you used only the old CLI engine picker, configure or select an account in **Settings → Your AI** and choose a default for workers. You can use your existing Claude Code sign-in. Cursor requires the Agent CLI and a Cursor API key.
+- Check each worker’s connection before enabling its schedule. Workers without a pinned account follow the default. To keep Ollama work local, select the **Local (Ollama)** connection and an installed Ollama model. Roosta runs it through Pi.
+- For each existing conversation from the old picker, choose its account explicitly in Settings before sending more context. The board keeps the visible history and topic summary. The next turn starts a fresh provider session on the account you chose.
+- Default permissions now allow local file deletion, `git reset` and `git clean`. External writes still require approval. Workers already marked `unrestricted: true` now have standing approval for local and external actions on manual and scheduled runs. Review those workers before enabling schedules.
+- The old `allow_git_push`, `push_on_schedule` and per-connection GitHub issue grants are ignored. None enables Unrestricted automatically. `roosta doctor` warns about enabled push flags in `tasks.yaml`. Review old `issue-grants.json` files separately.
+- Before migrating worker model settings, Roosta saves the original beside `.roosta/tasks.yaml` as `tasks.yaml.pre-0.21.0`. It keeps the model field used by the old account or CLI. If the YAML layout cannot be edited safely, Roosta logs a warning and reads the original in place.
 
 ### Updating and diagnosing Python installations
 
@@ -191,9 +200,9 @@ into review. Confirming records your profile reviewer and today's date.
 
 ## Safety
 
-- By default, external writes (messages, tickets, pages, email) pause for **Send/Cancel** on the board. Only then does the `sender` skill run. A worker can have standing approval to comment on open `ready` issues and add `in review` in one repository. See [worker grants](docs/development/runner.md#standing-approval-for-issue-updates). A separately approved task may run exactly `git push origin main` in one named repository; scheduled pushes also require `push_on_schedule`.
-- In **Workers**, expand a worker and open **Settings → Unrestricted** to grant standing approval for external actions explicitly directed by its instructions, subject to user and workspace restrictions. Clear the checkbox to revoke approval. Choose **Save** to apply the change to future runs. A worker already executing or waiting for another writer keeps its current permissions.
-- Standard runs use permission guardrails that block secret access, destructive git, write-shaped MCP tools and configured connector write commands. These are tool policies, not an OS sandbox; explicitly unrestricted tasks bypass them.
+- By default, external writes (messages, tickets, pages, email) pause for **Send/Cancel** on the board. Only then does the `sender` skill run.
+- In **Workers**, expand a worker and open **Settings → Unrestricted** to grant standing approval for any action, local or external; nothing is off limits. Clear the checkbox to revoke approval. Choose **Save** to apply the change to future runs. A worker already executing or waiting for another writer keeps its current permissions.
+- Standard runs use permission guardrails that allow any local change but block secret access, external writes (git push, GitHub creates, curl/wget), write-shaped MCP tools and configured connector write commands. These are tool policies, not an OS sandbox; explicitly unrestricted tasks bypass them.
 - Tasks marked as writers run one at a time; other tasks may run concurrently.
 - Posts the assistant sends end with `[AI]`.
 

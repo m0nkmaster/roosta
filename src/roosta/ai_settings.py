@@ -5,48 +5,27 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-import re
 import ssl
 import urllib.error
 
 from roosta import ai_backend, ai_connections, ai_runtime
-from roosta.claude_code import claude_model
-from roosta.cursor_agent import CURSOR_AGENT, cursor_available, cursor_env, cursor_model
-from roosta.opencode_ollama import (OLLAMA, opencode_model_compatible, opencode_ollama_available,
-                                    opencode_ollama_env, parse_cursor_models, parse_ollama_models)
-from roosta.task_config import (CLAUDE_HARNESS, CURSOR_HARNESS, HARNESS_LABELS, OPENCODE_OLLAMA_HARNESS,
-                                VALID_HARNESSES, TaskConfig, runtime_model_key, task_engine)
+from roosta.cursor_agent import agent_path, parse_cursor_models
+from roosta.task_config import TaskConfig
 
 log = logging.getLogger(__name__)
 
 
 async def check_task_runtime(task: TaskConfig) -> bool:
-    """Check the selected task harness without starting a model."""
-    if task.connection or task.harness == "connection":
-        return ai_backend.connection_available(task.connection)
-    if task.harness == CLAUDE_HARNESS:
-        return ai_backend.available(ai_backend.CLAUDE)
-    if task.harness == CURSOR_HARNESS:
-        return cursor_available()
-    if task.harness == OPENCODE_OLLAMA_HARNESS:
-        return opencode_ollama_available(task.model)
-    return False
+    """Check the worker's AI connection without starting a model."""
+    return ai_backend.connection_available(task.connection)
 
 
 def runtime_unavailable_message(task: TaskConfig) -> str:
-    if task.connection or task.harness == "connection":
-        try:
-            ai_connections.get(task.connection)
-        except ValueError as exc:
-            return str(exc)
-        return "Install or repair the software for this worker’s AI connection in Settings"
-    if task.harness == OPENCODE_OLLAMA_HARNESS:
-        if not opencode_model_compatible(task.model):
-            return f"{task.model} cannot execute OpenCode tool calls; choose another Ollama model"
-        return "OpenCode or Ollama is unavailable"
-    if task.harness not in VALID_HARNESSES:
-        return f"Unknown harness {task.harness!r}; choose Claude Code, Cursor or Ollama"
-    return ai_backend.unavailable_message(task_engine(task))
+    try:
+        ai_connections.get(task.connection)
+    except ValueError as exc:
+        return str(exc)
+    return "Install or repair the software for this worker’s AI connection in Settings"
 
 
 async def command_output(
@@ -76,60 +55,9 @@ async def command_output(
     return stdout.decode(errors="replace") if proc.returncode == 0 else ""
 
 
-async def claude_model_choices(key: str = "legacy:claude") -> list[dict]:
-    listing = await ai_backend.claude_models(key)
-    return [{"id": entry["value"], "label": entry.get("displayName") or entry["value"]}
-            for entry in listing["models"]]
-
-
-def cursor_model_choices(models: list[dict]) -> list[dict]:
-    """Mark the user's CURSOR_MODEL, if set, as the default; otherwise Cursor's own default stands."""
-    default = cursor_model()
-    return [
-        {**m, "label": re.sub(r"\s*\((?:current|default)\)$", "", m["label"], flags=re.I)
-         + (" (default)" if m["id"] == default else "")}
-        for m in models
-    ]
-
-
 async def available_runtime_options() -> dict:
-    """List every task harness with its models and whether it can run now.
-
-    `model_key` says which task field the model choice fills.
-    """
-    cursor_stdout, ollama_stdout = await asyncio.gather(
-        command_output(CURSOR_AGENT, "models", env=cursor_env()),
-        command_output(OLLAMA, "list", env=opencode_ollama_env()),
-    )
-    ollama_models = parse_ollama_models(ollama_stdout)
-    harnesses = [
-        {
-            "id": CLAUDE_HARNESS,
-            "label": HARNESS_LABELS[CLAUDE_HARNESS],
-            "model_key": runtime_model_key(CLAUDE_HARNESS),
-            "default_model": claude_model(),
-            "models": await claude_model_choices(),
-            "available": ai_backend.available(ai_backend.CLAUDE),
-        },
-        {
-            "id": CURSOR_HARNESS,
-            "label": HARNESS_LABELS[CURSOR_HARNESS],
-            "model_key": runtime_model_key(CURSOR_HARNESS),
-            "default_model": cursor_model(),
-            "models": cursor_model_choices(parse_cursor_models(cursor_stdout)),
-            "available": cursor_available(),
-        },
-        {
-            "id": OPENCODE_OLLAMA_HARNESS,
-            "label": HARNESS_LABELS[OPENCODE_OLLAMA_HARNESS],
-            "model_key": runtime_model_key(OPENCODE_OLLAMA_HARNESS),
-            "default_model": "",
-            "models": ollama_models,
-            "available": bool(ollama_models) and opencode_ollama_available(ollama_models[0]["id"]),
-        },
-    ]
-    return {"backend": ai_backend.current(), "harnesses": harnesses,
-            "connections": ai_connections.load()["connections"], "default_connection": ai_backend.default_connection()}
+    """The AI connections a worker can choose, and which one it follows by default."""
+    return {"connections": ai_connections.load()["connections"], "default_connection": ai_backend.default_connection()}
 
 
 # Settings' install, test and sign-in operations, by runtime or connection id.
@@ -138,14 +66,14 @@ job_tasks: dict[str, asyncio.Task] = {}
 
 
 async def ollama_model_ids() -> list[str]:
-    stdout = await command_output(OLLAMA, "list", env=opencode_ollama_env())
-    return [m["id"] for m in parse_ollama_models(stdout)]
+    stdout = await command_output(ai_runtime.OLLAMA, "list", env={**os.environ, "PATH": agent_path()})
+    return [m["id"] for m in ai_runtime.parse_ollama_models(stdout)]
 
 
 async def provider_models(provider: str, general: bool = False, key: str = "", refresh: bool = False) -> dict:
     default = await asyncio.to_thread(ai_connections.default_model, provider, general=general)
     if provider == "anthropic":
-        listing = await ai_backend.claude_models(key or "legacy:claude", refresh=refresh)
+        listing = await ai_backend.claude_models(key, refresh=refresh)
         models = [ai_backend.claude_model_choice(entry) for entry in listing["models"]]
         member = ai_backend.claude_member(listing, default) if default else None
         label = ((member or {}).get("displayName") or default) if default else ai_backend.default_label(listing["default"])
@@ -157,6 +85,13 @@ async def provider_models(provider: str, general: bool = False, key: str = "", r
         return result
     if provider == "ollama":
         return {"default": "", "default_label": "", "models": [{"id": m, "label": m} for m in await ollama_model_ids()]}
+    if provider == "cursor":
+        binary, models = ai_runtime.find("cursor"), []
+        if key and binary:  # Cursor lists models only for a signed-in account
+            connection = ai_connections.get(key, connected=False)
+            env = {**ai_backend.connection_env(connection), "CURSOR_API_KEY": ai_connections.credential(connection)}
+            models = parse_cursor_models(await command_output(binary, "models", env=env))
+        return {"default": default, "default_label": default or "Cursor's default", "models": models}
     models = []
     for model in await asyncio.to_thread(ai_runtime.model_catalog, provider):
         try:
@@ -173,10 +108,10 @@ async def validate_model(provider: str, model: str, key: str = "", current: str 
     if not model:
         return
     ai_connections.runtime(provider, model)
-    if model == current:
+    if model == current or provider == "cursor":  # Cursor's list needs the account's key; its id format was checked
         return
     if provider == "anthropic":
-        listing = await ai_backend.claude_models(key or "legacy:claude")
+        listing = await ai_backend.claude_models(key)
         name, _, effort = model.partition("@")
         if not name and effort:
             return

@@ -53,6 +53,7 @@ def test_connections_keep_secrets_out_of_metadata_and_argv(accounts, tmp_path, m
     create, secrets = accounts
     first, second = create(label='Work'), create(key='second-test-key', label='Personal')
     monkeypatch.setenv('OPENAI_API_KEY', 'inherited-key')
+    monkeypatch.setenv('CURSOR_API_KEY', 'inherited-cursor-key')
     monkeypatch.setenv('ANTHROPIC_AUTH_TOKEN', 'inherited-token')
     monkeypatch.setenv('OPENAI_BASE_URL', 'https://wrong-account.invalid')
     monkeypatch.setenv('CLAUDE_CODE_USE_BEDROCK', '1')
@@ -62,6 +63,7 @@ def test_connections_keep_secrets_out_of_metadata_and_argv(accounts, tmp_path, m
     assert a.env['PI_CODING_AGENT_DIR'] != b.env['PI_CODING_AGENT_DIR']
     assert a.session_id != b.session_id
     for run in (a, b):
+        assert 'CURSOR_API_KEY' not in run.env
         assert 'OPENAI_BASE_URL' not in run.env
         assert 'ANTHROPIC_AUTH_TOKEN' not in run.env
         assert 'CLAUDE_CODE_USE_BEDROCK' not in run.env
@@ -83,7 +85,7 @@ def test_claude_accounts_have_separate_auth_and_sessions(accounts, tmp_path):
     assert all(r.env['CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST'] == '1' for r in runs)
 
 
-@pytest.mark.parametrize('profile', ['safe', 'git-push', 'unrestricted'])
+@pytest.mark.parametrize('profile', ['safe', 'unrestricted'])
 def test_claude_package_and_private_permissions(accounts, tmp_path, monkeypatch, profile):
     account = accounts[0]('anthropic', auth='cli')
     package = tmp_path / 'checkout/src/roosta'
@@ -141,14 +143,28 @@ def test_chats_pin_account_across_default_change_and_restart(accounts, tmp_path)
     assert restored.get('chat:111111111111') is None
 
 
-def test_legacy_sessions_are_not_implicitly_migrated(accounts, tmp_path):
+def test_default_change_does_not_adopt_legacy_chats(accounts, tmp_path, monkeypatch):
     create, _ = accounts
-    c = create(); connections.update(c['id'], tested=True); connections.set_default(c['id'])
+    old, new = create(), create()
+    connections.set_default(old['id'])
     path = tmp_path / 'sessions.json'
-    path.write_text(json.dumps({'old': '11111111-1111-4111-8111-111111111111'}))
+    sid = '11111111-1111-4111-8111-111111111111'
+    path.write_text(json.dumps({'bare': sid, 'cursor': {'session_id': sid, 'connection': 'legacy:cursor'},
+                                'named': {'session_id': sid, 'connection': old['id']}}))
     sessions = chat.SessionMap(path)
-    assert sessions.connection('old') == 'legacy:cursor'
-    assert sessions.connection('new') == c['id']
+    monkeypatch.setattr(app, 'chat_router', chat.ChatRouter(sessions, str(tmp_path)))
+    original = path.read_bytes()
+    assert sessions.selected('cursor') == 'legacy:cursor'
+    for item in ('bare', 'cursor'):
+        with pytest.raises(ValueError, match='Settings'):
+            sessions.connection(item)
+    assert asyncio.run(app.api_ai_default({'connection': new['id']})).status_code == 200
+    assert path.read_bytes() == original
+    restored = chat.SessionMap(path)
+    assert restored.legacy_items() == ['bare', 'cursor']
+    assert restored.get('bare') == restored.get('cursor') == sid
+    assert restored.connection('named') == old['id']
+    assert restored.connection('new') == new['id']
 
 
 def test_invalid_metadata_and_symlink_fail_closed(accounts, tmp_path):
@@ -183,6 +199,7 @@ const policy = JSON.parse(fs.readFileSync('./src/roosta/cursor-permissions.json'
 policy.deny.push('Shell(tool:send*)');
 assert(denied({toolName:'bash',input:{command:'git status && git push origin main'}},policy));
 assert(denied({toolName:'bash',input:{command:'/usr/bin/curl https://example.com'}},policy));
+assert.equal(denied({toolName:'bash',input:{command:'rm -rf build && git reset --hard && git clean -fd'}},policy),'');
 assert(denied({toolName:'bash',input:{command:'tool send --message hello'}},policy));
 assert(denied({toolName:'mcp__slack__sendMessage',input:{}},policy));
 assert(denied({toolName:'mcp__jira__addComment',input:{}},policy));
@@ -203,7 +220,7 @@ try {
     subprocess.run([node,'--input-type=module','-e',script], check=True, cwd=Path(__file__).resolve().parents[1])
 
 
-@pytest.mark.parametrize('profile', ['safe', 'git-push', 'unrestricted'])
+@pytest.mark.parametrize('profile', ['safe', 'unrestricted'])
 @pytest.mark.parametrize('editable', [False, True])
 def test_pi_package_and_private_permissions(accounts, tmp_path, monkeypatch, profile, editable):
     node = shutil.which('node')
@@ -341,7 +358,7 @@ def test_sender_retains_original_account_when_default_changes(accounts, tmp_path
     a, b = create(), create()
     for c in (a,b): connections.update(c['id'], tested=True)
     connections.set_default(b['id'])
-    router = chat.ChatRouter(None, chat.SessionMap(tmp_path/'sessions.json'), str(tmp_path))
+    router = chat.ChatRouter(chat.SessionMap(tmp_path/'sessions.json'), str(tmp_path))
     extension = skills.manage('extend', 'sender', tmp_path, paths.CORE_SKILLS_DIR)
     router._paused['send'] = {'connection':a['id'], 'item_id':'x', 'persistent':True,
         'action':{'kind':'message','target':'Slack channel C123','draft':'Hello [AI]'}}
@@ -361,7 +378,7 @@ def test_pi_chat_progress_is_transient_and_uses_only_tool_identifiers(accounts, 
     account = create(tested=False)
     connections.set_default(account['id'])
     history = chat.ConversationHistoryStore(tmp_path / "history.json")
-    router = chat.ChatRouter(None, sessions, str(tmp_path), persistent_history=history)
+    router = chat.ChatRouter(sessions, str(tmp_path), persistent_history=history)
 
     fork = skills.manage("fork", "actor", tmp_path, paths.CORE_SKILLS_DIR)
     extension = skills.manage("extend", "actor", tmp_path, paths.CORE_SKILLS_DIR)
@@ -431,17 +448,16 @@ def test_checksum_failure_preserves_existing_runtime(tmp_path, monkeypatch):
     assert destination.read_text() == 'working'
 
 
-def test_task_default_is_implicit_and_supersedes_legacy_fields(accounts, tmp_path, monkeypatch):
+def test_task_default_is_implicit_and_keeps_its_model(accounts, tmp_path, monkeypatch):
     create, _ = accounts
     c=create(); connections.update(c['id'],tested=True); connections.set_default(c['id'])
     tasks=tmp_path/'tasks.yaml'
-    tasks.write_text('tasks:\n  - id: new\n    skill: actor\n  - id: old\n    skill: actor\n    harness: cursor\n    model: old-model\n')
+    tasks.write_text('tasks:\n  - id: new\n    skill: actor\n  - id: old\n    skill: actor\n    model: old-model\n')
     monkeypatch.setattr(app.paths,'TASKS_FILE',tasks)
     loaded=task_config.load_tasks()
-    assert loaded[0].connection=='' and loaded[0].harness=='connection'
-    assert loaded[1].connection=='' and loaded[1].harness=='connection'
+    assert [t.connection for t in loaded] == ['', ''] and loaded[1].model == 'old-model'
     task_config.update_task_fields(tasks,'old',{'connection':c['id']})
-    assert 'harness: cursor' in tasks.read_text() and 'model: old-model' in tasks.read_text()
+    assert 'model: old-model' in tasks.read_text()
 
 
 def test_generic_action_categories_keep_old_aliases():
@@ -494,7 +510,7 @@ def test_worker_dispatch_uses_connection_and_retains_legacy_model(accounts, tmp_
         seen.append(run)
         yield json.dumps({'type':'message_end','message':{'role':'assistant','content':[{'type':'text','text':'<task-output>{"status":"success","summary":"Checked"}</task-output>'}]}})
     monkeypatch.setattr(ai_backend,'stream',stream)
-    task = task_config.TaskConfig(id='sample', skill='actor', dir=str(tmp_path), harness='connection', model='legacy-model')
+    task = task_config.TaskConfig(id='sample', skill='actor', dir=str(tmp_path), model='legacy-model')
     status, output, error, session = asyncio.run(scheduler.run_task(task))
     assert status == 'success' and output['summary'] == 'Checked' and not error
     assert seen[0].connection['id'] == c['id'] and seen[0].backend == 'pi'
@@ -519,7 +535,7 @@ def test_mcp_configuration_preserves_project_scopes(tmp_path, monkeypatch):
 def test_opening_setup_before_connecting_does_not_bind_legacy_account(accounts, tmp_path, monkeypatch):
     create, _ = accounts
     sessions = chat.SessionMap(tmp_path/'sessions.json')
-    router = chat.ChatRouter(None,sessions,str(tmp_path))
+    router = chat.ChatRouter(sessions,str(tmp_path))
     monkeypatch.setattr(app,'chat_router',router)
     monkeypatch.setattr(app,'load_tasks',lambda:[])
     first = json.loads(asyncio.run(app.api_ai_connections(item_id='setup')).body)
@@ -534,7 +550,7 @@ def test_opening_setup_before_connecting_does_not_bind_legacy_account(accounts, 
 def test_sign_in_cannot_replace_an_account_with_pending_approval(accounts, tmp_path, monkeypatch, provider):
     create, _ = accounts
     c=create(provider,auth='cli')
-    router=chat.ChatRouter(None,chat.SessionMap(tmp_path/'sessions.json'),str(tmp_path))
+    router=chat.ChatRouter(chat.SessionMap(tmp_path/'sessions.json'),str(tmp_path))
     router._paused['send']={'connection':c['id'],'item_id':'x'}
     monkeypatch.setattr(app,'chat_router',router)
     monkeypatch.setattr(app,'load_tasks',lambda:[])
@@ -837,7 +853,7 @@ def test_chat_model_endpoint(accounts, tmp_path, monkeypatch):
     create('anthropic', auth='system')
     pi = create('openai')
     sessions = chat.SessionMap(tmp_path / 'sessions.json')
-    router = chat.ChatRouter(None, sessions, str(tmp_path))
+    router = chat.ChatRouter(sessions, str(tmp_path))
     monkeypatch.setattr(app, 'chat_router', router)
     sessions.bind('chat:111111111111', pi['id'])
     call = lambda model, item='chat:111111111111': asyncio.run(app.api_ai_chat_model({'item_id': item, 'model': model}))
@@ -849,11 +865,6 @@ def test_chat_model_endpoint(accounts, tmp_path, monkeypatch):
     router._active_runs['chat:111111111111'] = Live()
     assert call('gpt-5-mini').status_code == 409
     router._active_runs.clear()
-    sessions._connections['chat:222222222222'] = 'legacy:cursor'
-    assert call('anything', 'chat:222222222222').status_code == 400
-    sessions._connections['chat:333333333333'] = 'legacy:claude'
-    assert call('haiku', 'chat:333333333333').status_code == 200
-    assert call('gpt-5.4', 'chat:333333333333').status_code == 400
 
 
 HANDSHAKE = {'type': 'control_response', 'response': {'response': {'models': [
@@ -918,7 +929,7 @@ def test_models_endpoint_lists_default_and_choices(accounts, monkeypatch):
     claude = create('anthropic', auth='system')
     fake_claude(monkeypatch)
     monkeypatch.delenv('CLAUDE_MODEL', raising=False)
-    for connection in (claude['id'], 'legacy:claude'):
+    for connection in (claude['id'],):
         data = json.loads(asyncio.run(app.api_ai_models(connection=connection)).body)
         assert data['default'] == '' and data['default_label'] == 'Opus 5.5'
         assert [m['id'] for m in data['models']] == ['opus', 'claude-haiku-4-5-20251001']
@@ -927,7 +938,6 @@ def test_models_endpoint_lists_default_and_choices(accounts, monkeypatch):
     assert json.loads(asyncio.run(app.api_ai_models(connection=claude['id'])).body)['default'] == 'opus@high'
     data = json.loads(asyncio.run(app.api_ai_models(provider='openai')).body)
     assert data['default'] == 'gpt-5.4' and [m['id'] for m in data['models']] == ['gpt-5.4', 'gpt-5-mini', 'openai/gpt-5.4']
-    assert json.loads(asyncio.run(app.api_ai_models(connection='legacy:cursor')).body)['models'] == []
 
 
 def test_model_choices_validate_against_the_harness_list(accounts, tmp_path, monkeypatch):
@@ -958,7 +968,7 @@ def test_chat_model_endpoint_checks_the_list_and_effort(accounts, tmp_path, monk
     claude = create('anthropic', auth='system')
     fake_claude(monkeypatch)
     sessions = chat.SessionMap(tmp_path / 'sessions.json')
-    monkeypatch.setattr(app, 'chat_router', chat.ChatRouter(None, sessions, str(tmp_path)))
+    monkeypatch.setattr(app, 'chat_router', chat.ChatRouter(sessions, str(tmp_path)))
     sessions.bind('chat:111111111111', claude['id'])
     call = lambda model: asyncio.run(app.api_ai_chat_model({'item_id': 'chat:111111111111', 'model': model})).status_code
     assert call('opus@high') == 200 and sessions.model('chat:111111111111') == 'opus@high'
@@ -971,7 +981,7 @@ def test_account_lists_only_its_latest_ten_chats(accounts, tmp_path, monkeypatch
     claude, pi = create('anthropic', auth='system'), create('openai')
     sessions = chat.SessionMap(tmp_path / 'sessions.json')
     topics_path = tmp_path / 'topics.json'
-    monkeypatch.setattr(app, 'chat_router', chat.ChatRouter(None, sessions, str(tmp_path), topic_store=chat.TopicStore(topics_path)))
+    monkeypatch.setattr(app, 'chat_router', chat.ChatRouter(sessions, str(tmp_path), topic_store=chat.TopicStore(topics_path)))
     monkeypatch.setattr(app, 'load_tasks', lambda: [])
     ids = [f'chat:{n:012d}' for n in range(12)]
     for item in ids:
@@ -998,8 +1008,8 @@ def test_connection_workers_pick_a_valid_model(accounts, tmp_path, monkeypatch):
         seen.append(run.model)
         yield json.dumps({'type':'message_end','message':{'role':'assistant','content':[{'type':'text','text':'<task-output>{"status":"success","summary":"ok"}</task-output>'}]}}) + '\n'
     monkeypatch.setattr(ai_backend, 'stream', stream)
-    for task in (task_config.TaskConfig(id='a', skill='actor', dir=str(tmp_path), connection=claude['id'], claude_model='haiku', model='cursor-model'),
-                 task_config.TaskConfig(id='b', skill='actor', dir=str(tmp_path), connection=pi['id'], model='gpt-5-mini', claude_model='haiku'),
+    for task in (task_config.TaskConfig(id='a', skill='actor', dir=str(tmp_path), connection=claude['id'], model='haiku'),
+                 task_config.TaskConfig(id='b', skill='actor', dir=str(tmp_path), connection=pi['id'], model='gpt-5-mini'),
                  task_config.TaskConfig(id='c', skill='actor', dir=str(tmp_path), connection=pi['id'], model='composer-2-fast')):
         asyncio.run(scheduler.run_task(task))
     assert seen == ['haiku', 'gpt-5-mini', 'gpt-5.4']
@@ -1021,13 +1031,11 @@ def test_worker_settings_write_the_connection_model_field(accounts, tmp_path, mo
     assert '    model: gpt-5-mini' in tasks_file.read_text()
     assert 'connection:' not in tasks_file.read_text()
     runner.set_settings('local', {'connection': claude['id'], 'connection_model': 'haiku'})
-    assert 'claude_model: haiku' in tasks_file.read_text()
-    runner.set_settings('local', {'connection': pi['id'], 'connection_model': 'gpt-5-mini'})
-    assert '    model: gpt-5-mini' in tasks_file.read_text()
+    assert '    model: haiku' in tasks_file.read_text()
     with pytest.raises(ValueError):
         runner.set_settings('local', {'connection_model': 'bad model;'})
     runner.set_settings('local', {'connection_model': ''})
-    assert 'model: gpt-5-mini' not in tasks_file.read_text() and 'claude_model: haiku' in tasks_file.read_text()
+    assert 'model:' not in tasks_file.read_text()
 
 
 def test_providers_hardcode_no_models():
@@ -1052,28 +1060,73 @@ def test_pi_default_comes_from_pis_own_get_state(monkeypatch):
         ai_runtime.default_model.cache_clear()
 
 
-def test_cursor_without_configured_model_passes_no_model_flag(monkeypatch):
-    from roosta import cursor_agent
-    monkeypatch.delenv('CURSOR_MODEL', raising=False)
-    monkeypatch.setattr(cursor_agent, '_dotenv_value', lambda path, key: '')
-    assert '--model' not in cursor_agent.cursor_args('hi', workspace='/tmp')
-    monkeypatch.setenv('CURSOR_MODEL', 'composer-2')
-    args = cursor_agent.cursor_args('hi', workspace='/tmp')
-    assert args[args.index('--model') + 1] == 'composer-2'
+def test_cursor_connection_runs_with_its_key_and_private_config(accounts, tmp_path, monkeypatch):
+    create, _ = accounts
+    cursor = create('cursor')
+    monkeypatch.setenv('CURSOR_API_KEY', 'inherited-cursor-key')
+    monkeypatch.setattr(ai_backend, 'mcp_config', lambda workspace: {'mcpServers': {workspace: {}}})
+    monkeypatch.setattr(ai_backend.ai_runtime, 'find', lambda runtime: '/x/agent' if runtime == 'cursor' else '')
+    run = ai_backend.prepare(cursor['id'], str(tmp_path))
+    assert run.backend == 'cursor' and run.session_id == ''  # Cursor names its own chat on the first turn
+    assert run.args[0] == '/x/agent' and '--model' not in run.args and '--resume' not in run.args
+    assert run.env['CURSOR_API_KEY'] == run.secret == 'first-test-key'
+    open_ = ai_backend.prepare(cursor['id'], str(tmp_path), model='gpt-6', session_id='chat-1', profile='unrestricted')
+    assert open_.args[open_.args.index('--model') + 1] == 'gpt-6' and open_.args[open_.args.index('--resume') + 1] == 'chat-1'
+    other = ai_backend.prepare(cursor['id'], str(tmp_path / 'other'))
+    shared = connections.directory(cursor['id']) / 'cursor/chats'
+    for prepared in (run, open_, other):
+        config = Path(prepared.env['CURSOR_CONFIG_DIR'])
+        assert config.parent == shared.parent
+        assert (config / 'chats').samefile(shared)
+        deny = json.loads((config / 'cli-config.json').read_text())['permissions']['deny']
+        assert ('Shell(git:push*)' in deny) == (prepared is not open_)
+        for root in (connections.CONNECTIONS_DIR.resolve(), ai_runtime.RUNTIME_ROOT.resolve()):
+            assert {f'Read({root}/**)', f'Write({root}/**)'} <= set(deny)
+        assert json.loads((config / 'mcp.json').read_text()) == {'mcpServers': {prepared.workspace: {}}}
 
 
-def test_cursor_model_names_cannot_reach_claude_tasks(accounts, tmp_path, monkeypatch):
-    fake_claude(monkeypatch)
-    state = {'claude_model': ''}
-    monkeypatch.setattr(app, 'runner', type('R', (), {'get_state': staticmethod(lambda task_id: state)})())
-    check = lambda model: asyncio.run(app.validate_claude_task_model('local', 'claude', model))
-    check('opus')
-    check('')
-    with pytest.raises(ValueError, match="doesn't offer"):
-        check('gpt-5.6-sol-high')
-    state['claude_model'] = 'gpt-5.6-sol-high'
-    check('gpt-5.6-sol-high')
-    asyncio.run(app.validate_claude_task_model('local', 'cursor', 'gpt-5.6-sol-high'))
+def test_cursor_cancel_during_create_chat_cleans_only_its_run(accounts, tmp_path, monkeypatch):
+    cursor = accounts[0]('cursor')
+    started = asyncio.Event()
+
+    async def create_chat(binary, env, workspace):
+        started.set()
+        await asyncio.Future()
+
+    monkeypatch.setattr(ai_backend.cursor_agent, 'create_chat', create_chat)
+
+    async def exercise():
+        first = ai_backend.prepare(cursor['id'], str(tmp_path))
+        turn = asyncio.create_task(anext(ai_backend.stream(first, 'test')))
+        await asyncio.wait_for(started.wait(), timeout=5)
+        second = ai_backend.prepare(cursor['id'], str(tmp_path))
+        turn.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await turn
+        assert not Path(first.env['CURSOR_CONFIG_DIR']).exists()
+        assert (Path(second.env['CURSOR_CONFIG_DIR']) / 'mcp.json').is_file()
+
+    asyncio.run(exercise())
+
+
+def test_cursor_rejects_redirected_chat_storage(accounts, tmp_path):
+    cursor = accounts[0]('cursor')
+    ai_backend.connection_env(cursor)
+    (connections.directory(cursor['id']) / 'cursor/chats').symlink_to(tmp_path, target_is_directory=True)
+    with pytest.raises(ValueError, match='Invalid Cursor chat storage'):
+        ai_backend.prepare(cursor['id'], str(tmp_path))
+
+
+def test_cursor_new_session_uses_selected_key(accounts, tmp_path, monkeypatch):
+    cursor = accounts[0]('cursor')
+    monkeypatch.setenv('CURSOR_API_KEY', 'inherited-cursor-key')
+
+    async def create_chat(binary, env, workspace):
+        assert env['CURSOR_API_KEY'] == 'first-test-key'
+        return 'chat-1'
+
+    monkeypatch.setattr(ai_backend.cursor_agent, 'create_chat', create_chat)
+    assert asyncio.run(ai_backend.new_session(cursor['id'], str(tmp_path))) == 'chat-1'
 
 
 def test_signed_in_reads_pi_auth_without_exposing_tokens(accounts, tmp_path, monkeypatch):
@@ -1279,7 +1332,7 @@ def test_first_run_requires_default_before_workspace_setup(accounts, tmp_path, m
     monkeypatch.setattr(app.profile, 'load', lambda: app.profile.Profile())
     monkeypatch.setattr(app.paths, 'WORKSPACE', tmp_path)
     monkeypatch.setattr(app.paths, 'TASKS_FILE', tmp_path / 'tasks.yaml')
-    router = chat.ChatRouter(None, chat.SessionMap(tmp_path/'sessions.json'), str(tmp_path))
+    router = chat.ChatRouter(chat.SessionMap(tmp_path/'sessions.json'), str(tmp_path))
     monkeypatch.setattr(app, 'chat_router', router)
     c = create('anthropic', auth='system', tested=False) if existing_claude else None
     card = board.setup_item(router)
@@ -1340,7 +1393,6 @@ def test_claude_detection_runs_before_the_board_and_starts_no_model(accounts, mo
     async def stop(): pass
     monkeypatch.setattr(app, '_start_chat_router', router)
     monkeypatch.setattr(app.runner, 'stop', stop)
-    monkeypatch.setattr(app.agent, 'stop', stop)
     monkeypatch.setattr(ai_settings, 'job_tasks', {})
     async def run():
         async with app.lifespan(app.app):
@@ -1351,21 +1403,27 @@ def test_claude_detection_runs_before_the_board_and_starts_no_model(accounts, mo
 def test_established_workspace_is_not_forced_through_new_onboarding(accounts, monkeypatch):
     monkeypatch.setattr(app, 'chat_router', None)
     assert app.profile.load().name
+    monkeypatch.setattr(board.ai_backend, 'connection_available', lambda *_: True)
+    monkeypatch.setattr(board.ai_connections, 'get', lambda *_a, **_k: {'provider': 'anthropic'})
     assert board.setup_item() is None
+    monkeypatch.setattr(board.ai_backend, 'connection_available', lambda *_: False)
+    assert board.setup_item()['id'] == board.AI_SETUP_ITEM_ID  # workers need an AI connection even after setup
 
 
-def test_first_run_guard_preserves_existing_legacy_conversation(accounts, tmp_path, monkeypatch):
+def test_first_run_guard_preserves_existing_conversation(accounts, tmp_path, monkeypatch):
+    create, _ = accounts
+    c = create()
     monkeypatch.setattr(app.profile, 'load', lambda: app.profile.Profile())
     sessions = chat.SessionMap(tmp_path/'sessions.json')
     item_id = 'chat:0123456789ab'
+    sessions.bind(item_id, c['id'])
     sessions.set(item_id, '11111111-1111-4111-8111-111111111111')
-    original = sessions.connection(item_id)
-    router = chat.ChatRouter(None, sessions, str(tmp_path))
+    router = chat.ChatRouter(sessions, str(tmp_path))
     monkeypatch.setattr(app, 'chat_router', router)
     monkeypatch.setattr(router, 'start_turn', lambda *args: chat.TurnHandle(queued=True, position=1))
     response = asyncio.run(app.api_board_chat({'item_id':item_id, 'message':'continue'}))
     assert response.status_code == 202
-    assert sessions.connection(item_id) == original
+    assert sessions.connection(item_id) == c['id']
     assert sessions.get(item_id) == '11111111-1111-4111-8111-111111111111'
 
 
@@ -1503,7 +1561,7 @@ def test_only_tests_can_be_cancelled(setup_jobs, operation):
 def test_account_choice_without_catalogue_and_chat_binding(accounts, tmp_path, monkeypatch):
     key = accounts[0]('anthropic', auth='system', tested=False)['id']
     sessions = chat.SessionMap(tmp_path / 'sessions.json')
-    router = chat.ChatRouter(None, sessions, str(tmp_path))
+    router = chat.ChatRouter(sessions, str(tmp_path))
     monkeypatch.setattr(app, 'chat_router', router)
     def unavailable(*args, **kwargs):
         pytest.fail('Account selection attempted model discovery or a diagnostic')
@@ -1568,3 +1626,32 @@ def test_cancel_while_subprocess_transport_is_starting(monkeypatch):
                 if child.returncode is None:
                     await ai_backend.kill_group(child)
     asyncio.run(exercise())
+
+
+def test_cursor_turn_creates_its_chat_and_takes_the_prompt_as_an_argument(accounts, tmp_path, monkeypatch):
+    create, _ = accounts
+    run = ai_backend.prepare(create('cursor')['id'], str(tmp_path))
+    config = Path(run.env['CURSOR_CONFIG_DIR'])
+    store = (config / 'chats').resolve()
+    (store / 'existing-chat').touch()
+    run.args = [sys.executable, '-c', 'import sys,json; print(json.dumps({"type":"result","result":sys.argv[1:]}))']
+    async def create_chat(binary, env, workspace): return 'chat-9'
+    monkeypatch.setattr(ai_backend.cursor_agent, 'create_chat', create_chat)
+    async def consume(): return ''.join([line async for line in ai_backend.stream(run, 'the prompt', maximum=5)])
+    assert json.loads(asyncio.run(consume()))['result'] == ['--resume', 'chat-9', 'the prompt']
+    assert run.session_id == 'chat-9'
+    assert not config.exists()
+    assert (store / 'existing-chat').exists()
+    assert connections.engine('cursor') == 'cursor' and connections.runtime('cursor', 'gpt-6') == 'cursor'
+    with pytest.raises(ValueError):
+        connections.runtime('cursor', 'bad model;')
+
+
+def test_a_runtime_killed_by_a_signal_says_so(accounts, tmp_path):
+    create, _ = accounts
+    run = ai_backend.prepare(create()['id'], str(tmp_path))
+    run.backend = 'claude'
+    run.args = [sys.executable, '-c', 'import os, signal; os.kill(os.getpid(), signal.SIGKILL)']
+    async def consume(): return [line async for line in ai_backend.stream(run, 'test', maximum=5)]
+    with pytest.raises(ValueError, match='stopped by macOS'):
+        asyncio.run(consume())

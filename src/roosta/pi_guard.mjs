@@ -90,8 +90,6 @@ export function denied(event, policy, cwd = process.cwd()) {
       const words = prefix.split(/\s+/).map(w => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('\\s+');
       if (new RegExp('(?:^|[\\s;/|&()])' + words + '(?:\\s|$|[;/|&()])', 'i').test(command.replace(/["']/g, ''))) return 'Command requires approval';
     }
-    if (/\bgit\b.*\bpush\b/i.test(command) && !(policy.allow || []).includes('Shell(git:push origin main)')) return 'Git push requires approval';
-    if (/\bgit\b.*\bpush\b/i.test(command) && !/^git push origin main\s*$/.test(command)) return 'Only git push origin main has standing approval';
   }
   return '';
 }

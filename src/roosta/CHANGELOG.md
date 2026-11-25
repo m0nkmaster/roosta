@@ -2,6 +2,20 @@
 
 Record each release newest first. Bump minor for features and visible behaviour, patch for fixes and polish.
 
+## 0.21.0 - 2026-11-25
+
+- A failed worker run keeps its last board cards instead of clearing them, so one AI error no longer empties the Assistant board.
+- Workers can change anything in the workspace: deleting files, `git reset` and `git clean` no longer need approval. External writes stay blocked.
+- Workers already marked Unrestricted now have standing approval for any action, local or external. Roosta's own AI account credentials and package folder stay protected.
+- The Assistant reads the live board with `roosta snapshot board`, which every worker may run.
+- Setup counts a tool as connected only when it is callable in the session or its check passes.
+- Cursor accounts use the Agent CLI and a Cursor API key. Concurrent turns have separate permissions and MCP settings. Each run uses its account’s key and discards any inherited Cursor API key.
+- Existing named accounts are retained. If you used only the old CLI picker, configure or select an account in Settings. Check each worker’s connection before enabling its schedule. To keep Ollama work local, select Local (Ollama) and an installed model to run through Pi.
+- Existing legacy conversations require an explicit account choice in Settings before any context is sent. Visible history and topic summaries survive, and the next turn starts a fresh provider session.
+- Worker migration backs up `tasks.yaml` to `tasks.yaml.pre-0.21.0` and keeps the model used by the previous account or CLI. Custom YAML layouts stay intact and load in place.
+- Worker permissions have two levels: the default, and Unrestricted. Legacy push flags and GitHub issue grants are ignored and never enable Unrestricted. `roosta doctor` flags enabled `allow_git_push` and `push_on_schedule` fields in `tasks.yaml`. Per-connection `issue-grants.json` files are outside that check.
+- The board shows Connect your AI whenever no AI connection is ready, not only before workspace setup.
+
 ## 0.19.4 - 2026-11-24
 
 - History listings provide the full transcript ID workers need. Workers can read the live board and task status with a local snapshot command.

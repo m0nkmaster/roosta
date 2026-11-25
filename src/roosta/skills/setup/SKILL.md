@@ -25,7 +25,7 @@ order and omissions. A workspace without an index already has a read-only fallba
 
 ## 3. Tools
 
-Ask which tools they use day to day: chat (Teams, Slack), tickets (Jira, Linear, GitHub Issues), docs (Confluence, Google Docs, Notion), email and calendar, code (GitHub), data. For each, follow the `connectors` skill: check what is installed, propose the install with its exact command, **wait for approval**, have them sign in, add the connector with its check and write denials, and write the `TOOLS.md` entry. Skip any they don't want now; setup can be re-run.
+Ask which tools they use day to day: chat (Teams, Slack), tickets (Jira, Linear, GitHub Issues), docs (Confluence, Google Docs, Notion), email and calendar, code (GitHub), data. For each, follow the `connectors` skill: check what is installed, propose the install with its exact command, **wait for approval**, have them sign in, add the connector with its check and write denials, and write the `TOOLS.md` entry. Skip any they don't want now; setup can be re-run. When naming tools you can already see, count only MCP tools callable in this session or CLIs whose check passes; tools listed only in subagent definitions are not connected.
 
 Where they keep their task list (Notion, Things, Jira) goes in `AGENTS.md` as a one-line rule: the workspace never mirrors a task list.
 

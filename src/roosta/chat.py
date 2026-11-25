@@ -1,35 +1,13 @@
 # roosta/chat.py
-"""Per-item AI conversations (Cursor Agent or Claude Code) with a send-approval backstop."""
+"""Per-item AI conversations on an AI connection, with a send-approval backstop."""
 from __future__ import annotations
-import asyncio, hashlib, json, os, re, uuid
+import asyncio, hashlib, json, re, uuid
 from collections import deque
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from roosta import attachments, paths, profile, skills
-from roosta.cursor_agent import (
-    CURSOR_AGENT,
-    cursor_args,
-    cursor_env,
-    cursor_model,
-    cursor_result_text,
-    general_chat_model,
-    is_transient_agent_failure,
-    cursor_stream_has_progress,
-)
 from roosta import ai_backend, ai_connections
-from roosta.claude_code import (
-    claude_args,
-    claude_env,
-    claude_general_chat_model,
-    claude_model,
-    claude_result_text,
-    is_claude_effort_only,
-    is_claude_model,
-    is_transient_claude_failure,
-    claude_stream_has_progress,
-    parse_claude_chat_line,
-)
 
 _MARKER = re.compile(
     r"<<<(STATE|PAUSE|DEFER|REMIND|DONE|ERROR)>>>(\{.*\})\s*(?:>>>)?\s*$",
@@ -89,40 +67,6 @@ def _closed_snapshot(item: dict | None) -> dict | None:
     if isinstance(project_ref, str) and project_ref.strip():
         snapshot["project_ref"] = project_ref
     return snapshot or None
-
-
-def parse_line(line: str) -> dict | None:
-    """Extract visible Cursor deltas and tool call boundaries."""
-    line = line.strip()
-    if not line:
-        return None
-    try:
-        evt = json.loads(line)
-    except json.JSONDecodeError:
-        return None
-    if not isinstance(evt, dict):
-        return None
-    if evt.get("type") == "tool_call" and evt.get("subtype") in ("started", "completed"):
-        call = evt.get("tool_call")
-        name = None
-        if isinstance(call, dict):
-            name = next((key.removesuffix("ToolCall") for key in call if key.endswith("ToolCall")), None)
-        return {"kind": "tool" if evt["subtype"] == "started" else "tool_end", "name": name, "text": ""}
-    if (
-        evt.get("type") == "assistant"
-        and "timestamp_ms" in evt
-        and "model_call_id" not in evt
-    ):
-        message = evt.get("message")
-        raw_content = message.get("content", []) if isinstance(message, dict) else []
-        content = raw_content if isinstance(raw_content, list) else []
-        text = "".join(
-            part.get("text", "")
-            for part in content if isinstance(part, dict)
-            if part.get("type") == "text" and isinstance(part.get("text"), str)
-        )
-        return {"kind": "text", "text": text}
-    return None
 
 
 def progress_label(event: dict) -> str | None:
@@ -187,15 +131,7 @@ def _first_statement_end(text: str) -> int | None:
     return None
 
 
-def failure_reason(engine: str, returncode: int | None, assembled: str) -> str:
-    """Explain a failed turn; a silent signal kill is not a model error."""
-    if returncode is not None and returncode < 0 and not assembled:
-        return (
-            f"{engine} was stopped by macOS (signal {-returncode}) before it replied. "
-            "Endpoint security can kill a process over a word in the message, so try "
-            "rephrasing or removing a link."
-        )
-    return f"{engine} could not finish this reply."
+
 
 
 class VisibleReplyFilter:
@@ -304,32 +240,8 @@ def extract_marker(text: str) -> tuple[str, dict | None]:
     return prose, payload
 
 
-def turn_args(
-    agent: str,
-    vault: str,
-    session_id: str,
-    text: str,
-    *,
-    force: bool = False,
-    model: str | None = None,
-) -> list[str]:
-    # SAFETY (load-bearing): live actor turns use --force only with the dashboard's
-    # restrictive Cursor permission profile, which denies external writes.
-    # The actor must never auto-send; it can only draft and emit <<<PAUSE>>>. The
-    # only path to an external send is ChatRouter.approve -> sender, after the user's OK.
-    return cursor_args(
-        text,
-        workspace=vault,
-        session_id=session_id,
-        model=model or cursor_model(),
-        force=force,
-        approve_mcps=force,
-        binary=agent,
-    )
-
-
 class SessionMap:
-    """Durable item_id -> Cursor chat ID."""
+    """Durable item_id -> AI session, connection and model."""
 
     def __init__(self, path: Path) -> None:
         self._path = Path(path)
@@ -345,6 +257,9 @@ class SessionMap:
                         self._map[str(key)] = str(sid)
                     if isinstance(value, dict) and isinstance(value.get("connection"), str):
                         self._connections[str(key)] = value["connection"]
+                    if not self._connections.get(key) and key not in self._map:
+                        # An unusable old session is still an existing conversation.
+                        self._connections[key] = "legacy:unknown"
                     if isinstance(value, dict) and isinstance(value.get("model"), str) and value["model"]:
                         self._models[str(key)] = value["model"]
         except (OSError, json.JSONDecodeError):
@@ -352,6 +267,9 @@ class SessionMap:
 
     def get(self, item_id: str) -> str | None:
         return self._map.get(item_id)
+
+    def has_item(self, item_id: str) -> bool:
+        return item_id in self._map or item_id in self._connections
 
     def set(self, item_id: str, session_id: str) -> None:
         self._map[item_id] = session_id
@@ -368,14 +286,29 @@ class SessionMap:
         temporary.write_text(json.dumps(data, indent=2))
         temporary.replace(self._path)
 
+    def selected(self, item_id: str) -> str:
+        """Read the stored binding. Only a new chat inherits the default."""
+        current = self._connections.get(item_id)
+        if current and current != "default":
+            return current
+        if self.has_item(item_id):
+            return "legacy:unknown"
+        return ai_backend.default_connection()
+
+    def legacy_items(self) -> list[str]:
+        return sorted(item for item in self._map.keys() | self._connections.keys()
+                      if self.selected(item).startswith("legacy:"))
+
     def connection(self, item_id: str) -> str:
+        selected = self.selected(item_id)
+        if selected.startswith("legacy:"):
+            raise ValueError("Open Settings and choose an account under Continue older chats.")
+        if not selected:
+            raise ValueError("Choose a default AI account in Settings.")
         if item_id not in self._connections:
-            # An existing unbound session belongs to the legacy engine, even after
-            # a new default is selected. Migration always requires an explicit choice.
-            self._connections[item_id] = (f"legacy:{ai_backend.current()}" if item_id in self._map
-                                          else ai_backend.default_connection() or f"legacy:{ai_backend.current()}")
+            self._connections[item_id] = selected
             self._save()
-        return self._connections[item_id]
+        return selected
 
     def model(self, item_id: str) -> str:
         return self._models.get(item_id, "")
@@ -389,8 +322,6 @@ class SessionMap:
 
     @staticmethod
     def _provider(connection_id: str | None) -> str:
-        if connection_id == "legacy:claude":
-            return "anthropic"
         try:
             return ai_connections.get(connection_id or "", connected=False)["provider"] if connection_id else ""
         except ValueError:
@@ -873,9 +804,9 @@ def resolve_alias(item_id: str, merged: dict) -> str:
 
 
 class ChatRouter:
-    """Isolated per-item conversations resumed through Cursor Agent chat IDs."""
+    """Isolated per-item conversations, each resumed through its own AI session."""
 
-    def __init__(self, agent, session_map: SessionMap, vault: str,
+    def __init__(self, session_map: SessionMap, vault: str,
                  handled_path: Path | None = None,
                  snoozed_path: Path | None = None,
                  topic_store: TopicStore | None = None,
@@ -883,7 +814,6 @@ class ChatRouter:
                  reminders_path: Path | None = None,
                  raised_path: Path | None = None,
                  merged_path: Path | None = None) -> None:
-        self._agent = agent
         self._sessions = session_map
         self._vault = vault
         self._paused: dict[str, dict] = {}   # run_id -> action payload
@@ -1280,15 +1210,11 @@ class ChatRouter:
         self._active_runs[item_id] = task
         task.add_done_callback(finished)
 
-    async def _ensure_session(self, item_id: str, item: dict, record: dict | None = None) -> str:
-        connection = self._sessions.connection(item_id)
+    async def _ensure_session(self, item_id: str, item: dict, record: dict | None = None,
+                              connection: str = "") -> str:
+        connection = connection or self._sessions.connection(item_id)
         async def create():
-            if not connection.startswith("legacy:"):
-                return str(uuid.uuid4())
-            backend = connection.split(":", 1)[1]
-            if backend == ai_backend.current():
-                return await self._agent.create_session()
-            return await ai_backend.create_session(self._vault, backend)
+            return await ai_backend.new_session(connection, self._vault)
         sid = self._sessions.get(item_id)
         if record is None:
             record = self._topics.get(item_id, strict=True) if self._topics else {}
@@ -1307,17 +1233,22 @@ class ChatRouter:
         """Async generator of events: text deltas, then a terminal event."""
         lock = self._topic_locks.setdefault(item_id, asyncio.Lock())
         async with lock:
-            uploads = item.get("uploaded_files") or []
-            if (message or uploads) and self._persistent_history:
-                self._persistent_history.append(item_id, "user", message, [
-                    {key: upload.get(key) for key in ("id", "name", "size", "image")}
-                    for upload in uploads])
             run_id = run_id or uuid.uuid4().hex[:12]
             record = self._topics.get(item_id, strict=True) if self._topics else {}
             summary = record.get("summary") or "No earlier summary."
             if record.get("summary") and not record.get("summary_current"):
                 summary = "Possibly outdated or incomplete: " + summary
-            sid = await self._ensure_session(item_id, item, record)
+            try:
+                connection_id = self._sessions.connection(item_id)
+                uploads = item.get("uploaded_files") or []
+                if (message or uploads) and self._persistent_history:
+                    self._persistent_history.append(item_id, "user", message, [
+                        {key: upload.get(key) for key in ("id", "name", "size", "image")}
+                        for upload in uploads])
+                sid = await self._ensure_session(item_id, item, record, connection_id)
+            except ValueError as exc:  # e.g. Cursor could not create a chat for this account
+                yield {"kind": "error", "payload": {"reason": str(exc)}, "run_id": run_id}
+                return
             now = datetime.now(timezone.utc)
             me = profile.load()
             prompt = skills.instructions("actor", self._vault, Path(self._vault)) + CHAT_PROMPT.format(
@@ -1329,126 +1260,38 @@ class ChatRouter:
                 summary=summary,
             )
             general = is_general_chat_id(item_id)
-            connection_id = self._sessions.connection(item_id)
-            connected = not connection_id.startswith("legacy:")
-            selected_backend = connection_id.split(":", 1)[1] if not connected else ""
-            if connected:
-                try:
-                    provider = ai_connections.get(connection_id, connected=False)["provider"]
-                    connection_run = ai_backend.prepare(
-                        connection_id, self._vault, session_id=sid,
-                        model=ai_connections.selected_model(provider) or self._sessions.model(item_id) or ai_connections.default_model(provider, general=general))
-                    parse = connection_run.parse
-                    engine = connection_run.connection["label"]
-                except ValueError as exc:
-                    yield {"kind": "error", "payload": {"reason": str(exc)}, "run_id": run_id}
-                    return
-            elif selected_backend == ai_backend.CLAUDE:
-                stored = self._sessions.model(item_id)
-                model = ai_connections.selected_model("anthropic") or (stored if is_claude_model(stored) or is_claude_effort_only(stored) else claude_general_chat_model() if general else claude_model())
-                effort = ai_connections.selected_effort("anthropic", model)
-                if effort:
-                    model = model.partition("@")[0] + "@" + effort
-                args = claude_args(session_id=sid, model=model, partial=True)
-                stdin_text = prompt
-                env = claude_env(os.environ)
-                parse, transient = parse_claude_chat_line, is_transient_claude_failure
-                engine = "Claude Code"
-            else:
-                model = general_chat_model() if general else cursor_model()
-                args = turn_args(
-                    CURSOR_AGENT,
-                    self._vault,
-                    sid,
-                    prompt,
-                    force=True,
-                    model=model,
-                )
-                stdin_text = None
-                env = cursor_env(os.environ)
-                parse, transient = parse_line, is_transient_agent_failure
-                engine = "Cursor Agent"
-            if connected:
-                assembled, visible_text = "", ""
-                visible, hold = VisibleReplyFilter(), ToolRoundHold()
-                try:
-                    async for line in ai_backend.stream(connection_run, prompt):
-                        ev = parse(line)
-                        if ev is None:
-                            continue
-                        if (label := progress_label(ev)) is not None:
-                            if ev["kind"] == "tool":
-                                hold.feed(ev)
-                            yield {"kind": "progress", "label": label, "run_id": run_id}
-                            continue
-                        if ev["kind"] == "separator" and (not assembled or assembled.endswith(("\n", " "))):
-                            continue
-                        assembled += ev["text"]
-                        text = visible.feed(hold.feed(ev))
-                        if text:
-                            visible_text += text
-                            yield {"kind": "text", "text": text, "run_id": run_id}
-                except (ValueError, OSError) as exc:
-                    yield {"kind": "error", "payload": {"reason": str(exc)}, "run_id": run_id}
-                    return
-            else:
-                for attempt in range(2):
-                    proc = await asyncio.create_subprocess_exec(
-                        *args, stdout=asyncio.subprocess.PIPE,
-                        stderr=asyncio.subprocess.STDOUT,  # merge: retain transport errors for safe retry
-                        cwd=self._vault, env=env,
-                        stdin=asyncio.subprocess.PIPE if stdin_text else asyncio.subprocess.DEVNULL,
-                        limit=16 * 1024 * 1024,
-                    )
-                    if stdin_text:
-                        proc.stdin.write(stdin_text.encode())
-                        await proc.stdin.drain()
-                        proc.stdin.close()
-                    assembled = ""
-                    raw_output = ""
-                    visible_text = ""
-                    visible = VisibleReplyFilter()
-                    hold = ToolRoundHold()
-                    async for raw in proc.stdout:
-                        decoded = raw.decode(errors="replace")
-                        raw_output = (raw_output + decoded)[-32768:]
-                        ev = parse(decoded)
-                        if ev is None:
-                            continue
-                        if (label := progress_label(ev)) is not None:
-                            if ev["kind"] == "tool":
-                                hold.feed(ev)
-                            yield {"kind": "progress", "label": label, "run_id": run_id}
-                            continue
-                        # Claude splits a reply into one message per tool round; keep a
-                        # paragraph break between them but never lead with one.
-                        if ev["kind"] == "separator" and (
-                            not assembled or assembled.endswith(("\n", " "))
-                        ):
-                            continue
-                        assembled += ev["text"]
-                        text = visible.feed(hold.feed(ev))
-                        if text:
-                            visible_text += text
-                            yield {"kind": "text", "text": text, "run_id": run_id}
-                    await proc.wait()
-                    if proc.returncode == 0:
-                        break
-                    # stderr is merged into this legacy stream; known transport diagnostics
-                    # are not model progress, but JSON tool/result events always are.
-                    progress_output = "\n".join(line for line in raw_output.splitlines()
-                                                if line.lstrip().startswith("{") or not transient(line))
-                    made_progress = (claude_stream_has_progress if selected_backend == ai_backend.CLAUDE
-                                     else cursor_stream_has_progress)(progress_output)
-                    if attempt == 0 and not made_progress and transient(raw_output):
-                        await asyncio.sleep(2)
+            try:
+                provider = ai_connections.get(connection_id, connected=False)["provider"]
+                connection_run = ai_backend.prepare(
+                    connection_id, self._vault, session_id=sid,
+                    model=ai_connections.selected_model(provider) or self._sessions.model(item_id) or ai_connections.default_model(provider, general=general))
+            except ValueError as exc:
+                yield {"kind": "error", "payload": {"reason": str(exc)}, "run_id": run_id}
+                return
+            assembled, visible_text = "", ""
+            visible, hold = VisibleReplyFilter(), ToolRoundHold()
+            try:
+                async for line in ai_backend.stream(connection_run, prompt):
+                    ev = connection_run.parse(line)
+                    if ev is None:
                         continue
-                    yield {
-                        "kind": "error",
-                        "payload": {"reason": failure_reason(engine, proc.returncode, assembled)},
-                        "run_id": run_id,
-                    }
-                    return
+                    if (label := progress_label(ev)) is not None:
+                        if ev["kind"] == "tool":
+                            hold.feed(ev)
+                        yield {"kind": "progress", "label": label, "run_id": run_id}
+                        continue
+                    # Claude splits a reply into one message per tool round; keep a
+                    # paragraph break between them but never lead with one.
+                    if ev["kind"] == "separator" and (not assembled or assembled.endswith(("\n", " "))):
+                        continue
+                    assembled += ev["text"]
+                    text = visible.feed(hold.feed(ev))
+                    if text:
+                        visible_text += text
+                        yield {"kind": "text", "text": text, "run_id": run_id}
+            except (ValueError, OSError) as exc:
+                yield {"kind": "error", "payload": {"reason": str(exc)}, "run_id": run_id}
+                return
             tail = visible.feed(hold.finish()) + visible.finish()
             if tail:
                 visible_text += tail
@@ -1503,60 +1346,25 @@ class ChatRouter:
 
     async def _send_approved(self, run_id: str, paused: dict, sender_action: dict):
         action, item_id = paused["action"], paused["item_id"]
-        connection = paused.get("connection", f"legacy:{ai_backend.current()}")
+        connection = paused.get("connection", "")
         prompt = sender_prompt(sender_action, self._vault)
-        if not connection.startswith("legacy:"):
+        try:
+            model = self._sessions.model(item_id)
             try:
-                model = self._sessions.model(item_id)
-                try:
-                    ai_connections.runtime(ai_connections.get(connection, connected=False)["provider"], model)
-                except ValueError:
-                    model = ""
-                run = ai_backend.prepare(connection, self._vault, profile="unrestricted", model=model)
-            except (ValueError, OSError) as exc:
-                self._paused[run_id] = paused
-                return {"ok": False, "sent": False, "reason": str(exc)}
-            try:
-                output = "".join([line async for line in ai_backend.stream(run, prompt)])
-            except (ValueError, OSError) as exc:
-                return {"ok": False, "sent": False, "reason": str(exc)}
-            outcome = sender_outcome(run.text(output))
-            sent = outcome.get("status") == "success"
-            summary = str(outcome.get("summary", ""))
-            if sent and not paused.get("persistent"):
-                self.mark_handled(item_id, summary or action.get("summary", "Sent"))
-            return {"ok": True, "sent": sent, "kind": sender_action["kind"], "summary": summary}
-        backend = connection.split(":", 1)[1]
-        sid = await ai_backend.create_session(self._vault, backend) if "connection" in paused else await self._agent.create_session()
-        claude = backend == ai_backend.CLAUDE
-        if claude:
-            # The user approved this exact action, so the sender runs without the
-            # dashboard deny list, matching the Cursor sender's default config.
-            args = claude_args(session_id=sid, profile="unrestricted")
-            env = claude_env(os.environ)
-        else:
-            args = turn_args(
-                CURSOR_AGENT,
-                self._vault,
-                sid,
-                prompt,
-                force=True,
-            )
-            env = cursor_env(os.environ, safe_config=False)
-        proc = await asyncio.create_subprocess_exec(
-            *args, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
-            cwd=self._vault, env=env,
-            stdin=asyncio.subprocess.PIPE if claude else asyncio.subprocess.DEVNULL,
-            limit=16 * 1024 * 1024,
-        )
-        stdout, _ = await proc.communicate(
-            prompt.encode() if claude else None)
-        text = (claude_result_text if claude else cursor_result_text)(
-            (stdout or b"").decode(errors="replace"))
-        outcome = sender_outcome(text)
-        # A clean exit is not enough: the sender reports its own failures.
-        sent = proc.returncode == 0 and outcome.get("status") != "error"
-        summary = outcome.get("summary") if isinstance(outcome.get("summary"), str) else ""
+                ai_connections.runtime(ai_connections.get(connection, connected=False)["provider"], model)
+            except ValueError:
+                model = ""
+            run = ai_backend.prepare(connection, self._vault, profile="unrestricted", model=model)
+        except (ValueError, OSError) as exc:
+            self._paused[run_id] = paused
+            return {"ok": False, "sent": False, "reason": str(exc)}
+        try:
+            output = "".join([line async for line in ai_backend.stream(run, prompt)])
+        except (ValueError, OSError) as exc:
+            return {"ok": False, "sent": False, "reason": str(exc)}
+        outcome = sender_outcome(run.text(output))
+        sent = outcome.get("status") == "success"
+        summary = str(outcome.get("summary", ""))
         if sent and not paused.get("persistent"):
             self.mark_handled(item_id, summary or action.get("summary", "Sent"))
         return {"ok": True, "sent": sent, "kind": sender_action["kind"], "summary": summary}

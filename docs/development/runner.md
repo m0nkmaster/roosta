@@ -24,11 +24,12 @@ files without replacing existing configuration.
   and can run whenever their own schedule fires, including alongside a writer. `is_queued()`
   reports true for a task whose trigger fired but is still waiting on the writer lock.
 
-- **Auth check before each task** verifies the task's harness: for Claude, that the CLI exists;
-  for Cursor, the Cursor CLI and `CURSOR_API_KEY`; for Ollama, both binaries and a compatible model.
-  An unknown harness fails the run without spawning anything. The key is inherited
-  when already present or read directly from the workspace root `.env` without evaluating it as
-  shell code, then passed only in child-process environments.
+- **Every worker runs on an AI connection.** A task's `connection:` names one; unset follows the
+  default chosen in Settings, bound once after the writer queue. On upgrade, check each worker’s
+  connection before enabling its schedule. Pin local-only Ollama workers to Local (Ollama) and
+  choose an installed model. The auth check before each run
+  confirms that connection's software is installed. With no connection the run fails with "Choose
+  an AI connection in Settings" and the board shows the AI setup card, even after workspace setup.
 
 - **Tasks wait for their connectors.** A task with `requires: [...]` stays `blocked` while any of
   those connectors' probes is `auth-failed`, without spawning a harness or advancing its schedule,
@@ -44,8 +45,7 @@ files without replacing existing configuration.
   bypass it.
 
 - **Idle timeout, not wall-clock.** `run_task` reaps a skill run on *inactivity*, not total elapsed
-  time. Agent allows 300s of silence; OpenCode/Ollama allows 1800s because local inference can be
-  slow and silent. `TASK_MAX_TIMEOUT` (3600s) remains the absolute backstop. Stderr is drained
+  time: 300s of silence by default. `TASK_MAX_TIMEOUT` (3600s) remains the absolute backstop. Stderr is drained
   concurrently so a full pipe cannot masquerade as an idle run. Both limits are overridable per
   task via `idle_timeout:`/`max_timeout:` in `tasks.yaml`. Silence is measured on the awake
   (monotonic) clock, so a Mac that sleeps mid-run does not kill it on wake. When judging a
@@ -59,12 +59,6 @@ files without replacing existing configuration.
   next day the runner is up (`missed_weekly_slot`); on its scheduled day the normal time gate
   decides, and a task that has never run is not caught up.
 
-- **Transient Cursor failures get one safe retry.** Scheduled Agent tasks retry known DNS, ping and
-  no-progress transport errors once before model or tool activity. Cursor's init event and echoed
-  user prompt are protocol preamble, not progress; any assistant, tool, result, unknown or malformed
-  event disables retry because the first attempt may already have performed local work. OpenCode
-  runs are never retried by this rule.
-
 - **Runs lost to the network retry in 15 minutes.** A failed run whose error matches
   `OFFLINE_FAILURES` (Claude "Can't reach the API server", "computer went to sleep", Cursor "Failed
   to reach the Cursor API", ECONNRESET, DNS) sets `retry_at`; once due it bypasses the time and
@@ -72,7 +66,7 @@ files without replacing existing configuration.
   clears it. The Skill runner row reads "offline · retrying HH:MM".
 
 - **`<task-output>` tags** for structured output parsing from the JSON stream.
-  All harnesses must return a valid envelope; progress-only or non-JSON results are errors.
+  Every runtime must return a valid envelope; progress-only or non-JSON results are errors.
   Cursor result extraction prefers a completed streamed envelope over a stale terminal result.
   `parse_task_output` tolerates one missing or extra closing brace, and `TASK_STATUS_ALIASES`
   maps `ok`/`complete` and similar to `success` and `partial`/`incomplete` to `error`. A
@@ -82,6 +76,10 @@ files without replacing existing configuration.
 - **Carried-forward output must not carry stale errors.** Fast paths that copy `last_output`
   forward (an unchanged pre-check) drop any old `details.error`, because the conductor reads
   every sensor cache and would re-raise it as a board card.
+
+- **A failed run keeps its last cards.** When an `error` run returns no `details.items`, the
+  runner keeps the previous items (not the old `details.error`), so one AI failure cannot empty
+  the Assistant board or blind the conductor's next pass.
 
 - **Skill descriptions stay canonical.** The runner reads each task skill's `description` from
   `SKILL.md` frontmatter, using the same resolved file as the actual prompt, and shows it as
@@ -104,13 +102,12 @@ supervises its own runner). Tests monkeypatch `cli.CONFIG_FILE`, `Path.home`, `p
 The runner knows no specific tool. `.roosta/connectors.yaml` lists connectors, re-read whenever it
 changes. Each may declare a read-only `check` command (no shell), how to read it (`expect`/`reject`
 dotted JSON paths, else the exit code), the user's `login` command, and `deny` - write-command
-prefixes enforced by the safe and git-push profiles and by legacy OpenCode. Unrestricted Claude,
-Pi and Cursor runs omit Roosta's connector denials. Named connections retain their
+prefixes enforced by the default profile. Unrestricted runs omit Roosta's connector denials. Named connections retain their
 [protected paths](harnesses.md) under every profile. A connector with no `check` only contributes denials.
 
 - There are no standing health workers. A task with `requires: [<id>]` runs those checks just
   before it starts; a confirmed `auth-failed` holds it `blocked` with "Waiting for sign-in: <label>
-  (run `<login>`)", without spawning a harness. Checks are shared for `CHECK_CACHE_SECONDS` so
+  (run `<login>`)", without spawning a model run. Checks are shared for `CHECK_CACHE_SECONDS` so
   tasks starting together run each one once.
 - `verdict` is pure: `success`, `auth-failed` (the check ran and says signed out) or `error` (it
   could not run or its output made no sense). `error` never blocks.
@@ -121,38 +118,13 @@ Pi and Cursor runs omit Roosta's connector denials. Named connections retain the
 By default workers return board-shaped `details.items`, `/api/board`
 merges those feeds with the conductor snapshot, and the Electron main process owns native
 notifications. Assistant drafts use the board's Send/Cancel flow.
-On manual and scheduled runs, `unrestricted: true` grants standing approval only for external
-actions explicitly directed by that worker's instructions, subject to user and workspace restrictions.
-It takes precedence over the git-push prompt. Blockers still go to the board in the task output.
-
-**Scoped git push (`allow_git_push: true`, `unrestricted: false`).** Each such
-skill names one repository and may run exactly `git push origin main` there. Three prompts keep
-the approval honest, and they must stay task-neutral so any push task fits them:
-
-- **Run now** (`GIT_PUSH_MANUAL_PROMPT_TEMPLATE`) tells the agent the user approved the full run,
-  commit and push.
-- **Timer, `push_on_schedule: true`** may
-  commit and push as its skill's scheduled-run rules allow.
-- **Timer, no `push_on_schedule`** checks freshness and returns a
-  board item only; missing interactive AWS, Databricks or Jira authentication also becomes a board
-  item rather than a partial refresh.
-
-### Standing approval for issue updates
-
-For a named connection, the workspace owner can put an `issue-grants.json` file in its
-`.roosta/state/ai-connections/<connection-id>/` directory. Each entry binds a task id
-to an exact skill and GitHub.com repository. Remove the entry to revoke approval.
-
-```json
-{"engineering-worker": {"skill": "engineering-skill", "repository": "owner/repo"}}
-```
-
-Manual and scheduled runs use the same grant. The model returns at most one
-`details.issue_update` in a successful result. The runner checks the grant again, verifies an
-open issue carrying `ready`, posts the comment, and adds `in review` only when `complete` is true.
-The host's signed-in GitHub CLI performs the requests. The repository must already have the label.
-On failure the activity records an error. A repeated request with the same text skips an existing
-comment. This issue grant covers only the comment and label.
+The default worker profile permits local deletion, `git reset` and `git clean`. Workers already
+marked `unrestricted: true` have broader standing approval in 0.21.0, covering local and external
+actions on manual and scheduled runs. Both profiles retain Roosta’s protected paths. Blockers
+still go to the board in the task output. Legacy push flags and per-connection GitHub issue
+grants are ignored and never turn on Unrestricted. The loader and `roosta doctor` warn about
+enabled `allow_git_push` and `push_on_schedule` fields in `tasks.yaml`. Doctor does not inspect
+per-connection `issue-grants.json` files.
 
 ## Adding a task
 
@@ -168,24 +140,26 @@ Add to the workspace's `.roosta/tasks.yaml`:
     weekdays_only: true     # optional: skip Saturday and Sunday (default false)
     days_of_week: [monday]  # optional: run only on these lowercase day names
     writer: true            # optional: rewrites vault docs/auto-commits (default false, see Scheduling and execution)
-    allow_git_push: true     # optional: exact `git push origin main` only; requires explicit standing approval
-    push_on_schedule: true   # optional: timer runs may push too; without it only Run now may push
     requires: [github]       # optional: wait while these connectors are signed out
     precheck: scripts/new.sh # optional: exit 1 = nothing new, skip the scheduled model run
     sensor: true             # optional: feeds the board; board health warns when it fails
-    unrestricted: true       # optional: standing approval for external actions directed by this worker
-    idle_timeout: 300       # optional: silence limit; defaults to 300 Agent / 1800 Ollama
+    unrestricted: true       # optional: standing approval for any action; nothing is off limits
+    idle_timeout: 300       # optional: silence limit (default 300s)
     max_timeout: 3600       # optional: absolute runtime ceiling (default TASK_MAX_TIMEOUT)
     connection: account-id  # optional: pin a connected named connection; omitted follows the default
-    model: composer-2  # optional: Cursor or Ollama model; otherwise CURSOR_MODEL, else Cursor's default
-    claude_model: opus      # optional: Claude Code model; otherwise CLAUDE_MODEL
-    dir: /path/to/run/in    # harness workspace and process working directory
+    model: opus             # optional: model for that connection; otherwise its default
+    dir: /path/to/run/in    # the run's workspace and working directory
 ```
 
 Use `interval` for polling tasks (teams-actions-watch, assistant). Use `run_at` for
 once-daily tasks at a specific time (standup briefs, daily reports). `run_at` and `interval`
-are mutually exclusive - when `run_at` is set, interval is ignored. Privilege flags accept only
-real YAML booleans; anything else fails closed with a warning.
+are mutually exclusive - when `run_at` is set, interval is ignored. Flags accept only
+real YAML booleans; anything else fails closed with a warning. Startup migrates simple legacy task blocks together and saves the original bytes
+to `.roosta/tasks.yaml.pre-0.21.0` before replacing the file. The explicit account takes precedence
+over the default account. With neither, the old harness or CLI picker determines the model field.
+Anthropic and Claude used `claude_model`; other providers used `model`. The migration writes the
+active field as `model` and drops `harness`. Custom layouts such as flow YAML or a task with
+`skill` before `id` stay untouched with a warning. The loader applies the same lookup in memory.
 `last_run` is stamped when a run **finishes**, so an interval counts from the end of the last run
 (drifting by run time) and a Run now resets it; a Run now after today's `run_at` counts as today's run.
 `tasks.yaml` is the only home for a task's schedule: never state a run time or frequency in a skill, because the user changes them here.
@@ -197,9 +171,9 @@ loop re-reads its own config every cycle. Code changes to the runner do need a r
 
 `task_prompt` in `scheduler.py` selects the unattended instructions. The default prompt forbids
 external writes and returns findings as Assistant board items, optionally linking workspace Markdown
-through `documents`. The unrestricted prompt authorises only external actions explicitly directed by
-the worker's instructions and returns blockers to the board. It takes precedence over the scoped
-git-push prompts described above. All branches return `<task-output>` JSON with `summary`, `status` and `details`.
+through `documents`. The unrestricted prompt authorises any local or external action the work
+needs, asks the model to keep credentials out of output, and returns blockers to the board. Both
+return `<task-output>` JSON with `summary`, `status` and `details`.
 
 ## Workers page
 

@@ -60,8 +60,10 @@ When unsure, drop it. `handled.json` removes dismissed episodes; it does not rep
 Read what is already on the board before minting:
 
 ```bash
-curl -s "http://127.0.0.1:${ROOSTA_PORT:-7667}/api/board" | jq '.document.items[] | {id, title, situation}'
+roosta snapshot board
 ```
+
+It prints the board JSON; the cards are in `.document.items`.
 
 If the runner is unreachable, read `last_output.details.items` across `.roosta/state/cache/*.json`.
 

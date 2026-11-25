@@ -186,7 +186,7 @@ HIRE_VOICE = (
     "rather than write a duplicate. Ask only what you cannot infer, one or two questions at a time: "
     "the job, what it reads, what it should put on the Assistant board, and how often it should "
     "run. Then show the SKILL.md draft and write it only after {user} says yes. Next propose the "
-    "tasks.yaml entry (id, nickname, cadence, harness, writer, requires) and the office-cast line, "
+    "tasks.yaml entry (id, nickname, cadence, writer, requires) and the office-cast line, "
     "and add them only after {user} says yes; never put a schedule in the skill. When it is done, "
     "say in one line that the worker is on the Workers page, where Run now gives it its first "
     "shift and its 1:1 chat refines it. Be concise in conversation; drafts can be as long as they "

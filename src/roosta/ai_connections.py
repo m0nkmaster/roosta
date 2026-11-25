@@ -21,13 +21,15 @@ PROVIDERS = {
                    "key_url": "https://openrouter.ai/settings/keys"},
     "ollama": {"label": "Local (Ollama)", "billing": "Local inference · no API billing",
                "key_url": "https://ollama.com/download"},
+    "cursor": {"label": "Cursor", "billing": "Your Cursor plan, through a Cursor API key",
+               "key_url": "https://cursor.com/dashboard?tab=integrations"},
 }
 
 
 def engine(provider: str) -> str:
     if provider not in PROVIDERS:
         raise ValueError("Invalid provider")
-    return "claude" if provider == "anthropic" else "pi"
+    return {"anthropic": "claude", "cursor": "cursor"}.get(provider, "pi")
 
 
 def selected_model(provider: str) -> str:
@@ -106,6 +108,10 @@ def runtime(provider: str, model: str) -> str:
         if not (is_claude_model(model) or is_claude_effort_only(model)):
             raise ValueError("Choose a model supported by Claude Code")
         return "claude"
+    if provider == "cursor":
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,99}", model):
+            raise ValueError("Choose a model Cursor offers")
+        return "cursor"
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:/@\[\]-]{0,119}", model):
         raise ValueError("Invalid provider or model")
     lower = model.lower()
@@ -139,7 +145,7 @@ def credential(connection: dict) -> str:
 def create(body: dict) -> dict:
     provider = body.get("provider")
     if provider not in PROVIDERS:
-        raise ValueError("Choose OpenAI, Anthropic, OpenRouter or local Ollama")
+        raise ValueError("Choose OpenAI, Anthropic, OpenRouter, Cursor or local Ollama")
     label = body.get("label") or PROVIDERS[provider]["label"]
     if not isinstance(label, str) or not 1 <= len(label.strip()) <= 80:
         raise ValueError("Connection name must be 1–80 characters")

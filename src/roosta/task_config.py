@@ -6,36 +6,22 @@ import json
 import logging
 import os
 import re
+import tempfile
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
 
 import yaml
 
-from roosta import ai_backend, ai_connections, ai_runtime, paths
-from roosta.claude_code import is_claude_model
-from roosta.opencode_ollama import opencode_model_compatible
+from roosta import ai_connections, ai_runtime, paths
 
 log = logging.getLogger(__name__)
 
 
-CURSOR_HARNESS = "cursor"
-CLAUDE_HARNESS = "claude"
-OPENCODE_OLLAMA_HARNESS = "opencode-ollama"
-VALID_HARNESSES = {CURSOR_HARNESS, CLAUDE_HARNESS, OPENCODE_OLLAMA_HARNESS}
-HARNESS_LABELS = {
-    CLAUDE_HARNESS: "Claude Code",
-    CURSOR_HARNESS: "Cursor",
-    OPENCODE_OLLAMA_HARNESS: "Ollama (OpenCode)",
-}
-def resolve_harness(value) -> str:
-    """A task's concrete harness. Unset follows the Chats tab's Engine picker."""
-    harness = str(value or "").strip()
-    if not harness:
-        if ai_backend.default_connection():
-            return "connection"
-        return CLAUDE_HARNESS if ai_backend.current() == ai_backend.CLAUDE else CURSOR_HARNESS
-    return harness
+# Keys older task files carry. Startup strips the runtime ones; privilege ones are ignored with a warning.
+OBSOLETE_RUNTIME_FIELDS = ("harness", "claude_model")
+OBSOLETE_PRIVILEGE_FIELDS = ("allow_git_push", "push_on_schedule")
+_WARNED: set[tuple] = set()
 
 
 @dataclass
@@ -48,18 +34,14 @@ class TaskConfig:
     custom_description: str = ""  # tasks.yaml `description:` override
     interval: int = 1800
     dir: str = str(paths.WORKSPACE)
-    harness: str = CURSOR_HARNESS  # cursor, claude or opencode-ollama; see resolve_harness
-    model: str = ""  # Cursor or Ollama model; empty means CURSOR_MODEL, else the harness's own default
     connection: str = ""    # stable named connection id; empty follows the connected default
-    claude_model: str = ""    # Claude Code model; empty means CLAUDE_MODEL
+    model: str = ""         # model for that connection; empty or unsupported means its default
     run_at: str = ""          # HH:MM local time; run once per day at this time
     weekdays_only: bool = False  # skip Saturday and Sunday when True
     days_of_week: list[str] = field(default_factory=list)  # lowercase day names; empty means every day
     writer: bool = False      # rewrites vault docs / auto-commits; serialised against other writers
     sensor: bool = False      # feeds the board; board health warns when it fails or goes stale
-    allow_git_push: bool = False  # narrowly privileged scheduled repository refresh
-    push_on_schedule: bool = False  # timer runs may push too; otherwise only Run now pushes
-    unrestricted: bool = False  # standing approval for external actions explicitly directed by this worker
+    unrestricted: bool = False  # standing approval for any action; nothing is off limits
     requires: list[str] = field(default_factory=list)  # connector ids that must be signed in
     precheck: str = ""  # cheap command; exit 1 means nothing changed, so skip the model run
     idle_timeout: float = 0   # override TASK_IDLE_TIMEOUT for this task (0 = default)
@@ -75,10 +57,8 @@ class TaskState:
     name: str = ""
     nickname: str = ""
     custom_description: str = ""
-    harness: str = CURSOR_HARNESS
-    model: str = ""
     connection: str = ""    # stable named connection id; empty follows the connected default
-    claude_model: str = ""
+    model: str = ""
     run_at: str = ""
     weekdays_only: bool = False
     days_of_week: list[str] = field(default_factory=list)
@@ -163,22 +143,13 @@ def unscheduled_skills(tasks) -> list[dict]:
             for name in workspace_skills() if name not in scheduled and name not in DASHBOARD_SKILLS]
 
 
-def runtime_model_key(harness: str) -> str:
-    """The tasks.yaml field holding the model for this harness.
-
-    Cursor and Claude Code model names are disjoint, so Claude keeps its own
-    field and switching a task between them never loses the other's pick.
-    """
-    return "claude_model" if harness == CLAUDE_HARNESS else "model"
-
-
 def connection_task_model(task: TaskConfig, connection: dict) -> str:
     """The model a connection-backed worker runs: its own field when valid for the provider, else the default."""
     provider = connection["provider"]
-    candidate = task.claude_model if provider == "anthropic" else task.model
+    candidate = task.model
     try:
         ai_connections.runtime(provider, candidate)
-        # `model` is shared with Cursor/Ollama workers, so Pi providers need the harness's own list.
+        # A model kept from another provider may pass the format check, so Pi providers need their own list.
         if provider in {"openai", "openrouter"} and candidate not in ai_runtime.model_catalog(provider):
             raise ValueError("Not offered by this provider")
         return candidate
@@ -188,44 +159,14 @@ def connection_task_model(task: TaskConfig, connection: dict) -> str:
 
 def task_engine(task: TaskConfig) -> str:
     """Which engine runs this task: the session store its transcript lands in."""
-    if task.connection or task.harness == "connection":
-        try:
-            connection = ai_connections.get(task.connection)
-            return ai_connections.engine(connection["provider"])
-        except ValueError:
-            return "connection"
-    if task.harness == OPENCODE_OLLAMA_HARNESS:
-        return "opencode"
-    return ai_backend.CLAUDE if task.harness == CLAUDE_HARNESS else ai_backend.CURSOR
-
-
-def valid_runtime(harness: str, model: str) -> bool:
-    """Validate persisted runtime selectors before they reach a subprocess."""
-    if harness == CLAUDE_HARNESS:
-        return is_claude_model(model)
-    if harness == CURSOR_HARNESS:
-        return bool(re.fullmatch(r"[A-Za-z0-9._-]{1,100}", model))
-    if harness == OPENCODE_OLLAMA_HARNESS:
-        return (
-            bool(re.fullmatch(r"[A-Za-z0-9._:/-]{1,120}", model))
-            and opencode_model_compatible(model)
-        )
-    return False
-
-
-def update_task_runtime(
-    path: Path, task_id: str, harness: str, model: str, model_key: str = "model",
-) -> None:
-    """Update one task's runtime fields without discarding YAML comments."""
-    if model_key != runtime_model_key(harness):
-        raise ValueError("invalid model field")
-    if not valid_runtime(harness, model):
-        raise ValueError("invalid harness or model")
-    update_task_fields(path, task_id, {"harness": harness, model_key: model})
+    try:
+        return ai_connections.engine(ai_connections.get(task.connection)["provider"])
+    except ValueError:
+        return "connection"
 
 
 EDITABLE_TASK_FIELDS = {
-    "name", "nickname", "description", "harness", "model", "claude_model", "connection",
+    "name", "nickname", "description", "model", "connection",
     "interval", "run_at", "weekdays_only", "days_of_week",
     "writer", "unrestricted",
 }
@@ -309,7 +250,7 @@ def update_task_fields(
     edited `interval: 3600  # 1 hour` does not keep a now-wrong note.
     """
     remove = set(remove) - set(values)
-    unknown = (set(values) | remove) - EDITABLE_TASK_FIELDS
+    unknown = (set(values) - EDITABLE_TASK_FIELDS) | (remove - EDITABLE_TASK_FIELDS - set(OBSOLETE_RUNTIME_FIELDS))
     if unknown:
         raise ValueError(f"field not editable: {', '.join(sorted(unknown))}")
     destination = Path(path)
@@ -458,6 +399,38 @@ def _task_flag(task: dict, key: str) -> bool:
     return False
 
 
+def _legacy_model_field(task: dict) -> str:
+    """Use the same account, then CLI picker precedence as the retired dispatcher."""
+    connection = task.get("connection")
+    if connection in (None, "", "default"):
+        connection = ai_connections.load().get("default")
+    if connection:
+        provider = ai_connections.get(connection, connected=False)["provider"]
+        return "claude_model" if provider == "anthropic" else "model"
+    harness = str(task.get("harness") or "").strip()
+    if not harness:
+        from roosta import cursor_agent
+        picker = paths.CACHE_DIR / "ai-backend.json"
+        saved = json.loads(picker.read_text()).get("backend") if picker.exists() else None
+        if saved not in ("claude", "cursor"):
+            saved = (os.environ.get("AI_BACKEND") or
+                     cursor_agent._dotenv_value(cursor_agent.CURSOR_ENV_FILE, "AI_BACKEND")).strip().lower()
+        harness = "cursor" if saved == "cursor" else "claude"
+    if harness not in ("claude", "cursor", "opencode-ollama"):
+        raise ValueError("unknown legacy runtime")
+    return "claude_model" if harness == "claude" else "model"
+
+
+def _loaded_model(task: dict) -> str:
+    field = "model"
+    if any(key in task for key in OBSOLETE_RUNTIME_FIELDS):
+        try:
+            field = _legacy_model_field(task)
+        except (OSError, ValueError, KeyError, AttributeError, TypeError):
+            return ""  # Unresolved account or picker. Keep the file for recovery.
+    return str(task.get(field) or "")
+
+
 def load_tasks() -> list[TaskConfig]:
     if not paths.TASKS_FILE.is_file():
         log.warning("No tasks.yaml found at %s", paths.TASKS_FILE)
@@ -472,6 +445,11 @@ def load_tasks() -> list[TaskConfig]:
         working_dir = str((paths.WORKSPACE / Path(t.get("dir", ".")).expanduser()).resolve())
         custom_description = str(t.get("description", "") or "").strip()
         connection = str(t.get("connection") or "")
+        for key in OBSOLETE_PRIVILEGE_FIELDS:
+            if t.get(key) and (t.get("id"), key) not in _WARNED:
+                _WARNED.add((t.get("id"), key))
+                log.warning("Task %s: %s is no longer supported and is ignored; set unrestricted: true "
+                            "to give this worker standing approval", t.get("id"), key)
         if connection == "default":  # Read old files without keeping the sentinel alive.
             connection = ""
         tasks.append(TaskConfig(
@@ -483,17 +461,13 @@ def load_tasks() -> list[TaskConfig]:
             custom_description=custom_description,
             interval=t.get("interval", 1800),
             dir=working_dir,
-            harness="connection" if connection or ai_backend.default_connection() else resolve_harness(t.get("harness")),
             connection=connection,
-            model=str(t.get("model", "") or ""),
-            claude_model=str(t.get("claude_model", "") or ""),
+            model=_loaded_model(t),
             run_at=t.get("run_at", ""),
             weekdays_only=_task_flag(t, "weekdays_only"),
             days_of_week=[str(day).lower() for day in t.get("days_of_week", [])],
             writer=_task_flag(t, "writer"),
             sensor=_task_flag(t, "sensor"),
-            allow_git_push=_task_flag(t, "allow_git_push"),
-            push_on_schedule=_task_flag(t, "push_on_schedule"),
             unrestricted=_task_flag(t, "unrestricted"),
             requires=_task_requires(t),
             precheck=str(t.get("precheck", "") or "").strip(),
@@ -501,6 +475,81 @@ def load_tasks() -> list[TaskConfig]:
             max_timeout=float(t.get("max_timeout", 0) or 0),
         ))
     return tasks
+
+
+def strip_obsolete_runtime_fields(path: Path) -> list[str]:
+    """Migrate simple task blocks as a unit. Leave custom YAML for the compatibility reader."""
+    try:
+        original = path.read_bytes()
+        source = original.decode("utf-8")
+        data = yaml.safe_load(source)
+        if data is None:
+            return []
+        tasks = data.get("tasks", [])
+        if not isinstance(tasks, list) or not all(isinstance(t, dict) for t in tasks):
+            raise ValueError("invalid task list")
+        if not any(set(t).intersection(OBSOLETE_RUNTIME_FIELDS) for t in tasks):
+            return []
+        if path.is_symlink() or path.parent.is_symlink():
+            raise ValueError("linked task file")
+        if any(isinstance(tok, (yaml.AnchorToken, yaml.AliasToken)) for tok in yaml.scan(source)):
+            raise ValueError("linked configuration")
+        # Parser marks identify the exact field lines, even beside nested custom settings.
+        nodes = [v for k, v in yaml.compose(source).value if k.value == "tasks"]
+        if len(nodes) != 1 or not isinstance(nodes[0], yaml.SequenceNode) or nodes[0].flow_style:
+            raise ValueError("unsupported task layout")
+        lines = source.splitlines(keepends=True)
+        changed = []
+        ids = set()
+        for task, node in zip(tasks, nodes[0].value, strict=True):
+            if not isinstance(task.get("id"), str) or task["id"] in ids or not task.get("skill"):
+                raise ValueError("missing or duplicate worker identity")
+            ids.add(task["id"])
+            if not set(task).intersection(OBSOLETE_RUNTIME_FIELDS):
+                continue
+            if node.flow_style or node.value[0][0].value != "id" or len(node.value) != len(task):
+                raise ValueError("unsupported task layout")
+            field = _legacy_model_field(task)
+            for key, value in node.value:
+                name = key.value
+                if name not in (*OBSOLETE_RUNTIME_FIELDS, "model"):
+                    continue
+                if task[name] is not None and not isinstance(task[name], str):
+                    raise ValueError("invalid runtime field")
+                line = key.start_mark.line
+                if (not isinstance(value, yaml.ScalarNode) or value.end_mark.line != line
+                        or not lines[line].lstrip().startswith(name + ":")):
+                    raise ValueError("unsupported runtime field layout")
+                if name != field:
+                    lines[line] = ""
+                    task.pop(name)
+                elif name == "claude_model":
+                    lines[line] = lines[line].replace("claude_model:", "model:", 1)
+            if field == "claude_model" and field in task:
+                task["model"] = task.pop(field)
+            changed.append(task["id"])
+        updated = "".join(lines)
+        if yaml.safe_load(updated) != data:
+            raise ValueError("edited task configuration did not validate")
+        backup = path.with_suffix(".yaml.pre-0.21.0")
+        try:
+            with open(backup, "xb", opener=lambda p, flags: os.open(p, flags, 0o600)) as out:
+                out.write(original)
+        except FileExistsError:
+            if backup.is_symlink() or not backup.is_file() or backup.read_bytes() != original:
+                raise ValueError("existing migration backup differs")
+        with tempfile.TemporaryDirectory(dir=path.parent) as staging:
+            staged = Path(staging) / path.name
+            staged.write_bytes(updated.encode("utf-8"))
+            staged.chmod(path.stat().st_mode & 0o777)
+            if path.read_bytes() != original:
+                raise ValueError("tasks.yaml changed during migration")
+            staged.replace(path)
+        return changed
+    except (ValueError, OSError, TypeError, KeyError, AttributeError, yaml.YAMLError):
+        log.warning("Skipped legacy task migration for %s. Check the YAML layout, account settings "
+                    "and migration backup before editing manually.", path)
+        return []
 
 
 def _task_requires(t: dict) -> list[str]:

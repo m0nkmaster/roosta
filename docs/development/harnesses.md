@@ -75,10 +75,10 @@ Pi providers validate by membership in Pi's catalogue (`model_catalog`) and Olla
 entry and the exact-model check on Pi's `get_state`. `SessionMap` records are
 `{session_id, connection, model}` (model optional); `POST /api/ai/chat-model` changes it without rotating
 the session and is refused during a live turn; changing a chat's connection keeps the model only if it
-is still valid for the new provider. Connection-backed workers use `claude_model` (Anthropic) or `model`
-(Pi providers) when valid for the provider, otherwise the default; the worker form saves it through
-`connection_model`. `GET /api/ai/models?connection=<id|legacy:claude>&general=0|1` lists the default and
-choices (`?provider=` also works).
+is still valid for the new provider. Workers use their `model` when valid for the provider,
+otherwise the default; the worker form saves it through `connection_model`. Cursor model ids get a
+format check only, because listing them needs the account's key.
+`GET /api/ai/models?connection=<id>&general=0|1` lists the default and choices (`?provider=` also works).
 
 Each connection has a stable id, provider, billing route and credential reference. The child
 environment removes inherited model credentials and routing settings before adding only this account's
@@ -107,11 +107,13 @@ Use the workspace as the working directory and quote paths containing spaces. Fo
 use the read tool, `cat FILE`, or `grep -F -- PATTERN FILE` with one absolute package file.
 These shell reads accept literal arguments only. Redirection and chained commands remain blocked.
 A product engineering worker can use the ordinary profile with a separate Git worktree
-and launch from the workspace to discover its custom skill. Ordinary Claude runs use `dontAsk`, including the legacy path.
+and launch from the workspace to discover its custom skill. Ordinary Claude runs use `dontAsk`.
 
-`SessionMap` reads old string values and writes `{session_id, connection}` records. Existing legacy
-sessions retain their engine; new chats bind the connected default once. Changing the default never
-moves an existing chat or approval. Explicit chat migration retains rendered history and topic summary,
+`SessionMap` reads old string values and writes `{session_id, connection}` records. New chats bind the connected default once.
+An existing legacy conversation needs an explicit account choice in Settings before Roosta sends
+any context. Its visible history and topic summary survive. The next turn starts a fresh provider
+session on the selected account. Changing the default never moves an existing chat or approval.
+Explicit chat migration retains rendered history and topic summary,
 rotates execution context, and is rejected during a live turn or pending approval. Worker YAML omits
 `connection` to follow the current default and stores a stable id only for an explicit account pin. The
 runner resolves the default once after waiting for its writer slot and stores the concrete connection
@@ -125,136 +127,73 @@ Automated tests cover routing, account/session isolation, approvals, request-ori
 checksums and policies. Verify live OpenAI and Anthropic sign-in, enterprise account access and
 OpenRouter acceptance on a clean packaged machine to confirm provider access and billing eligibility.
 
-## Legacy configurations
+## Runtime details
 
-The details below apply to preserved Cursor, Claude and OpenCode schedules and sessions. The old
-backend API and saved selection remain for compatibility; new selections use named connections.
-
-### Invocation, models and permission profiles
+Every chat, worker and approved send runs on a named AI connection: Anthropic through Claude Code,
+OpenAI, OpenRouter and Ollama through Pi, and Cursor through the Cursor Agent CLI (`agent`). The old
+engine picker, per-task `harness:`/`claude_model:` keys and the OpenCode runtime are retired.
 
 - **Claude prompts go on stdin, never argv.** Endpoint security on some managed Macs SIGKILLs (exit 137,
   before any output) any process whose command line contains certain words, e.g. "openclaw" in any
-  case. Every caller of `claude_args` writes the prompt to the child's stdin. Cursor and
-  OpenCode pass prompts in argv and are exposed to the same risk.
+  case. Cursor takes its prompt as the last argument and is exposed to the same risk; a run killed
+  by a signal before any output reports that cause rather than a generic failure.
 
-- **Legacy tasks pick one of three harnesses: Claude Code, Cursor or Ollama.** `harness:` in
-  `tasks.yaml` is `claude`, `cursor` or `opencode-ollama`; unset follows the
-  chat engine (`resolve_harness`). Cursor runs `agent --print --force --trust --approve-mcps`; local runs use
-  `ollama launch opencode --model <model> -- run --standalone --format json --auto`. OpenCode's
-  `--standalone` starts a private server that reads the run's `OPENCODE_CONFIG_DIR`.
-  `opencode_ollama_env` sets `PWD` to the task's `dir` so OpenCode finds the workspace skill. The wrapper supplies
-  the Ollama provider inline without changing OpenCode's user config. The tracked
-  `opencode-runner.json` policy is seeded into a gitignored, highest-precedence config directory
-  with the dashboard's secret, destructive-git and external-write denials, plus the selected
-  workspace skill directory so OpenCode can discover it. This policy also applies to
-  `unrestricted: true` tasks. OpenCode is not available for
-  `allow_git_push` tasks. The child PATH puts `~/.opencode/bin` first when present;
-  An older Homebrew OpenCode's legacy unattended flag is incompatible with the current `--auto`
-  invocation.
+- **Claude permissions.** Claude runs `claude --print --output-format stream-json --verbose
+  --permission-mode dontAsk --settings <profile>`: `dontAsk` refuses anything not on the allow list,
+  so no bypass mode is involved. The `safe` settings are generated from `cursor-permissions.json`
+  (Shell rules become `Bash(... :*)` denials, Write rules become Edit and Write denials), and the
+  `Mcp(*:*keyword*)` denials become a `claude_guard.py` hook, because Claude permission rules cannot
+  wildcard inside MCP tool names. The guard ignores case, so it is stricter than Cursor
+  (`get_comments` is blocked too). The `unrestricted` profile, used by the approved sender and by
+  tasks marked `unrestricted: true`, has no denials. `curl` and `wget` stay denied in `safe`;
+  workers read the local board and task status with `roosta snapshot board|tasks`. Local commands
+  such as `rm`, `git reset` and `git clean` are not denied in any profile.
 
-- **Ollama model availability does not imply agent compatibility.** A model must reliably emit
-  OpenCode tool calls. Qwen 2.5 Coder advertises `tools` but prints the call as JSON instead, so it
-  is excluded from runtime choices and rejected during preflight. OpenCode output without the
-  required `<task-output>` envelope is an error, with a specific error for unexecuted calls. Qwen
-  3.5 runs with OpenCode's `none` reasoning variant (`--model ollama/<model>#none`) because its default variant can put the final
-  task output in a reasoning event and emit no assistant text. Timed-out harnesses run in their own
-  process group so their OpenCode children are killed with the Ollama wrapper.
-
-- **The legacy backend API** (`POST /api/ai-backend`) applies only when no named default is configured. It retains the old Cursor/Claude default for unbound legacy chats and tasks without an explicit `harness:`; explicit legacy harnesses ignore it. It is persisted in gitignored `cache/ai-backend.json`,
-  with `AI_BACKEND` (process environment, then workspace `.env`) as the fallback, and is read at
-  the start of each run, so no restart is needed. Claude
-  runs `claude --print --output-format stream-json --verbose --permission-mode dontAsk --settings
-  <profile>`: `dontAsk` refuses anything not on the allow list, so no bypass mode is involved.
-  The settings are generated from the Cursor profiles below (Shell rules become `Bash(... :*)`
-  denials, Write rules become Edit and Write denials), and the `Mcp(*:*keyword*)` denials become
-  a `claude_guard.py` hook, because Claude permission rules cannot wildcard inside MCP tool names.
-  The guard ignores case, so it is stricter than Cursor (`get_comments` is blocked too). The
-  approved sender uses the `unrestricted` profile. Tasks marked `unrestricted: true` use the
-  same profile and have standing approval only for external actions their instructions explicitly direct. `is_claude_model` is an argv-safety format check only (no family or effort names); a new
-  Claude choice is validated against Claude Code's own list (`validate_model`, including the
-  `/runtime` and `/settings` task endpoints), so Cursor model names never reach Claude; an already
-  stored value stays accepted:
-  tasks and item chats use `CLAUDE_MODEL` (unset means Claude Code's own default, so no `--model`) unless a task sets `claude_model`.
-  A Claude model id may end in `@<effort>` (low, medium, high, xhigh, max); `claude_args` splits it
-  into `--model` and `--effort`; `@<effort>` alone sets only `--effort`. Bare aliases (`opus`, `sonnet`,
-  `haiku`) resolve in Claude Code to the latest of each tier at the CLI's default effort
-  (kept separately from the Cursor `model`, so switching harness never clobbers either pick),
-  and chats (`chat:` ids) use `CLAUDE_GENERAL_CHAT_MODEL` (unset: Claude Code's default). Claude has no create-chat
-  call, so the dashboard mints a UUID and the first turn passes `--session-id`, later ones
-  `--resume`, decided by whether `~/.claude/projects/*/<id>.jsonl` exists; a stored Cursor chat id
-  therefore starts a fresh Claude session, and the topic summary carries continuity. The child
-  sets `MCP_CONNECTION_NONBLOCKING=false`, because otherwise print mode starts the model before
-  MCP servers connect and the first tool search reports MCP servers as still connecting.
-  Claude authenticates with the user's own Claude login, which the availability check does not probe;
-  a run that fails on an expired login records `CLAUDE_SIGNIN_MESSAGE`, and board health names it
-  once instead of showing N separate failures.
+- **Claude models.** `is_claude_model` is an argv-safety format check only; a new choice is
+  validated against Claude Code's own list (`validate_model`) and an already stored value stays
+  accepted. A model id may end in `@<effort>`; `claude_args` splits it into `--model` and
+  `--effort`. Claude has no create-chat call, so Roosta mints a UUID and the first turn passes
+  `--session-id`, later ones `--resume`. The child sets `MCP_CONNECTION_NONBLOCKING=false`, because
+  otherwise print mode starts the model before MCP servers connect.
 
 - **Unattended Claude runs never background a command.** Print mode ends when the turn ends, so a
-  model that backgrounds a command and "waits for the notification" loses the run. Task runs set
-  `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1`, and `BASH_MAX_TIMEOUT_MS` follows the task's
-  `max_timeout` (minus two minutes) so a long script such as a chat archive fits in one
-  foreground call.
+  model that backgrounds a command and "waits for the notification" loses the run. Connections set
+  `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1`, and worker runs set `BASH_MAX_TIMEOUT_MS` to the task's
+  `max_timeout` minus two minutes so a long script such as a chat archive fits in one foreground call.
 
-- **Under Cursor, live board turns run with**
-  the tracked `cursor-permissions.json` policy. `cursor_agent.py` seeds it into gitignored
-  `cache/cursor-agent-config/` because the CLI adds account/runtime state to its config file. The
-  profile allows local reads/writes but denies secret access, destructive git, git push, known
-  external-write CLI commands and write-shaped MCP tools. A task with `allow_git_push: true` uses
-  `cursor-permissions-git-push.json`, which permits only `git push origin main`; its prompt must
-  confine that standing approval to one named repository. The approved sender path deliberately
-  omits these profiles only after the user confirms the external action. Named connections also
-  protect their credential and managed-runtime directories. They protect the installed application
-  package unless it is inside the selected workspace, so a worker can develop Roosta from its own
-  source checkout without gaining access to connection state.
+- **Cursor connections.** Roosta strips inherited `CURSOR_API_KEY` from connection environments.
+  A Cursor run receives only its selected account’s key from the OS credential store. Each turn
+  writes its permissions and MCP servers to a private temporary `cursor/run-*/` directory and
+  uses it as `CURSOR_CONFIG_DIR`. Concurrent runs on the same account cannot overwrite each
+  other’s settings. Each directory links to the account’s persistent `cursor/chats/` store so
+  sessions can resume after the temporary config is removed.
+  The `safe` profile is `cursor-permissions.json` plus connector denials; `unrestricted` allows
+  everything. Both deny the connection and managed-runtime roots, and writes to an installed
+  package outside the workspace. Turns run `agent --print --trust --force --approve-mcps
+  --output-format stream-json --stream-partial-output`; Cursor's own default model applies when
+  none is chosen. Roosta does not install or update the CLI; Settings links to cursor.com/cli.
 
-- **Chats have their own model.** `GENERAL_CHAT_MODEL` (process environment, then workspace
-  `.env`) sets the model for `chat:` ids; unset, Cursor uses its own default. Item chats, person and document
-  chats, approved sends and task defaults continue to use `CURSOR_MODEL`, so changing it does not
-  move scheduled work.
-
-- **`agent create-chat` must use the default CLI config.** With `CURSOR_CONFIG_DIR` pointed at the
-  dashboard permission profile, Cursor prints a valid chat UUID but keeps the process alive,
-  causing the 20-second session-creation timeout. Empty chat creation runs no tools, so
-  `CursorAgent.create_session()` passes `safe_config=False`; actual turns still use the profile.
-  - **Cursor scopes chat history to `CURSOR_CONFIG_DIR`, not just the account.** A dashboard chat
-    id (from `assistant/sessions.json`) will *not* resume under a plain interactive `agent` login,
-    even as the same email - it returns an empty/new chat. To open one manually, mirror the runner's
-    env: `CURSOR_API_KEY` from the root `.env` and `CURSOR_CONFIG_DIR=.roosta/state/cache/cursor-agent-config`,
-    then `agent --resume <id>` (that dir carries the restrictive permission profile).
-
-- **Harness and model are per task.** The Cursor/Ollama `model` defaults to `CURSOR_MODEL`
-  (process environment, then workspace `.env`; unset, no `--model` is passed and Cursor picks its own); `claude_model` defaults to
-  `CLAUDE_MODEL`. `/api/runtime-options` always lists all three harnesses, each with its models
-  (Claude Code's handshake list, `agent models`, `ollama list`) and an `available` flag shown as
-  "(unavailable)" in the dropdown.
+- **`agent create-chat` must use the default CLI config.** With `CURSOR_CONFIG_DIR` pointed at a
+  permission profile, Cursor prints a valid chat id but keeps the process alive, so `create_chat`
+  drops that variable. New chats create their Cursor chat before the first turn
+  (`ai_backend.new_session`); a worker run without a session creates one at the start of the turn.
 
 ## Chat tool availability
 
-- **Tool parity with Cursor IDE.** Live turns inherit the user's MCP config from `~/.cursor/mcp.json`
-  (mirrored into the dashboard agent config dir), prepend local bins to `PATH` in
-  `cursor_env()`, and instruct the actor via `CHAT_PROMPT` to use AGENTS.md, workspace skills
-  and the tools `TOOLS.md` lists. The restrictive permission profile still blocks external
-  writes until the approved sender path. Parity is not complete for **OAuth-backed MCP servers**:
-  Notion reports `needsAuth` in a board turn and exposes only `mcp_auth`, so an actor cannot read a
-  Notion page that the same model reads fine from the Cursor IDE. Say so and ask for the content
-  rather than reporting the page as missing.
-
-- **Agent runtime** (`ai_backend.AIAgent`): one headless CLI process per turn on the bound connection or preserved legacy engine. Under Cursor (`CursorAgent`) the dashboard checks the CLI and API key at
-  startup and creates empty chats with `agent create-chat`; under Claude it mints a session UUID
-  as described above. Chats are disabled with 503 when the local prerequisites are
-  missing.
+- **Tool parity.** Every connection receives the MCP servers the user already configured
+  (`~/.cursor/mcp.json`, `~/.claude.json`, Pi's and the workspace's `.mcp.json`), and `CHAT_PROMPT`
+  points the actor at AGENTS.md, workspace skills and `TOOLS.md`. The `safe` profile still blocks
+  external writes until the approved sender path. OAuth-backed MCP servers may report `needsAuth`
+  in a board turn; say so and ask for the content rather than reporting it missing.
 
 ## Session store retention
 
 - **Cursor CLI session stores are pruned at server start; transcript trees never are.** The Cursor
-  agent CLI writes a per-run SQLite store under `cache/cursor-agent-config/chats/<hash>/<uuid>/`
-  (and the git-push config's equivalent). No dashboard code reads them - history is rendered from
-  `~/.cursor/projects` and `~/.claude/projects` - so they are unbounded scratch, one store per run
-  plus orphaned `-wal` files. `prune_cursor_session_stores` runs beside `activity.compact` and
-  deletes stores older than `SESSION_STORE_RETENTION_DAYS` (30) that no activity row still
-  references, so a resumable chat is never pulled out from under the CLI. The `~/.cursor` and
-  `~/.claude` transcript trees are deliberately left alone: they back the activity drill-down and
-  mingle with the user's own CLI history, so pruning them would be real context loss.
+  CLI writes a per-run SQLite store under each connection's `cursor/chats/<hash>/<uuid>/`. No
+  dashboard code reads them - history is rendered from `~/.cursor/projects` and `~/.claude/projects`
+  - so `prune_cursor_session_stores` runs beside `activity.compact` and deletes stores older than
+  `SESSION_STORE_RETENTION_DAYS` (30) that no activity row still references. The transcript trees
+  are left alone: they back the activity drill-down and mingle with the user's own CLI history.
 
 Packaged desktop builds invoke the frozen backend with `--claude-guard` for the Claude hook.
 Development invokes Python and `claude_guard.py`; both commands quote paths and keywords for
