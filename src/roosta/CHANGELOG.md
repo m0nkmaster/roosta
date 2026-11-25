@@ -2,6 +2,10 @@
 
 Record each release newest first. Bump minor for features and visible behaviour, patch for fixes and polish.
 
+## 0.21.1 - 2026-11-25
+
+- `roosta usage` reads the workspace a worker is running in, not an older workspace saved in your config, so the engineer sees your real Assistant usage.
+
 ## 0.21.0 - 2026-11-25
 
 - A failed worker run keeps its last board cards instead of clearing them, so one AI error no longer empties the Assistant board.

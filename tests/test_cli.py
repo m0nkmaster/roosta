@@ -50,6 +50,36 @@ def test_snapshot_reads_only_local_runner(resource, monkeypatch, capsys):
         cli.main(["snapshot", "board/refresh"])
 
 
+def test_usage_reads_the_running_workspace_over_saved_config(tmp_path, monkeypatch, capsys):
+    def workspace_with_events(name, count):
+        root = tmp_path / name
+        log = root / ".roosta" / "state" / "cache" / "product-usage.jsonl"
+        log.parent.mkdir(parents=True)
+        log.write_text("".join(
+            json.dumps({"at": _now_iso(), "event": "item_opened", "properties": {}}) + "\n"
+            for _ in range(count)
+        ))
+        return root
+
+    running = workspace_with_events("running", 3)
+    saved = workspace_with_events("saved", 1)
+    cli.write_config({"workspace": str(saved)})
+    monkeypatch.setenv("ROOSTA_WORKSPACE", str(running))
+    assert cli.main(["usage"]) == 0
+    assert json.loads(capsys.readouterr().out)["events"] == 3
+    assert cli.main(["usage", "--workspace", str(saved)]) == 0
+    assert json.loads(capsys.readouterr().out)["events"] == 1
+    monkeypatch.delenv("ROOSTA_WORKSPACE")
+    assert cli.main(["usage"]) == 0
+    assert json.loads(capsys.readouterr().out)["events"] == 1
+
+
+def _now_iso():
+    from datetime import datetime, timezone
+
+    return datetime.now(timezone.utc).isoformat()
+
+
 def test_init_creates_a_workspace_without_clobbering(tmp_path):
     target = tmp_path / "ws"
     assert cli.init(target, check=False) == 0

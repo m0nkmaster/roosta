@@ -414,7 +414,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "usage":
         from roosta.usage import UsageStore
 
-        root = Path(args.workspace or default_workspace()).expanduser().resolve()
+        # A worker runs inside ROOSTA_WORKSPACE; the saved config can name another workspace.
+        running = os.environ.get("ROOSTA_WORKSPACE", "").strip()
+        root = Path(args.workspace or running or default_workspace()).expanduser().resolve()
         store = UsageStore(root / ".roosta" / "state" / "cache" / "product-usage.jsonl")
         print(json.dumps(store.summary(args.days), indent=2))
         return 0
