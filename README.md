@@ -55,6 +55,15 @@ On first launch, Roosta uses your configured workspace or creates `~/workspace`.
 
 Bring your own AI accounts. Use an OpenAI or Anthropic subscription, or pay separately for API usage. OpenAI, OpenRouter and local Ollama models run through the [Pi](https://pi.dev/) agent harness. A Cursor account runs through the [Cursor Agent CLI](https://cursor.com/cli) with a Cursor API key.
 
+### Upgrading to 0.21.0
+
+- Existing named accounts are retained. If you used only the old CLI engine picker, configure or select an account in **Settings → Your AI** and choose a default for workers. You can use your existing Claude Code sign-in. Cursor requires the Agent CLI and a Cursor API key.
+- Check each worker’s connection before enabling its schedule. Workers without a pinned account follow the default. To keep Ollama work local, select the **Local (Ollama)** connection and an installed Ollama model. Roosta runs it through Pi.
+- For each existing conversation from the old picker, choose its account explicitly in Settings before sending more context. The board keeps the visible history and topic summary. The next turn starts a fresh provider session on the account you chose.
+- Default permissions now allow local file deletion, `git reset` and `git clean`. External writes still require approval. Workers already marked `unrestricted: true` now have standing approval for local and external actions on manual and scheduled runs. Review those workers before enabling schedules.
+- The old `allow_git_push`, `push_on_schedule` and per-connection GitHub issue grants are ignored. None enables Unrestricted automatically. `roosta doctor` warns about enabled push flags in `tasks.yaml`. Review old `issue-grants.json` files separately.
+- Before migrating worker model settings, Roosta saves the original beside `.roosta/tasks.yaml` as `tasks.yaml.pre-0.21.0`. It keeps the model field used by the old account or CLI. If the YAML layout cannot be edited safely, Roosta logs a warning and reads the original in place.
+
 ### Updating and diagnosing Python installations
 
 Let active workers and chats finish, then run `roosta update` from the installation serving your workspace. Restart the runner (Ctrl+C and `roosta start` for the foreground setup above) or restart its existing service, then reload the dashboard. To preview the upgrade, use `roosta update --check`.

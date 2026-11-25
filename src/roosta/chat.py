@@ -257,6 +257,9 @@ class SessionMap:
                         self._map[str(key)] = str(sid)
                     if isinstance(value, dict) and isinstance(value.get("connection"), str):
                         self._connections[str(key)] = value["connection"]
+                    if not self._connections.get(key) and key not in self._map:
+                        # An unusable old session is still an existing conversation.
+                        self._connections[key] = "legacy:unknown"
                     if isinstance(value, dict) and isinstance(value.get("model"), str) and value["model"]:
                         self._models[str(key)] = value["model"]
         except (OSError, json.JSONDecodeError):
@@ -264,6 +267,9 @@ class SessionMap:
 
     def get(self, item_id: str) -> str | None:
         return self._map.get(item_id)
+
+    def has_item(self, item_id: str) -> bool:
+        return item_id in self._map or item_id in self._connections
 
     def set(self, item_id: str, session_id: str) -> None:
         self._map[item_id] = session_id
@@ -281,14 +287,25 @@ class SessionMap:
         temporary.replace(self._path)
 
     def selected(self, item_id: str) -> str:
-        """The chat's connection without binding it; unbound and retired-engine chats follow the default."""
-        current = self._connections.get(item_id, "")
-        return current if current and not current.startswith("legacy:") else ai_backend.default_connection()
+        """Read the stored binding. Only a new chat inherits the default."""
+        current = self._connections.get(item_id)
+        if current and current != "default":
+            return current
+        if self.has_item(item_id):
+            return "legacy:unknown"
+        return ai_backend.default_connection()
+
+    def legacy_items(self) -> list[str]:
+        return sorted(item for item in self._map.keys() | self._connections.keys()
+                      if self.selected(item).startswith("legacy:"))
 
     def connection(self, item_id: str) -> str:
         selected = self.selected(item_id)
-        if self._connections.get(item_id, "") != selected:
-            self._map.pop(item_id, None)  # a retired engine's session cannot resume on a connection
+        if selected.startswith("legacy:"):
+            raise ValueError("Open Settings and choose an account under Continue older chats.")
+        if not selected:
+            raise ValueError("Choose a default AI account in Settings.")
+        if item_id not in self._connections:
             self._connections[item_id] = selected
             self._save()
         return selected
@@ -1193,8 +1210,9 @@ class ChatRouter:
         self._active_runs[item_id] = task
         task.add_done_callback(finished)
 
-    async def _ensure_session(self, item_id: str, item: dict, record: dict | None = None) -> str:
-        connection = self._sessions.connection(item_id)
+    async def _ensure_session(self, item_id: str, item: dict, record: dict | None = None,
+                              connection: str = "") -> str:
+        connection = connection or self._sessions.connection(item_id)
         async def create():
             return await ai_backend.new_session(connection, self._vault)
         sid = self._sessions.get(item_id)
@@ -1215,18 +1233,19 @@ class ChatRouter:
         """Async generator of events: text deltas, then a terminal event."""
         lock = self._topic_locks.setdefault(item_id, asyncio.Lock())
         async with lock:
-            uploads = item.get("uploaded_files") or []
-            if (message or uploads) and self._persistent_history:
-                self._persistent_history.append(item_id, "user", message, [
-                    {key: upload.get(key) for key in ("id", "name", "size", "image")}
-                    for upload in uploads])
             run_id = run_id or uuid.uuid4().hex[:12]
             record = self._topics.get(item_id, strict=True) if self._topics else {}
             summary = record.get("summary") or "No earlier summary."
             if record.get("summary") and not record.get("summary_current"):
                 summary = "Possibly outdated or incomplete: " + summary
             try:
-                sid = await self._ensure_session(item_id, item, record)
+                connection_id = self._sessions.connection(item_id)
+                uploads = item.get("uploaded_files") or []
+                if (message or uploads) and self._persistent_history:
+                    self._persistent_history.append(item_id, "user", message, [
+                        {key: upload.get(key) for key in ("id", "name", "size", "image")}
+                        for upload in uploads])
+                sid = await self._ensure_session(item_id, item, record, connection_id)
             except ValueError as exc:  # e.g. Cursor could not create a chat for this account
                 yield {"kind": "error", "payload": {"reason": str(exc)}, "run_id": run_id}
                 return
@@ -1241,7 +1260,6 @@ class ChatRouter:
                 summary=summary,
             )
             general = is_general_chat_id(item_id)
-            connection_id = self._sessions.connection(item_id)
             try:
                 provider = ai_connections.get(connection_id, connected=False)["provider"]
                 connection_run = ai_backend.prepare(

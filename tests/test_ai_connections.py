@@ -53,6 +53,7 @@ def test_connections_keep_secrets_out_of_metadata_and_argv(accounts, tmp_path, m
     create, secrets = accounts
     first, second = create(label='Work'), create(key='second-test-key', label='Personal')
     monkeypatch.setenv('OPENAI_API_KEY', 'inherited-key')
+    monkeypatch.setenv('CURSOR_API_KEY', 'inherited-cursor-key')
     monkeypatch.setenv('ANTHROPIC_AUTH_TOKEN', 'inherited-token')
     monkeypatch.setenv('OPENAI_BASE_URL', 'https://wrong-account.invalid')
     monkeypatch.setenv('CLAUDE_CODE_USE_BEDROCK', '1')
@@ -62,6 +63,7 @@ def test_connections_keep_secrets_out_of_metadata_and_argv(accounts, tmp_path, m
     assert a.env['PI_CODING_AGENT_DIR'] != b.env['PI_CODING_AGENT_DIR']
     assert a.session_id != b.session_id
     for run in (a, b):
+        assert 'CURSOR_API_KEY' not in run.env
         assert 'OPENAI_BASE_URL' not in run.env
         assert 'ANTHROPIC_AUTH_TOKEN' not in run.env
         assert 'CLAUDE_CODE_USE_BEDROCK' not in run.env
@@ -141,16 +143,28 @@ def test_chats_pin_account_across_default_change_and_restart(accounts, tmp_path)
     assert restored.get('chat:111111111111') is None
 
 
-def test_retired_engine_sessions_move_to_the_default_connection(accounts, tmp_path):
+def test_default_change_does_not_adopt_legacy_chats(accounts, tmp_path, monkeypatch):
     create, _ = accounts
-    c = create(); connections.update(c['id'], tested=True); connections.set_default(c['id'])
+    old, new = create(), create()
+    connections.set_default(old['id'])
     path = tmp_path / 'sessions.json'
-    path.write_text(json.dumps({'old': '11111111-1111-4111-8111-111111111111',
-                                'cursor': {'session_id': '22222222-2222-4222-8222-222222222222', 'connection': 'legacy:cursor'}}))
+    sid = '11111111-1111-4111-8111-111111111111'
+    path.write_text(json.dumps({'bare': sid, 'cursor': {'session_id': sid, 'connection': 'legacy:cursor'},
+                                'named': {'session_id': sid, 'connection': old['id']}}))
     sessions = chat.SessionMap(path)
-    assert sessions.selected('old') == c['id'] and sessions.get('old')  # reading never rebinds
-    for item in ('old', 'cursor', 'new'):
-        assert sessions.connection(item) == c['id'] and sessions.get(item) is None
+    monkeypatch.setattr(app, 'chat_router', chat.ChatRouter(sessions, str(tmp_path)))
+    original = path.read_bytes()
+    assert sessions.selected('cursor') == 'legacy:cursor'
+    for item in ('bare', 'cursor'):
+        with pytest.raises(ValueError, match='Settings'):
+            sessions.connection(item)
+    assert asyncio.run(app.api_ai_default({'connection': new['id']})).status_code == 200
+    assert path.read_bytes() == original
+    restored = chat.SessionMap(path)
+    assert restored.legacy_items() == ['bare', 'cursor']
+    assert restored.get('bare') == restored.get('cursor') == sid
+    assert restored.connection('named') == old['id']
+    assert restored.connection('new') == new['id']
 
 
 def test_invalid_metadata_and_symlink_fail_closed(accounts, tmp_path):
@@ -1049,19 +1063,70 @@ def test_pi_default_comes_from_pis_own_get_state(monkeypatch):
 def test_cursor_connection_runs_with_its_key_and_private_config(accounts, tmp_path, monkeypatch):
     create, _ = accounts
     cursor = create('cursor')
+    monkeypatch.setenv('CURSOR_API_KEY', 'inherited-cursor-key')
+    monkeypatch.setattr(ai_backend, 'mcp_config', lambda workspace: {'mcpServers': {workspace: {}}})
     monkeypatch.setattr(ai_backend.ai_runtime, 'find', lambda runtime: '/x/agent' if runtime == 'cursor' else '')
     run = ai_backend.prepare(cursor['id'], str(tmp_path))
     assert run.backend == 'cursor' and run.session_id == ''  # Cursor names its own chat on the first turn
     assert run.args[0] == '/x/agent' and '--model' not in run.args and '--resume' not in run.args
-    assert run.env['CURSOR_API_KEY'] and run.secret == run.env['CURSOR_API_KEY']
-    config = json.loads((Path(run.env['CURSOR_CONFIG_DIR']) / 'cli-config.json').read_text())
-    assert 'Shell(git:push*)' in config['permissions']['deny']
-    assert f'Read({connections.CONNECTIONS_DIR.resolve()}/**)' in config['permissions']['deny']
+    assert run.env['CURSOR_API_KEY'] == run.secret == 'first-test-key'
     open_ = ai_backend.prepare(cursor['id'], str(tmp_path), model='gpt-6', session_id='chat-1', profile='unrestricted')
     assert open_.args[open_.args.index('--model') + 1] == 'gpt-6' and open_.args[open_.args.index('--resume') + 1] == 'chat-1'
-    config = json.loads((Path(open_.env['CURSOR_CONFIG_DIR']) / 'cli-config.json').read_text())
-    assert 'Shell(git:push*)' not in config['permissions']['deny']
-    assert f'Write({connections.CONNECTIONS_DIR.resolve()}/**)' in config['permissions']['deny']
+    other = ai_backend.prepare(cursor['id'], str(tmp_path / 'other'))
+    shared = connections.directory(cursor['id']) / 'cursor/chats'
+    for prepared in (run, open_, other):
+        config = Path(prepared.env['CURSOR_CONFIG_DIR'])
+        assert config.parent == shared.parent
+        assert (config / 'chats').samefile(shared)
+        deny = json.loads((config / 'cli-config.json').read_text())['permissions']['deny']
+        assert ('Shell(git:push*)' in deny) == (prepared is not open_)
+        for root in (connections.CONNECTIONS_DIR.resolve(), ai_runtime.RUNTIME_ROOT.resolve()):
+            assert {f'Read({root}/**)', f'Write({root}/**)'} <= set(deny)
+        assert json.loads((config / 'mcp.json').read_text()) == {'mcpServers': {prepared.workspace: {}}}
+
+
+def test_cursor_cancel_during_create_chat_cleans_only_its_run(accounts, tmp_path, monkeypatch):
+    cursor = accounts[0]('cursor')
+    started = asyncio.Event()
+
+    async def create_chat(binary, env, workspace):
+        started.set()
+        await asyncio.Future()
+
+    monkeypatch.setattr(ai_backend.cursor_agent, 'create_chat', create_chat)
+
+    async def exercise():
+        first = ai_backend.prepare(cursor['id'], str(tmp_path))
+        turn = asyncio.create_task(anext(ai_backend.stream(first, 'test')))
+        await asyncio.wait_for(started.wait(), timeout=5)
+        second = ai_backend.prepare(cursor['id'], str(tmp_path))
+        turn.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await turn
+        assert not Path(first.env['CURSOR_CONFIG_DIR']).exists()
+        assert (Path(second.env['CURSOR_CONFIG_DIR']) / 'mcp.json').is_file()
+
+    asyncio.run(exercise())
+
+
+def test_cursor_rejects_redirected_chat_storage(accounts, tmp_path):
+    cursor = accounts[0]('cursor')
+    ai_backend.connection_env(cursor)
+    (connections.directory(cursor['id']) / 'cursor/chats').symlink_to(tmp_path, target_is_directory=True)
+    with pytest.raises(ValueError, match='Invalid Cursor chat storage'):
+        ai_backend.prepare(cursor['id'], str(tmp_path))
+
+
+def test_cursor_new_session_uses_selected_key(accounts, tmp_path, monkeypatch):
+    cursor = accounts[0]('cursor')
+    monkeypatch.setenv('CURSOR_API_KEY', 'inherited-cursor-key')
+
+    async def create_chat(binary, env, workspace):
+        assert env['CURSOR_API_KEY'] == 'first-test-key'
+        return 'chat-1'
+
+    monkeypatch.setattr(ai_backend.cursor_agent, 'create_chat', create_chat)
+    assert asyncio.run(ai_backend.new_session(cursor['id'], str(tmp_path))) == 'chat-1'
 
 
 def test_signed_in_reads_pi_auth_without_exposing_tokens(accounts, tmp_path, monkeypatch):
@@ -1565,14 +1630,18 @@ def test_cancel_while_subprocess_transport_is_starting(monkeypatch):
 
 def test_cursor_turn_creates_its_chat_and_takes_the_prompt_as_an_argument(accounts, tmp_path, monkeypatch):
     create, _ = accounts
-    run = ai_backend.prepare(create()['id'], str(tmp_path))
-    run.backend, run.session_id, run.secret = 'cursor', '', ''
+    run = ai_backend.prepare(create('cursor')['id'], str(tmp_path))
+    config = Path(run.env['CURSOR_CONFIG_DIR'])
+    store = (config / 'chats').resolve()
+    (store / 'existing-chat').touch()
     run.args = [sys.executable, '-c', 'import sys,json; print(json.dumps({"type":"result","result":sys.argv[1:]}))']
     async def create_chat(binary, env, workspace): return 'chat-9'
     monkeypatch.setattr(ai_backend.cursor_agent, 'create_chat', create_chat)
     async def consume(): return ''.join([line async for line in ai_backend.stream(run, 'the prompt', maximum=5)])
     assert json.loads(asyncio.run(consume()))['result'] == ['--resume', 'chat-9', 'the prompt']
     assert run.session_id == 'chat-9'
+    assert not config.exists()
+    assert (store / 'existing-chat').exists()
     assert connections.engine('cursor') == 'cursor' and connections.runtime('cursor', 'gpt-6') == 'cursor'
     with pytest.raises(ValueError):
         connections.runtime('cursor', 'bad model;')

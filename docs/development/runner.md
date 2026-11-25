@@ -25,7 +25,9 @@ files without replacing existing configuration.
   reports true for a task whose trigger fired but is still waiting on the writer lock.
 
 - **Every worker runs on an AI connection.** A task's `connection:` names one; unset follows the
-  default chosen in Settings, bound once after the writer queue. The auth check before each run
+  default chosen in Settings, bound once after the writer queue. On upgrade, check each worker’s
+  connection before enabling its schedule. Pin local-only Ollama workers to Local (Ollama) and
+  choose an installed model. The auth check before each run
   confirms that connection's software is installed. With no connection the run fails with "Choose
   an AI connection in Settings" and the board shows the AI setup card, even after workspace setup.
 
@@ -116,10 +118,13 @@ prefixes enforced by the default profile. Unrestricted runs omit Roosta's connec
 By default workers return board-shaped `details.items`, `/api/board`
 merges those feeds with the conductor snapshot, and the Electron main process owns native
 notifications. Assistant drafts use the board's Send/Cancel flow.
-On manual and scheduled runs, `unrestricted: true` grants standing approval for any local or
-external action the worker's work needs; nothing is off limits. Blockers still go to the board in
-the task output. `allow_git_push` and `push_on_schedule` are retired: they grant nothing, the loader
-logs a warning and `roosta doctor` says to use `unrestricted` instead.
+The default worker profile permits local deletion, `git reset` and `git clean`. Workers already
+marked `unrestricted: true` have broader standing approval in 0.21.0, covering local and external
+actions on manual and scheduled runs. Both profiles retain Roosta’s protected paths. Blockers
+still go to the board in the task output. Legacy push flags and per-connection GitHub issue
+grants are ignored and never turn on Unrestricted. The loader and `roosta doctor` warn about
+enabled `allow_git_push` and `push_on_schedule` fields in `tasks.yaml`. Doctor does not inspect
+per-connection `issue-grants.json` files.
 
 ## Adding a task
 
@@ -149,9 +154,12 @@ Add to the workspace's `.roosta/tasks.yaml`:
 Use `interval` for polling tasks (teams-actions-watch, assistant). Use `run_at` for
 once-daily tasks at a specific time (standup briefs, daily reports). `run_at` and `interval`
 are mutually exclusive - when `run_at` is set, interval is ignored. Flags accept only
-real YAML booleans; anything else fails closed with a warning. On startup the runner deletes the
-retired `harness:` and `claude_model:` keys, keeping comments and moving `claude_model` into an
-empty `model`.
+real YAML booleans; anything else fails closed with a warning. Startup migrates simple legacy task blocks together and saves the original bytes
+to `.roosta/tasks.yaml.pre-0.21.0` before replacing the file. The explicit account takes precedence
+over the default account. With neither, the old harness or CLI picker determines the model field.
+Anthropic and Claude used `claude_model`; other providers used `model`. The migration writes the
+active field as `model` and drops `harness`. Custom layouts such as flow YAML or a task with
+`skill` before `id` stay untouched with a warning. The loader applies the same lookup in memory.
 `last_run` is stamped when a run **finishes**, so an interval counts from the end of the last run
 (drifting by run time) and a Run now resets it; a Run now after today's `run_at` counts as today's run.
 `tasks.yaml` is the only home for a task's schedule: never state a run time or frequency in a skill, because the user changes them here.

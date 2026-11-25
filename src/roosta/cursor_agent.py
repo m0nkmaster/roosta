@@ -6,6 +6,7 @@ import json
 import os
 import re
 import shutil
+import tempfile
 from pathlib import Path
 
 from roosta import connectors, paths
@@ -84,6 +85,23 @@ def write_config(directory: Path, permissions: dict, mcp: dict) -> Path:
         temporary.chmod(0o600)
         temporary.replace(directory / name)
     return directory
+
+
+def run_config(directory: Path, permissions: dict, mcp: dict) -> tempfile.TemporaryDirectory:
+    """Give each turn private settings while keeping existing chats resumable."""
+    chats = directory / "chats"
+    if chats.is_symlink():
+        raise ValueError("Invalid Cursor chat storage")
+    chats.mkdir(exist_ok=True, mode=0o700)
+    temporary = tempfile.TemporaryDirectory(dir=directory, prefix="run-")
+    try:
+        config = Path(temporary.name)
+        (config / "chats").symlink_to(chats, target_is_directory=True)
+        write_config(config, permissions, mcp)
+        return temporary
+    except BaseException:
+        temporary.cleanup()
+        raise
 
 
 def cursor_args(*, workspace: str, session_id: str = "", model: str = "", binary: str = CURSOR_AGENT) -> list[str]:

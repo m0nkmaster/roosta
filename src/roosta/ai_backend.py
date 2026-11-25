@@ -70,6 +70,7 @@ class ConnectionRun:
     secret: str = field(default="", repr=False)
     model: str = ""
     probe: bool = False
+    cursor_config: tempfile.TemporaryDirectory | None = field(default=None, repr=False)
 
     def text(self, output: str) -> str:
         return {CLAUDE: claude_code.claude_result_text, CURSOR: cursor_agent.cursor_result_text}.get(
@@ -185,7 +186,7 @@ def connection_env(connection: dict) -> dict:
     for key in list(env):
         if key.startswith(("ANTHROPIC_", "OPENAI_", "OPENROUTER_", "CLAUDE_", "PI_")) or key in {
             "CLAUDECODE", "AWS_PROFILE", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN",
-            "GOOGLE_APPLICATION_CREDENTIALS", "GOOGLE_CLOUD_PROJECT", "GEMINI_API_KEY",
+            "GOOGLE_APPLICATION_CREDENTIALS", "GOOGLE_CLOUD_PROJECT", "GEMINI_API_KEY", "CURSOR_API_KEY",
         }:
             env.pop(key, None)
     env["PATH"] = cursor_agent.agent_path(env.get("PATH"))
@@ -282,6 +283,7 @@ def prepare(connection_id: str, workspace: str, *, model: str = "", session_id: 
     private_roots = (connections.CONNECTIONS_DIR.resolve(), ai_runtime.RUNTIME_ROOT.resolve())
     package = paths.APP_ROOT.resolve()
     external_package = not package.is_relative_to(workspace_root)
+    cursor_config = None
     if backend == CLAUDE:
         mcp_path = directory / f"mcp-{workspace_key}.json"
         _private_json(mcp_path, mcp)
@@ -310,7 +312,8 @@ def prepare(connection_id: str, workspace: str, *, model: str = "", session_id: 
         permissions["deny"] += [f"{tool}({root}/**)" for root in private_roots for tool in ("Read", "Write")]
         if external_package:
             permissions["deny"].append(f"Write({package}/**)")
-        env["CURSOR_CONFIG_DIR"] = str(cursor_agent.write_config(directory / "cursor", permissions, mcp))
+        cursor_config = cursor_agent.run_config(directory / "cursor", permissions, mcp)
+        env["CURSOR_CONFIG_DIR"] = cursor_config.name
         args = cursor_agent.cursor_args(workspace=workspace, session_id=sid, model=model, binary=binary)
     else:
         pi_dir = directory / "pi" / workspace_key
@@ -349,7 +352,7 @@ def prepare(connection_id: str, workspace: str, *, model: str = "", session_id: 
             args.extend(["--thinking", effort])
         if probe:
             args.extend(["--no-mcp", "--no-context-files", "--tools", "read"])
-    return ConnectionRun(connection, backend, args, env, workspace, sid, secret, model, probe)
+    return ConnectionRun(connection, backend, args, env, workspace, sid, secret, model, probe, cursor_config)
 
 
 async def kill_group(proc) -> None:
@@ -410,14 +413,14 @@ def repair_message(output: str) -> str:
 
 async def stream(run: ConnectionRun, prompt: str, *, idle: float = 300, maximum: float = 3600):
     """A foreground turn with stderr draining, bounded silence and process-group cleanup."""
-    connections.get(run.connection["id"])
-    if run.backend in ai_runtime.INSTALLING:
-        raise ValueError("This AI runtime is being repaired; retry when Settings reports success")
     ACTIVE_CONNECTIONS[run.connection["id"]] += 1
     proc = None
     stderr_task = None
     chunks, errors = [], []
     try:
+        connections.get(run.connection["id"])
+        if run.backend in ai_runtime.INSTALLING:
+            raise ValueError("This AI runtime is being repaired; retry when Settings reports success")
         args = run.args
         if run.backend == CURSOR:
             if not run.session_id:
@@ -513,6 +516,8 @@ async def stream(run: ConnectionRun, prompt: str, *, idle: float = 300, maximum:
         finally:
             ACTIVE_CONNECTIONS[run.connection["id"]] -= 1
             LIVE_PROCESSES.discard(proc)
+            if run.cursor_config is not None:
+                run.cursor_config.cleanup()
 
 
 async def _join_on_cancel(work):

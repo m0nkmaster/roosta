@@ -15,6 +15,8 @@ from dataclasses import asdict, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+import yaml
+
 from roosta import ai_backend, ai_connections, paths, profile, skills
 from roosta import connectors as connectors_mod
 from roosta.activity_log import ActivityLog
@@ -276,7 +278,11 @@ class TaskRunner:
         self._reconcile_interval = reconcile_interval
 
     def start(self) -> None:
-        self._tasks = self._load_tasks()
+        try:
+            self._tasks = self._load_tasks()
+        except (OSError, ValueError, TypeError, AttributeError, KeyError, yaml.YAMLError):
+            log.warning("Cannot load tasks.yaml. Scheduling will resume after the file is repaired.")
+            self._tasks = []
         self._running = True
         self._cache_dir.mkdir(parents=True, exist_ok=True)
 

@@ -433,6 +433,32 @@ async def api_settings_skills_sync():
     return ai_settings_result({"error": "Legacy skills migrate on restart, before workers and chats start."}, 409)
 
 
+def valid_chat_choice(item_id) -> bool:
+    return isinstance(item_id, str) and 1 <= len(item_id) <= 200 and bool(item_id.strip()) and item_id.isprintable()
+
+
+def legacy_chat_choices() -> list[dict]:
+    items = chat_router._sessions.legacy_items() if chat_router else []
+    if not items:
+        return []
+    topics = chat_router._topics._read() if chat_router._topics else {}
+    histories = chat_router.conversation_histories()
+    archived = archived_chats()
+    choices = []
+    for item in items:
+        if not valid_chat_choice(item):
+            continue
+        record = topics.get(item)
+        closed = archived.get(item)
+        title = closed.get("title") if isinstance(closed, dict) else None
+        if not title and isinstance(record, dict):
+            title = record.get("title")
+        if not isinstance(title, str) or title in ("", "Chat", "Conversation", item):
+            title = next((m["text"] for m in histories.get(item, []) if m["role"] == "user" and m["text"]), "")
+        choices.append({"id": item, "title": title[:140] or f"Older chat {len(choices) + 1}"})
+    return choices
+
+
 @app.get("/api/ai/connections", dependencies=[Depends(local_ai_settings)])
 async def api_ai_connections(item_id: str = ""):
     try:
@@ -453,6 +479,7 @@ async def api_ai_connections(item_id: str = ""):
         return ai_settings_result({**data, "providers": ai_connections.PROVIDERS, "runtimes": runtimes,
             "engines": engines, "terminal_available": sys.platform == "darwin",
             "workspace_setup_ready": bool(missing), "workspace_setup_missing": missing,
+            "legacy_chats": legacy_chat_choices(),
             "jobs": ai_settings.jobs, "selected": selected, "selected_model": selected_model,
             "affected": {c["id"]: connection_affected(c["id"]) for c in data["connections"]}})
     except ValueError as exc:
@@ -509,9 +536,6 @@ async def api_ai_default(body: dict):
             await validate_model(connection["provider"], model, connection["id"])
             if effort and effort not in await model_efforts(connection, model):
                 raise ValueError("This model does not support that effort")
-        if chat_router:
-            for item in list(chat_router._sessions._map):
-                chat_router._sessions.connection(item)
         ai_connections.set_default(body.get("connection", ""), model, effort)
         await ensure_chat_router()
         return ai_settings_result({"ok": True})
@@ -521,11 +545,15 @@ async def api_ai_default(body: dict):
 
 @app.post("/api/ai/chat-connection", dependencies=[Depends(local_ai_settings)])
 async def api_ai_chat_connection(body: dict):
-    await ensure_chat_router()
+    if not await ensure_chat_router():
+        return chat_unavailable()
     item_id, connection_id = body.get("item_id"), body.get("connection")
-    if not isinstance(item_id, str) or not 1 <= len(item_id) <= 200:
+    if not valid_chat_choice(item_id):
         return ai_settings_result({"error": "Choose a chat"}, 400)
-    if item_id in chat_router.active_items() or any(p["item_id"] == item_id for p in chat_router._paused.values()):
+    if not isinstance(connection_id, str) or connection_id in ("", "default"):
+        return ai_settings_result({"error": "Choose a named AI account"}, 400)
+    if (item_id in chat_router.active_items() or item_id in chat_router._sending.values()
+            or any(p["item_id"] == item_id for p in chat_router._paused.values())):
         return ai_settings_result({"error": "Finish this turn or its pending approval before changing connection"}, 409)
     try:
         selected = ai_connections.get(connection_id)
@@ -1286,7 +1314,7 @@ async def api_board_chat(body: dict):
     item_id = str(body["item_id"])
     if item_id == AI_SETUP_ITEM_ID or (
         (setup_item(chat_router) or {}).get("id") == AI_SETUP_ITEM_ID
-        and (item_id == SETUP_ITEM_ID or not chat_router._sessions.get(item_id))
+        and (item_id == SETUP_ITEM_ID or not chat_router._sessions.has_item(item_id))
     ):
         return JSONResponse({"error": "Choose a default AI account in Settings and finish its software and model setup.",
                              "settings_url": "/settings#account-setup"}, status_code=503)

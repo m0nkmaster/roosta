@@ -109,10 +109,11 @@ These shell reads accept literal arguments only. Redirection and chained command
 A product engineering worker can use the ordinary profile with a separate Git worktree
 and launch from the workspace to discover its custom skill. Ordinary Claude runs use `dontAsk`.
 
-`SessionMap` reads old string values and writes `{session_id, connection}` records. New chats, and
-chats from the retired engine picker, bind the connected default once; `selected()` reads that choice
-without binding. Changing the default never
-moves an existing chat or approval. Explicit chat migration retains rendered history and topic summary,
+`SessionMap` reads old string values and writes `{session_id, connection}` records. New chats bind the connected default once.
+An existing legacy conversation needs an explicit account choice in Settings before Roosta sends
+any context. Its visible history and topic summary survive. The next turn starts a fresh provider
+session on the selected account. Changing the default never moves an existing chat or approval.
+Explicit chat migration retains rendered history and topic summary,
 rotates execution context, and is rejected during a live turn or pending approval. Worker YAML omits
 `connection` to follow the current default and stores a stable id only for an explicit account pin. The
 runner resolves the default once after waiting for its writer slot and stores the concrete connection
@@ -130,9 +131,7 @@ OpenRouter acceptance on a clean packaged machine to confirm provider access and
 
 Every chat, worker and approved send runs on a named AI connection: Anthropic through Claude Code,
 OpenAI, OpenRouter and Ollama through Pi, and Cursor through the Cursor Agent CLI (`agent`). The old
-engine picker, per-task `harness:`/`claude_model:` keys and the OpenCode runtime are gone. Chats
-bound to the retired picker, or never bound, continue on the default connection in a new session;
-the topic summary carries continuity.
+engine picker, per-task `harness:`/`claude_model:` keys and the OpenCode runtime are retired.
 
 - **Claude prompts go on stdin, never argv.** Endpoint security on some managed Macs SIGKILLs (exit 137,
   before any output) any process whose command line contains certain words, e.g. "openclaw" in any
@@ -162,10 +161,12 @@ the topic summary carries continuity.
   `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1`, and worker runs set `BASH_MAX_TIMEOUT_MS` to the task's
   `max_timeout` minus two minutes so a long script such as a chat archive fits in one foreground call.
 
-- **Cursor connections.** A Cursor connection stores a Cursor API key in the OS credential store and
-  passes it only as the child's `CURSOR_API_KEY`. Each run writes its permission profile and MCP
-  servers to the connection's private `cursor/` directory (`CURSOR_CONFIG_DIR`), stripping any
-  interactive login the CLI cached there so a headless run never falls back to a keychain login.
+- **Cursor connections.** Roosta strips inherited `CURSOR_API_KEY` from connection environments.
+  A Cursor run receives only its selected account’s key from the OS credential store. Each turn
+  writes its permissions and MCP servers to a private temporary `cursor/run-*/` directory and
+  uses it as `CURSOR_CONFIG_DIR`. Concurrent runs on the same account cannot overwrite each
+  other’s settings. Each directory links to the account’s persistent `cursor/chats/` store so
+  sessions can resume after the temporary config is removed.
   The `safe` profile is `cursor-permissions.json` plus connector denials; `unrestricted` allows
   everything. Both deny the connection and managed-runtime roots, and writes to an installed
   package outside the workspace. Turns run `agent --print --trust --force --approve-mcps
