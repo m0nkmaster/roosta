@@ -104,6 +104,46 @@ def test_mentor_is_most_senior_free_colleague_never_a_new_starter():
     assert _node(js) == ["veteran-near", "veteran-far", None]
 
 
+def test_mentor_of_record_leads_the_probation_high_five():
+    js = (f"{_lift('coffeeRunner')}{_lift('mentorFree')}{_lift('tallyMentor')}{_lift('mentorOfRecord')}{_lift('milestoneGreet')}"
+          "const d1 = { id: 1 };"
+          "const judy = { id: 'judy', state: 'resting', x: 100, y: 150, path: [] };"
+          "const near = { id: 'monty', state: 'resting', x: 120, y: 150, path: [] };"
+          "const phil = { id: 'phil', state: 'resting', x: 900, y: 600, path: [] };"
+          "const hunter = { id: 'hunter', state: 'resting', x: 800, y: 600, path: [] };"
+          "let tally = {};"
+          "tally = tallyMentor(tally, 'judy', 'hunter'); tally = tallyMentor(tally, 'judy', 'phil');"
+          "tally = tallyMentor(tally, 'judy', 'phil'); tally = tallyMentor(tally, 'kat', 'monty');"
+          "const ws = [judy, near, phil, hunter], peeker = { ...near, poi: { tag: 'peek', desk: d1 } };"
+          "const rec = mentorOfRecord(tally, 'judy', ws);"
+          "const tie = mentorOfRecord(tallyMentor(tally, 'judy', 'hunter'), 'judy', ws);"
+          "const out = {"
+          "  tally, rec: rec && rec.id, tie: tie && tie.id,"
+          "  none: mentorOfRecord(tally, 'oscar', ws), gone: mentorOfRecord(tally, 'judy', [judy, near]),"
+          "  walk: milestoneGreet(true, 0, ws, judy, d1, false, rec),"
+          "  noMentor: milestoneGreet(true, 0, ws, judy, d1, false, null),"
+          "  comeback: milestoneGreet(false, 3, ws, judy, d1, false, rec),"
+          "  busy: milestoneGreet(true, 0, ws, judy, d1, false, { ...phil, state: 'working' }),"
+          "  napping: milestoneGreet(true, 0, ws, judy, d1, false, { ...phil, act: 'nap' }),"
+          "  taken: milestoneGreet(true, 0, ws, judy, d1, true, rec),"
+          "  atDesk: milestoneGreet(true, 0, [judy, peeker], judy, d1, true, peeker),"
+          "  free: [mentorFree(phil), mentorFree({ ...phil, path: [1] }), mentorFree({ ...phil, errand: 'x' }), mentorFree({ ...phil, poi: { pair: 1 } }), mentorFree(null)],"
+          "};"
+          "process.stdout.write(JSON.stringify(out))")
+    out = _node(js)
+    assert out["tally"] == {"judy": {"hunter": 1, "phil": 2}, "kat": {"monty": 1}}
+    assert out["rec"] == "phil" and out["tie"] == "phil"  # earlier in the roster wins a tie
+    assert out["none"] is None and out["gone"] is None
+    assert out["walk"] == {"kind": "welcome", "badge": "PROBATION PASSED!", "line": "I'm staying!", "peer": "phil", "mode": "walk", "proud": True}
+    assert out["noMentor"]["peer"] == "monty" and "proud" not in out["noMentor"]
+    assert out["comeback"]["peer"] == "monty" and "proud" not in out["comeback"]  # only probation is the mentor's moment
+    assert out["busy"]["peer"] == "monty" and "proud" not in out["busy"]
+    assert out["napping"]["peer"] == "monty"
+    assert out["taken"] == {"kind": "welcome", "badge": "PROBATION PASSED!", "line": "I'm staying!", "peer": None, "mode": "call"}
+    assert out["atDesk"]["mode"] == "atDesk" and out["atDesk"]["peer"] == "monty" and out["atDesk"]["proud"] is True
+    assert out["free"] == [True, False, False, False, False]
+
+
 def test_new_starter_tag_and_probation():
     cases = [[None, 0], [None, 9], [None, 10], [9, 10], [8, 9], [10, 11], [None, None]]
     out = _node(f"const NEW_RUNS = 10;{_lift('starter')}process.stdout.write(JSON.stringify("
