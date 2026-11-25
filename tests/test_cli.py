@@ -35,14 +35,21 @@ def test_snapshot_reads_only_local_runner(resource, monkeypatch, capsys):
     import httpx
 
     monkeypatch.setenv("ROOSTA_PORT", "7812")
+    payload = {"document": {"items": [], "later": []}} if resource == "board" else []
+
     def get(url, **options):
         assert url == f"http://127.0.0.1:7812/api/{resource}"
         assert options["trust_env"] is False and options["follow_redirects"] is False
-        return httpx.Response(200, json={"items": []}, request=httpx.Request("GET", url))
+        return httpx.Response(200, json=payload, request=httpx.Request("GET", url))
 
     monkeypatch.setattr(httpx, "get", get)
     assert cli.main(["snapshot", resource]) == 0
-    assert json.loads(capsys.readouterr().out) == {"items": []}
+    assert json.loads(capsys.readouterr().out) == payload
+    if resource == "board":
+        payload = {"document": {}}
+        assert cli.main(["snapshot", resource]) == 1
+        output = capsys.readouterr()
+        assert not output.out and "document.items" in output.err
     monkeypatch.setenv("ROOSTA_PORT", "7812@example.com")
     assert cli.main(["snapshot", resource]) == 1
     assert not capsys.readouterr().out

@@ -23,6 +23,11 @@ whether Roosta or the user installed it. Downloads use the default SSL context w
 backend includes keyring's native backend, so installation needs neither Node nor system Python.
 Updating stages and verifies the download before replacing the managed copy. New harness releases do not require a Roosta update.
 
+Claude, Pi and Cursor runs prepend the package's `worker-bin` directory to their child PATH.
+Its `roosta` command re-enters the serving interpreter and package, or relaunches the frozen
+backend with a fresh PyInstaller environment. Runs inherit the serving workspace and port,
+including when a task has a different working directory.
+
 Settings uses one provider/account flow. AI software reports installation status; installed binaries offer Update to latest under Updates, which does not imply a detected failure. On macOS, Open in Terminal starts the exact installed Claude Code or Pi binary in `paths.WORKSPACE` as a standalone interactive session using the CLI’s own login/settings, not a Roosta connection. The local-only `POST /api/ai/terminal` accepts only the two runtime ids, refuses missing/installing binaries, shell-quotes both paths, and passes the command as an argument to a fixed AppleScript. It never exports Roosta connection credentials or submits a prompt. The `local_ai_settings` dependency
 requires a loopback client, a local Host, and a same-origin browser request for credential/setup APIs.
 Tests and installs run as supervised setup jobs; status contains no credentials or authentication output.

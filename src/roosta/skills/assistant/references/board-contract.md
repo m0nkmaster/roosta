@@ -65,7 +65,7 @@ roosta snapshot board
 
 It prints the board JSON; the cards are in `.document.items`.
 
-If the runner is unreachable, read `last_output.details.items` across `.roosta/state/cache/*.json`.
+A successful snapshot with empty `document.items` and `document.later` confirms an empty board, including before any worker has written a cache. If the snapshot fails, read `last_output.details.items` from the conductor and sensor caches in `.roosta/state/cache/`. If the prior cards cannot be recovered, report the read failure with `status: "error"` and omit `details.items` so the runner preserves the previous cards.
 
 - **Same subject already on the board:** return an item with that card's `id` and only the fields you improve, each rewritten in full. Links and documents you add are combined with the card's.
 - **The newest run wins per field.** Fields you omit stay as they are. `new: true` only for a material update.

@@ -49,6 +49,37 @@ def test_anthropic_and_automatic_routing_cannot_reach_pi(provider, model):
         connections.runtime(provider, model)
 
 
+@pytest.mark.parametrize("provider", ["anthropic", "openai", "cursor"])
+@pytest.mark.parametrize("obsolete_cli", [False, True])
+def test_worker_invokes_serving_cli(accounts, tmp_path, monkeypatch, provider, obsolete_cli):
+    workspace = tmp_path / "selected office"
+    (workspace / ".roosta").mkdir(parents=True)
+    cwd = tmp_path / "worker project"
+    cwd.mkdir()
+    (cwd / "roosta.py").write_text("raise RuntimeError('wrong package')")
+    if obsolete_cli:
+        old = tmp_path / "roosta"
+        old.write_text("#!/bin/sh\nexit 42\n")
+        old.chmod(0o755)
+    monkeypatch.setattr(ai_backend.cursor_agent, "agent_path", lambda _: str(tmp_path))
+    runtime = tmp_path / "runtime with spaces"
+    runtime.symlink_to(Path(sys.executable).parent, target_is_directory=True)
+    monkeypatch.setattr(sys, "executable", str(runtime / Path(sys.executable).name))
+    monkeypatch.setattr(paths, "WORKSPACE", workspace)
+    monkeypatch.setattr(paths, "PORT", 18765)
+    account = accounts[0](provider)
+    run = ai_backend.prepare(account["id"], str(cwd))
+    assert run.env["ROOSTA_PORT"] == "18765"
+    assert shutil.which("roosta", path=run.env["PATH"]) == str(paths.APP_ROOT / "worker-bin/roosta")
+
+    def invoke(*args):
+        return subprocess.check_output(["roosta", *args], cwd=cwd, env=run.env, text=True).strip()
+
+    assert invoke("skills", "path") == str(paths.CORE_SKILLS_DIR)
+    assert "actor" in json.loads(invoke("skills", "status"))["core"]
+    assert "snapshot" in invoke("snapshot", "board", "--help")
+
+
 def test_connections_keep_secrets_out_of_metadata_and_argv(accounts, tmp_path, monkeypatch):
     create, secrets = accounts
     first, second = create(label='Work'), create(key='second-test-key', label='Personal')

@@ -43,6 +43,10 @@ starting `assistant/` are under the workspace's `.roosta/state/`. Also see
   open the original thread. Its restore time ranks it among recent chats even if its last message
   predates the 100-row rail. Closing and restoring leave transcripts and running turns intact.
 
+- **First conductor pass.** A successful `roosta snapshot board` with empty active and deferred
+  card lists allows the conductor to start from an empty board before a cache exists. If the
+  snapshot fails and the prior cards cannot be recovered from cache, the conductor reports an
+  error without items so the runner carries its previous cards forward.
 - **Scheduled sensor feeds.** Every scheduled task may return board-shaped items in
   `details.items`; there is no allowlist. `/api/board` merges each task's latest findings into the
   conductor snapshot by stable id (`merge_board_feed_items`). A repeated id **refines** the

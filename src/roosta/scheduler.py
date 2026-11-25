@@ -768,12 +768,19 @@ class TaskRunner:
                     state.last_run = datetime.now(timezone.utc).isoformat()
                     state.last_duration = round(duration, 1)
                     previous = (state.last_output or {}).get("details")
-                    if task.id == "assistant":
-                        carry_forward_board_items(output.get("details"), previous)
                     details = output.get("details") if isinstance(output.get("details"), dict) else {}
-                    if (status == "error" and isinstance(previous, dict) and isinstance(previous.get("items"), list)
-                            and not isinstance(details.get("items"), list)):
-                        # A failed pass that reports no items says nothing about the board; keep the last cards.
+                    if status == "error" and task.id == "assistant":
+                        # Publish conductor edits as a unit. A partial merge can hide a preserved card.
+                        details = details.copy()
+                        for key in ("items", "merges", "done_today"):
+                            details.pop(key, None)
+                            if isinstance(previous, dict) and key in previous:
+                                details[key] = previous[key]
+                        output = {**output, "details": details}
+                    elif task.id == "assistant":
+                        carry_forward_board_items(details, previous)
+                    elif (status == "error" and isinstance(previous, dict) and isinstance(previous.get("items"), list)
+                          and (not isinstance(details.get("items"), list) or not details["items"])):
                         output = {**output, "details": {**details, "items": previous["items"]}}
                     state.last_output = output
                     state.run_count += 1
