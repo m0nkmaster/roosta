@@ -462,6 +462,8 @@ def legacy_chat_choices() -> list[dict]:
 @app.get("/api/ai/connections", dependencies=[Depends(local_ai_settings)])
 async def api_ai_connections(item_id: str = ""):
     try:
+        # A job finishing during discovery needs one more poll for its effects.
+        jobs = {key: job.copy() for key, job in ai_settings.jobs.items()}
         await ai_connections.offer_system()
         engines = {name: await asyncio.to_thread(ai_runtime.describe, name) for name in (*ai_runtime.RUNTIMES, "cursor")}
         runtimes = {name: {"version": engine["version"], "installed": engine["installed"]}
@@ -480,7 +482,7 @@ async def api_ai_connections(item_id: str = ""):
             "engines": engines, "terminal_available": sys.platform == "darwin",
             "workspace_setup_ready": bool(missing), "workspace_setup_missing": missing,
             "legacy_chats": legacy_chat_choices(),
-            "jobs": ai_settings.jobs, "selected": selected, "selected_model": selected_model,
+            "jobs": jobs, "selected": selected, "selected_model": selected_model,
             "affected": {c["id"]: connection_affected(c["id"]) for c in data["connections"]}})
     except ValueError as exc:
         return ai_settings_result({"error": str(exc)}, 400)

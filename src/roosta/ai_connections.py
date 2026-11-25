@@ -172,6 +172,8 @@ def create(body: dict) -> dict:
     if auth == "api_key":
         _vault().set_password("Roosta AI", connection["credential_ref"], key.strip())
     data["connections"].append(connection)
+    if body.get("default_if_unset") is True and not data.get("default"):
+        data["default"] = connection_id
     try:
         save(data)
     except Exception:

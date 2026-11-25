@@ -1655,3 +1655,121 @@ def test_a_runtime_killed_by_a_signal_says_so(accounts, tmp_path):
     async def consume(): return [line async for line in ai_backend.stream(run, 'test', maximum=5)]
     with pytest.raises(ValueError, match='stopped by macOS'):
         asyncio.run(consume())
+
+
+@pytest.fixture
+def onboarding_runtimes(accounts, setup_jobs, tmp_path, monkeypatch):
+    monkeypatch.setattr(app.profile, 'load', lambda: app.profile.Profile())
+    monkeypatch.setattr(app, 'chat_router', None)
+    monkeypatch.setattr(app, 'load_tasks', lambda: [])
+    store = tmp_path / '.roosta/state/ai-connections.json'
+    monkeypatch.setattr(connections, 'CONNECTIONS_FILE', store)
+    installed = set()
+    monkeypatch.setattr(ai_runtime, 'find', lambda name: f'/mock/{name}' if name in installed else '')
+    monkeypatch.setattr(ai_runtime, 'version', lambda _: '1.0')
+    monkeypatch.setattr(ai_backend, 'test_connection', lambda *_: pytest.fail('Unexpected AI test'))
+    return installed
+
+
+@pytest.mark.parametrize('runtime,account', [
+    ('claude', {'provider': 'anthropic', 'auth': 'system'}),
+    ('cursor', {'provider': 'cursor', 'auth': 'api_key', 'api_key': 'fixture-secret'}),
+], ids=['claude-system', 'cursor-api-key'])
+def test_first_account_setup_survives_reload_without_testing(onboarding_runtimes, tmp_path, runtime, account):
+    installed = onboarding_runtimes
+    installed.add(runtime)
+    body = {**account, 'default_if_unset': True}
+    created = json.loads(asyncio.run(app.api_ai_connection_create(body)).body)
+    key = created['id']
+    assert key == connections.load()['default']
+    # A second window can submit its stale first-account form.
+    assert asyncio.run(app.api_ai_connection_create({**body, 'label': 'Second'})).status_code == 201
+    assert key == connections.load()['default']
+
+    def check(ready):
+        snapshot = asyncio.run(app.api_ai_connections())
+        assert snapshot.status_code == 200 and b'fixture-secret' not in snapshot.body
+        data = json.loads(snapshot.body)
+        assert data['workspace_setup_ready'] is ready
+        assert data['default'] == key and not data['connections'][0]['tested']
+        assert board.setup_item()['id'] == (board.SETUP_ITEM_ID if ready else board.AI_SETUP_ITEM_ID)
+
+    check(True)
+    assert 'fixture-secret' not in connections.CONNECTIONS_FILE.read_text()
+    # Cold startup against the same workspace, without a server or a credential store.
+    subprocess.run([sys.executable, '-c', """
+import asyncio, json, sys
+from roosta import app, ai_runtime
+runtime, key = sys.argv[1:]
+ai_runtime.find = lambda name: f'/mock/{name}' if name == runtime else ''
+ai_runtime.version = lambda _: '1.0'
+settings = json.loads(asyncio.run(app.api_ai_connections()).body)
+assert settings['default'] == key
+assert settings['workspace_setup_ready']
+board = json.loads(asyncio.run(app.api_board()).body)
+assert [item['id'] for item in board['document']['items']] == [app.SETUP_ITEM_ID]
+""", runtime, key], check=True, env={**os.environ, 'ROOSTA_WORKSPACE': str(tmp_path),
+                        'HOME': str(tmp_path), 'PATH': str(tmp_path / 'empty-bin')})
+    installed.clear()
+    check(False)
+    installed.add(runtime)
+    connections.update(key, connected=False)
+    check(False)
+
+
+def test_fresh_claude_install_offers_account_and_cursor_preserves_choice(onboarding_runtimes, monkeypatch):
+    monkeypatch.setattr(ai_runtime, 'install', onboarding_runtimes.add)
+
+    async def exercise():
+        assert json.loads((await app.api_ai_connections()).body)['connections'] == []
+        assert (await app.api_ai_operation({'id': 'claude', 'operation': 'install'})).status_code == 202
+        await ai_settings.job_tasks['claude']
+        offered = json.loads((await app.api_ai_connections()).body)
+        assert offered['jobs']['claude']['status'] == 'success'
+        claude, = offered['connections']
+        assert (claude['provider'], claude['auth']) == ('anthropic', 'system')
+        assert offered['default'] == '' and not offered['workspace_setup_ready']
+        assert (await app.api_ai_default({'connection': claude['id']})).status_code == 200
+        assert connections.load()['default'] == claude['id']
+
+        onboarding_runtimes.add('cursor')
+        response = await app.api_ai_connection_create({
+            'provider': 'cursor', 'api_key': 'fixture-secret', 'default_if_unset': True})
+        assert response.status_code == 201
+        cursor = json.loads(response.body)
+        final = json.loads((await app.api_ai_connections()).body)
+        assert final['default'] == claude['id'] and final['workspace_setup_ready']
+        assert {c['id'] for c in final['connections']} == {claude['id'], cursor['id']}
+        assert not any(c['tested'] for c in final['connections'])
+
+    asyncio.run(exercise())
+
+
+def test_install_finishing_during_settings_snapshot_gets_another_poll(accounts, setup_jobs, monkeypatch):
+    job = {'status': 'running', 'operation': 'install'}
+    ai_settings.jobs['pi'] = job
+    monkeypatch.setattr(ai_runtime, 'find', lambda _: '')
+    def describe(name):
+        installed = job['status'] == 'success'
+        if name == 'pi':
+            job['status'] = 'success'
+        return {'installed': installed, 'version': ''}
+    monkeypatch.setattr(ai_runtime, 'describe', describe)
+    def snapshot():
+        return json.loads(asyncio.run(app.api_ai_connections()).body)
+    first = snapshot()
+    assert not first['engines']['pi']['installed'] and first['jobs']['pi']['status'] == 'running'
+    final = snapshot()
+    assert final['engines']['pi']['installed'] and final['jobs']['pi']['status'] == 'success'
+
+
+def test_board_recognises_saved_account_and_pending_browser_signin(accounts, monkeypatch):
+    monkeypatch.setattr(app.profile, 'load', lambda: app.profile.Profile())
+    c = accounts[0]('openai', auth='cli', tested=False)
+    assert board.setup_item()['title'] == 'Choose your default AI account'
+    connections.set_default(c['id'])
+    assert board.setup_item()['title'] == 'Sign in to your AI account'
+    auth = connections.directory(c['id']) / 'pi/auth.json'
+    auth.parent.mkdir(parents=True)
+    auth.write_text(json.dumps({'openai': {'refresh': 'fixture-only'}}))
+    assert board.setup_item()['id'] == board.SETUP_ITEM_ID

@@ -55,6 +55,8 @@
   }
   function showForm(show) {
     formOpen = show;
+    $('ai-form').querySelector('button[type="submit"]').textContent =
+      editing ? 'Save connection' : state.default ? 'Add account' : 'Add and use as default';
     $('ai-form').hidden = !show;
     $('ai-add-toggle').hidden = show;
   }
@@ -268,6 +270,7 @@
     if (version !== loadVersion) return;
     const firstLoad = !state;
     state = next;
+    if ($('ai-message').textContent === retryMessage) message('');
     if (!$('ai-provider').options.length) {
       const names = {anthropic:'Claude', openai:'ChatGPT / OpenAI', openrouter:'OpenRouter', cursor:'Cursor', ollama:'Local models (Ollama)'};
       $('ai-provider').innerHTML = ['anthropic', 'openai', 'openrouter', 'cursor', 'ollama'].filter(id => state.providers[id]).map(id => `<option value="${id}">${names[id]}</option>`).join('');
@@ -294,7 +297,19 @@
       loadModels().catch(e => { if (modelKey === key) $('model-message').textContent = e.message; });
     }
     clearTimeout(poll);
-    if (Object.values(state.jobs).some(j => j.status === 'running')) poll = setTimeout(() => load().catch(e => message(e.message, true)), 1500);
+    if (Object.values(state.jobs).some(j => j.status === 'running')) poll = setTimeout(pollStatus, 1500);
+  }
+  const retryMessage = 'Could not refresh AI setup. Retrying…';
+  async function pollStatus() {
+    const version = loadVersion + 1;
+    try {
+      await load();
+    } catch {
+      if (version !== loadVersion) return;
+      message(retryMessage, true);
+      clearTimeout(poll);
+      poll = setTimeout(pollStatus, 1500);
+    }
   }
   $('ai-provider').addEventListener('change', providerChanged);
   $('ai-auth').addEventListener('change', authChanged);
@@ -304,7 +319,6 @@
     $('ai-provider').disabled = false;
     $('ai-auth').disabled = false;
     $('ai-form-title').textContent = 'Add account';
-    $('ai-form').querySelector('button[type="submit"]').textContent = 'Add account';
     providerChanged();
     showForm(false);
   }
@@ -316,11 +330,11 @@
     try {
       const provider = $('ai-provider').value;
       const auth = provider === 'ollama' ? 'local' : ['anthropic', 'openai'].includes(provider) ? ($('ai-auth').value || 'api_key') : 'api_key';
-      const c = await request(editing ? `/api/ai/connections/${editing.id}/change` : '/api/ai/connections', {provider, auth, label:$('ai-label').value, api_key:$('ai-key').value});
+      const c = await request(editing ? `/api/ai/connections/${editing.id}/change` : '/api/ai/connections', {provider, auth, label:$('ai-label').value, api_key:$('ai-key').value, default_if_unset:!editing && !state.default});
       $('ai-key').value = '';
       resetForm();
-      message(`Saved ${c.label}. Select Use as default to use this account for new chats and workers.`);
-      await load();
+      message(`Saved ${c.label}.`);
+      await pollStatus();
     } catch (e) { message(e.message, true); }
     finally { button.disabled = false; }
   });
@@ -333,7 +347,6 @@
       $('ai-provider').disabled = true; $('ai-auth').value = c.auth; $('ai-auth').disabled = true; authChanged();
       $('ai-label').value = c.label;
       $('ai-key').required = c.auth === 'api_key' && !c.connected;
-      $('ai-form').querySelector('button[type="submit"]').textContent = 'Save connection';
       message('Changes apply to every chat and worker using this connection. Leave the key blank to keep it. Testing after saving is optional.');
       $('ai-label').focus(); return;
     }
@@ -355,8 +368,9 @@
         await request(`/api/ai/connections/${button.dataset.disconnect}/disconnect`, {});
         message('Disconnected. Choose a replacement explicitly for affected chats and workers.');
       }
-      await load();
+      await pollStatus();
     } catch (e) { message(e.message, true); button.disabled = false; }
   });
+  window.addEventListener('focus', pollStatus);
   load().catch(e => message(e.message, true));
 })();

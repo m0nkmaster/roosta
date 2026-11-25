@@ -49,7 +49,7 @@ On first launch, Roosta uses your configured workspace or creates `~/workspace`.
 
 ### Set up your office
 
-1. **Connect your AI.** On a fresh workspace, the board offers **Connect your AI**, or **Choose your Claude Code account** if Claude Code is already installed. Open AI settings to select **Use as default** on that account, or connect another account and install its software.
+1. **Connect your AI.** On a fresh workspace, the board offers **Connect your AI**, or **Choose your Claude Code account** if Claude Code is already installed. Open AI settings to select **Use as default** on that account, or choose **Add and use as default** when adding your account. Install its software and complete any requested sign-in or model choice. The connection test is optional.
 2. **Tell Roosta about your work.** Choose **Continue workspace setup**, then open **Set up your workspace** on the board. Roosta helps you describe your priorities, projects and tools, sets up a starter schedule and creates your first board card.
 3. **Build your team.** Open Workers and choose **New worker** to describe a job. Each worker runs a named skill on a schedule. Visit the Office to find its desk and chat about the job.
 

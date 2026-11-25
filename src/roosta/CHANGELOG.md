@@ -2,6 +2,10 @@
 
 Record each release newest first. Bump minor for features and visible behaviour, patch for fixes and polish.
 
+## 0.21.1 - 2026-11-25
+
+- Settings refreshes when AI setup finishes or you return from sign-in. Add and use as default saves the first account choice so the board can continue workspace setup after a restart, without a connection test.
+
 ## 0.21.0 - 2026-11-25
 
 - A failed worker run keeps its last board cards instead of clearing them, so one AI error no longer empties the Assistant board.

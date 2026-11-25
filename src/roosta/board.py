@@ -494,37 +494,48 @@ def setup_item(router=None) -> dict | None:
     PROFILE.md names the user and kept once a setup conversation has started, because setup
     writes the name in its first step. The card goes when setup ends with DONE (or the user
     closes it), through the usual handled store."""
-    ready = ai_backend.connection_available()
-    needs_model = False
-    if ready:
+    title = situation = ""
+    try:
+        selected = ai_connections.get()
+        if not ai_backend.connection_available():
+            title = "Install your AI software"
+            situation = "Install the software for your default account in Settings."
+        elif ai_backend.signed_in(selected) is False:
+            title = "Sign in to your AI account"
+            situation = "Complete the browser sign-in for your default account in Settings."
+        elif (selected["provider"] not in ("anthropic", "cursor")
+              and not ai_connections.default_model(selected["provider"])):
+            title = "Choose your AI model"
+            situation = "Choose a model in Settings to finish connecting AI."
+    except ValueError:
         try:
-            selected = ai_connections.get()
-            needs_model = (selected["provider"] not in ("anthropic", "cursor")
-                           and not ai_connections.default_model(selected["provider"]))
+            accounts = [c for c in ai_connections.load()["connections"] if c.get("connected")]
         except ValueError:
-            ready = False
-    if ready and not needs_model and profile.load().name:
-        history = getattr(router, "conversation_history", None)
-        if not (history and history(SETUP_ITEM_ID)):
-            return None
-    if not ready or needs_model:  # workers and chats need a working AI connection, even after setup
-        try:
-            existing = any(c["auth"] == "system" and c["connected"]
-                           for c in ai_connections.load()["connections"])
-        except ValueError:
-            existing = False
+            accounts = []
+        if any(c["auth"] == "system" for c in accounts):
+            title = "Choose your Claude Code account"
+            situation = "Roosta can use the existing Claude Code login on this computer."
+        elif accounts:
+            title = "Choose your default AI account"
+            situation = "Choose Use as default beside the saved account you want for new chats and workers."
+        else:
+            title = "Connect your AI"
+            situation = "Add or reconnect an AI account in Settings."
+    if title:
         return {
             "id": AI_SETUP_ITEM_ID,
             "project_ref": None,
-            "title": "Choose your AI model" if needs_model else "Choose your Claude Code account" if existing else "Connect your AI",
+            "title": title,
             "why": "Connect AI before setting up your workspace so Roosta can help you.",
-            "situation": ("Choose a model in Settings to finish connecting AI."
-                          if needs_model else "Claude Code was found on this computer. Roosta can use its existing login; no separate account or API key is needed."
-                          if existing else "Choose Claude, ChatGPT or another supported service in Settings."),
-            "opening_move": "Choose a model in Settings, then return here to set up your workspace." if needs_model else "Open AI settings, choose your default account and install its software if needed. Then return here to set up your workspace.",
+            "situation": situation,
+            "opening_move": "Open AI settings to finish setting up your default account. Then return here to set up your workspace.",
             "action_type": "task", "action_owner": "user", "action_label": "Open AI settings",
             "links": [], "documents": [], "new": True,
         }
+    if profile.load().name:
+        history = getattr(router, "conversation_history", None)
+        if not (history and history(SETUP_ITEM_ID)):
+            return None
     return {
         "id": SETUP_ITEM_ID,
         "project_ref": None,
