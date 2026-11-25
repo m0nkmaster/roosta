@@ -7,6 +7,8 @@ never inside a user's workspace.
 
 ## Working rules
 
+- Roosta is pre-adoption, and the maintainer is its only user. Add migration or backwards-compatibility
+  requirements only when explicitly requested.
 - Keep API routes and the shared runner, chat router and activity instances in `app.py`; put
   subsystem logic in its own module, as with `scheduler.py`, `board.py` and `task_config.py`. Do not introduce a framework layer. Pages are static HTML + fetch, with no Jinja or build step.
 - Use `paths.py` for `APP_ROOT` versus `WORKSPACE`; never hardcode a home directory.
