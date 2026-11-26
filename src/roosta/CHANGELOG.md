@@ -2,6 +2,10 @@
 
 Record each release newest first. Bump minor for features and visible behaviour, patch for fixes and polish.
 
+## 0.22.1 - 2026-11-26
+
+- When you revise a ticket or other item it already drafted, the Assistant first checks whether you approved and created it, then drafts an edit instead of a duplicate. It also reads reminders from Roosta's state file directly, so it can confirm reminders that workspace search misses.
+
 ## 0.22.0 - 2026-11-26
 
 - Collections can maintain themselves. Add `collect_tag`, `collect_path`, `collect_order` or `exclude` to a collection index's frontmatter and the workspace gardener adds matching pages on every pass, without removing or reordering your own entries.
