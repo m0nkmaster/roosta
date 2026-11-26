@@ -1067,7 +1067,7 @@ def test_friday_cake_arrives_gets_cut_and_leaves_a_last_slice():
 
 def test_post_lands_mid_morning_monday_to_saturday_and_never_lingers():
     hash_js = re.search(r"const hash = .*?;\n", PAGE.read_text()).group(0)
-    js = (f"{hash_js}{_lift('postFor')}{_lift('postWaiting')}" + """
+    js = (f"const OWN_SLOT = 4;{hash_js}{_lift('postFor')}{_lift('postWaiting')}" + """
 const days = [0,1,2,3,4,5,6].map((d) => postFor('2026-11-24', d));
 const tue = days[2], none = new Set();
 const out = {
@@ -1096,7 +1096,7 @@ process.stdout.write(JSON.stringify(out));
 
 def test_collecting_post_takes_one_slot_and_makes_no_runner_calls():
     js = (f"{_lift('collectPost')}" + """
-const slots = [{i: 2, kind: 'postcard', by: 900}], postTaken = new Set();
+const OWN_SLOT = 4, slots = [{i: 2, kind: 'postcard', by: 900}, {i: 4, kind: 'letter', by: 1050}], postTaken = new Set();
 const postLeft = () => slots.filter((s) => !postTaken.has(s.i));
 let said = []; const say = (w, t) => said.push(t), pick = (l) => l[0], lastQuip = 0;
 const POST_QUIPS = {letter: ['l'], flyer: ['f'], postcard: ['p'], none: ['n']};
@@ -1106,6 +1106,37 @@ collectPost(a, 10000); collectPost(b, 20000);
 process.stdout.write(JSON.stringify({taken: [...postTaken], a: [a.item, a.emote], b: [b.item, b.emote], said}));
 """)
     assert _node(js) == {"taken": [2], "a": ["papers", "heart"], "b": [None, "q"], "said": ["p", "n"]}
+
+
+
+def test_own_pigeonhole_waits_for_the_user_and_says_what_is_there():
+    hash_js = re.search(r"const hash = .*?;\n", PAGE.read_text()).group(0)
+    js = (f"const OWN_SLOT = 4;{hash_js}{_lift('postFor')}{_lift('ownPost')}{_lift('actionFor')}{_lift('hintFor')}" + """
+const plan = {at: 600, slots: [{i: 1, kind: 'flyer', by: 700}, {i: 4, kind: 'postcard', by: 1050}]};
+const none = new Set(), mine = new Set([4]);
+const week = [1,2,3,4,5,6].map((d) => postFor('2026-11-24', d)).map((p) => p.slots.filter((s) => s.i === OWN_SLOT).map((s) => s.by));
+process.stdout.write(JSON.stringify({
+  outs: [ownPost(null, 700, none, false), ownPost(plan, 599, none, false), ownPost(plan, 600, none, false), ownPost(plan, 1049, none, false),
+         ownPost(plan, 700, mine, true), ownPost(plan, 1050, none, false), ownPost({at: 600, slots: [{i: 1, kind: 'flyer', by: 700}]}, 650, none, false),
+         ownPost({at: 600, slots: [{i: 1, kind: 'flyer', by: 700}]}, 650, none, true)],
+  week, hint: hintFor('post', null, false)}));
+""")
+    out = _node(js)
+    assert out["outs"] == ["sunday", "early", "postcard", "postcard", "again", "empty", "empty", "again"]
+    assert all(b == [1050] for b in out["week"][:5] if b) and all(b == [780] for b in out["week"][5:] if b)  # it waits all day
+    assert out["hint"] == "click: check your pigeonhole"
+
+
+@pytest.mark.parametrize("own_only", [False, True])
+def test_colleagues_never_take_the_users_own_post(own_only):
+    js = (f"{_lift('collectPost')}" + """
+const OWN_SLOT = 4, slots = (X ? [] : [{i: 2, kind: 'flyer', by: 900}]).concat([{i: 4, kind: 'letter', by: 1050}]), postTaken = new Set();
+const postLeft = () => slots.filter((s) => !postTaken.has(s.i));
+const say = () => {}, pick = (l) => l[0], lastQuip = 0, POST_QUIPS = {letter: ['l'], flyer: ['f'], postcard: ['p'], none: ['n']};
+for (let k = 0; k < 20; k++) collectPost({}, 10000 * k);
+process.stdout.write(JSON.stringify([...postTaken]));
+""".replace("X ?", "true ?" if own_only else "false ?"))
+    assert _node(js) == ([] if own_only else [2])
 
 
 def test_late_note_names_the_latest_overdue_worker_and_counts_the_rest():
