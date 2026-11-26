@@ -2,6 +2,10 @@
 
 Record each release newest first. Bump minor for features and visible behaviour, patch for fixes and polish.
 
+## 0.22.0 - 2026-11-26
+
+- Collections can maintain themselves. Add `collect_tag`, `collect_path`, `collect_order` or `exclude` to a collection index's frontmatter and the workspace gardener adds matching pages on every pass, without removing or reordering your own entries.
+
 ## 0.21.4 - 2026-11-26
 
 - A chat reply or worker run that starts while Settings is repairing its AI software now waits up to 10 minutes for the repair to finish, instead of failing straight away and needing a resend.

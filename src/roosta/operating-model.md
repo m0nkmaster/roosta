@@ -57,6 +57,23 @@ Current engagements, in review order.
 - [Acme](Enterprise/Acme.md)
 ```
 
+To keep an index current without editing it, add membership rules to its
+frontmatter. The gardener appends matching pages on every pass and never removes,
+reorders or rewrites existing entries.
+
+```yaml
+---
+title: Clients
+collect_tag: client                  # pages tagged `client` join
+collect_path: Clients/*/README.md    # and/or a glob from the workspace root
+collect_order: alphabetical          # or newest-first (date-prefixed names); default appends
+exclude: [Enterprise/Old.md]         # never auto-add these, relative to the index
+---
+```
+
+To drop an added page, list it under `exclude`; deleting its line alone lets the
+next pass add it again.
+
 Use the first inline Markdown link on each top-level list item. Paths are relative
 to that index and case-sensitive. Encode spaces as `%20` or enclose the destination
 in angle brackets. Headings and paragraphs are yours. The first occurrence sets the
