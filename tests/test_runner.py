@@ -521,8 +521,12 @@ def test_unchanged_precheck_skips_agent_and_preserves_board_items(tmp_path):
     asyncio.run(scenario())
 
 
-@pytest.mark.parametrize("failed_output", [{}, {"summary": "blocked", "status": "error",
-                                                    "details": {"reason": "could not read the board"}}])
+@pytest.mark.parametrize("failed_output", [
+    {}, {"summary": "blocked", "status": "error", "details": {"reason": "could not read the board"}},
+    {"summary": "snapshot failed", "status": "error", "details": {"items": []}},
+    {"status": "error", "details": {"items": [{"id": "partial", "title": "Incomplete read"}],
+                                    "merges": {"existing-card": "partial"}}},
+])
 def test_failed_run_keeps_the_previous_board_items(tmp_path, failed_output):
     async def scenario():
         cache_dir = tmp_path / "cache"
@@ -545,6 +549,7 @@ def test_failed_run_keeps_the_previous_board_items(tmp_path, failed_output):
             state = runner.get_state("assistant")
             assert state["status"] == "error" and state["last_error"] == "AI request failed"
             assert state["last_output"]["details"]["items"] == [item]
+            assert "merges" not in state["last_output"]["details"]
         finally:
             await runner.stop()
 

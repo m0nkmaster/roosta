@@ -6,6 +6,7 @@ from collections import Counter
 from dataclasses import dataclass, field
 import hashlib
 import signal
+import sys
 import tempfile
 import time
 import uuid
@@ -271,6 +272,13 @@ def prepare(connection_id: str, workspace: str, *, model: str = "", session_id: 
     if not binary:
         raise ValueError("AI runtime is missing or incompatible; use Install / repair in Settings")
     env = connection_env(connection)
+    env.update({
+        "PATH": str(paths.APP_ROOT / "worker-bin") + os.pathsep + env["PATH"],
+        "ROOSTA_WORKER_EXECUTABLE": sys.executable,
+        "ROOSTA_WORKER_PACKAGE_PARENT": "" if getattr(sys, "frozen", False) else str(paths.APP_ROOT.parent),
+        "ROOSTA_WORKSPACE": str(paths.WORKSPACE),
+        "ROOSTA_PORT": str(paths.PORT),
+    })
     secret = connections.credential(connection)
     if secret:
         env[{"anthropic": "ANTHROPIC_API_KEY", "openai": "OPENAI_API_KEY", "openrouter": "OPENROUTER_API_KEY",

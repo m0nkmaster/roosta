@@ -2,6 +2,10 @@
 
 Record each release newest first. Bump minor for features and visible behaviour, patch for fixes and polish.
 
+## 0.21.2 - 2026-11-25
+
+- Workers use the running Roosta installation for board snapshots, including on a fresh Mac or with an older CLI installed. The Assistant can start from a confirmed empty board and preserves unresolved cards when it cannot read their prior state.
+
 ## 0.21.1 - 2026-11-25
 
 - Settings refreshes when AI setup finishes or you return from sign-in. Add and use as default saves the first account choice so the board can continue workspace setup after a restart, without a connection test.
