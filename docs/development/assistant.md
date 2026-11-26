@@ -131,6 +131,7 @@ or invoking a harness. Existing conversations keep their history.
   stay out of progress. Terminal events clear it, and history stores only the conversation.
   `SessionMap` (`assistant/sessions.json`), `TopicStore` (`assistant/topics.json`) and
   `ConversationHistoryStore` (`assistant/chat-history.json`) are keyed only by stable item id.
+  History mutations require a readable store and atomically replace the file after writing.
   Non-UUID session ids are discarded. The history store
   preserves the visible transcript when the user switches tabs or reloads the app; the topic store
   keeps a compact rolling summary and verified `project_ref`, then rotates the raw model session
@@ -221,7 +222,7 @@ emits `<<<REMIND>>>{title,body,due}` (validated in `chat.py`, `due` null = now, 
 future tz-aware instant); `ChatRouter.add_reminder` persists it to the gitignored
 `assistant/reminders.json` (`[{id,title,body,due,created}]`). This is deliberately distinct from
 snooze: a reminder has no live conductor source, so it can't rely on conductor re-validation to
-resurface - it must persist. `/api/board` calls `split_due_reminders`: due reminders become
+resurface - it must persist. Assistant, the Office count and Pulse share the active and later lanes: due reminders become
 `new` rail items (notified, deduped by id); future ones join the `later` lane by `snoozed_until`
 and auto-promote when due. Closing a reminder card runs `mark_handled`, which calls
 `remove_reminder` so the store entry is dropped rather than leaking. `/api/notify` with a `due`
@@ -258,6 +259,7 @@ while it is parked.
 
 ## Approval lifetime
 
+The approval endpoint requires a JSON boolean in `approved`. Invalid input leaves the draft pending.
 Approval cards survive a dropped stream, not a restart. `/api/board` re-offers
 `pending_approvals` until the user acts, so a queued turn or reload never loses a Send/Cancel card.
 Held cards live in memory (`ChatRouter._paused`), so a runner restart drops them.

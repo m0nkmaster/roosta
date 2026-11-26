@@ -219,6 +219,24 @@ def carry_forward_board_items(details, previous) -> None:
                 item[name] = prior[name]
 
 
+def reconcile_board_output(task_id: str, status: str, output: dict, previous) -> dict:
+    details = output.get("details") if isinstance(output.get("details"), dict) else {}
+    if status == "error" and task_id == "assistant":
+        # Publish conductor edits as a unit. A partial merge can hide a preserved card.
+        details = details.copy()
+        for key in ("items", "merges", "done_today"):
+            details.pop(key, None)
+            if isinstance(previous, dict) and key in previous:
+                details[key] = previous[key]
+        output = {**output, "details": details}
+    elif task_id == "assistant":
+        carry_forward_board_items(details, previous)
+    elif (status == "error" and isinstance(previous, dict) and isinstance(previous.get("items"), list)
+          and (not isinstance(details.get("items"), list) or not details["items"])):
+        output = {**output, "details": {**details, "items": previous["items"]}}
+    return output
+
+
 def _refine_board_item(target: dict, update: dict, raw: dict,
                        fill_only: bool = False) -> None:
     """Apply a newer source's view of a card: supplied fields win, context merges.
@@ -597,6 +615,17 @@ def collect_board_items(items: list[dict], states: list[dict], reminders: list[d
     active = [item for item in due_reminders if item["id"] not in have] + active
     have.update(item["id"] for item in active)
     later = [item for item in later_reminders if item["id"] not in have]
+    return active, later
+
+
+def board_lanes(items: list[dict], states: list[dict], router, handled: dict):
+    reminders = router.reminders() if router else []
+    items, future = collect_board_items(items, states, reminders, router)
+    active, later = split_snoozed_items([item for item in items if item["id"] not in handled],
+                                        router.snoozed() if router else {})
+    parked = {item["id"] for item in later}
+    later.extend(item for item in future if item["id"] not in parked and item["id"] not in handled)
+    later.sort(key=lambda item: item.get("snoozed_until", ""))
     return active, later
 
 

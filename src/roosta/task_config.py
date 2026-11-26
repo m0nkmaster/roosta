@@ -119,12 +119,12 @@ def skill_description(skill: str, working_dir: str | Path) -> str:
 DASHBOARD_SKILLS = frozenset({"actor", "sender"})
 
 
-def workspace_skills() -> list[str]:
-    """Names of the skills this workspace holds, from its own skill roots only."""
+def workspace_skills(workspace: Path) -> list[str]:
+    """Names of the installed and workspace skills available to workers."""
     names: set[str] = set()
-    for root in (paths.WORKSPACE / ".agents" / "skills", paths.WORKSPACE / ".claude" / "skills",
-                 paths.WORKSPACE / ".cursor" / "skills", paths.CORE_SKILLS_DIR,
-                 paths.WORKSPACE / ".roosta/skill-forks"):
+    for root in (workspace / ".agents" / "skills", workspace / ".claude" / "skills",
+                 workspace / ".cursor" / "skills", paths.CORE_SKILLS_DIR,
+                 workspace / ".roosta/skill-forks"):
         try:
             entries = list(root.iterdir())
         except OSError:
@@ -140,7 +140,7 @@ def unscheduled_skills(tasks) -> list[dict]:
     """Workspace skills no task runs, with their own descriptions, for the Workers page."""
     scheduled = {t.skill for t in tasks}
     return [{"skill": name, "description": skill_description(name, paths.WORKSPACE)}
-            for name in workspace_skills() if name not in scheduled and name not in DASHBOARD_SKILLS]
+            for name in workspace_skills(paths.WORKSPACE) if name not in scheduled and name not in DASHBOARD_SKILLS]
 
 
 def connection_task_model(task: TaskConfig, connection: dict) -> str:
@@ -201,40 +201,49 @@ def _yaml_scalar(value) -> str:
     return text if bare_ok else json.dumps(text, ensure_ascii=False)
 
 
-_TASK_LINE = re.compile(r"^(\s*)-\s+id:\s*([A-Za-z0-9._-]+)(?:\s+#.*)?\s*$")
-
-
 def _task_block(lines: list[str], task_id: str) -> tuple[int, int, str]:
-    """(start, end, indent) of one task's lines in tasks.yaml; end is the next task's line."""
-    start = next(
-        (index for index, line in enumerate(lines)
-         if (match := _TASK_LINE.match(line.rstrip("\r\n"))) and match.group(2) == task_id),
-        None,
-    )
-    if start is None:
-        raise ValueError("task not found in tasks.yaml")
-    indent = _TASK_LINE.match(lines[start].rstrip("\r\n")).group(1)
-    end = next(
-        (index for index in range(start + 1, len(lines))
-         if (match := _TASK_LINE.match(lines[index].rstrip("\r\n")))
-         and match.group(1) == indent),
-        len(lines),
-    )
-    # Leave comment lines that sit directly above the next task with that task.
-    while end > start + 1 and end < len(lines) and lines[end - 1].lstrip().startswith("#"):
+    """Locate one block-list entry using YAML marks, keeping neighbouring comments."""
+    source = "".join(lines)
+    document = yaml.compose(source)
+    if not isinstance(document, yaml.MappingNode):
+        raise ValueError("expected a tasks mapping")
+    sequences = [value for key, value in document.value if key.value == "tasks"]
+    if len(sequences) != 1 or not isinstance(sequences[0], yaml.SequenceNode):
+        raise ValueError("expected one tasks list")
+    tasks = sequences[0]
+    if tasks.flow_style:
+        raise ValueError("editing requires a block-style tasks list")
+    matches = [i for i, node in enumerate(tasks.value) if isinstance(node, yaml.MappingNode)
+               and any(key.value == "id" and value.value == task_id for key, value in node.value)]
+    if len(matches) != 1:
+        raise ValueError("task not found or duplicate id in tasks.yaml")
+    column = tasks.start_mark.column
+    starts = [token.start_mark.line for token in yaml.scan(source)
+              if isinstance(token, yaml.BlockEntryToken) and token.start_mark.column == column
+              and tasks.start_mark.index <= token.start_mark.index < tasks.end_mark.index]
+    if len(starts) != len(tasks.value):
+        raise ValueError("unsupported task layout")
+    index = matches[0]
+    start = starts[index]
+    end = starts[index + 1] if index + 1 < len(starts) else tasks.end_mark.line
+    if tasks.end_mark.column and tasks.end_mark.index == len(source):
+        end = len(lines)
+    while end > start + 1 and (not lines[end - 1].strip() or lines[end - 1].lstrip().startswith("#")):
         end -= 1
-    return start, end, indent
+    return start, end, " " * column
 
 
 def remove_task(path: Path, task_id: str) -> None:
-    """Delete one task's block from tasks.yaml, keeping every other line and comment."""
+    """Delete only the requested worker, keeping the rest of the schedule intact."""
     destination = Path(path)
     lines = destination.read_text().splitlines(keepends=True)
-    start, end, _ = _task_block(lines, task_id)
-    del lines[start:end]
+    expected = yaml.safe_load("".join(lines))
+    start, end, indent = _task_block(lines, task_id)
+    remaining = [item for item in expected["tasks"] if item.get("id") != task_id]
+    expected["tasks"] = remaining
+    lines[start:end] = [] if remaining else [(indent or "  ") + "[]\n"]
     updated = "".join(lines)
-    parsed = yaml.safe_load(updated) or {}
-    if any(item.get("id") == task_id for item in parsed.get("tasks") or []):
+    if yaml.safe_load(updated) != expected:
         raise ValueError("updated tasks.yaml did not validate")
     temporary = destination.with_suffix(f".{os.getpid()}.tmp")
     temporary.write_text(updated)
@@ -438,7 +447,7 @@ def load_tasks() -> list[TaskConfig]:
     with open(paths.TASKS_FILE) as f:
         data = yaml.safe_load(f)
     tasks = []
-    for t in data.get("tasks", []):
+    for t in data.get("tasks") or []:
         if t.get("script"):
             log.warning("Task %s has a 'script:' key; script tasks are no longer supported", t.get("id"))
             continue

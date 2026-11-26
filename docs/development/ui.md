@@ -153,6 +153,8 @@ See [Assistant contracts](assistant.md) and [Office rendering](office.md) for pa
 
 ## Pulse and constellation
 
+Pulse counts the same installed and workspace skill names as Workers, once per name.
+
 - **`static/pulse.html`** - Vault Pulse telemetry page (workspace constellation first, then
   AI activity, live vault stats and hot files); polls `/api/pulse`. `/constellation` serves the same file, which hides
   everything but the constellation when it sees that path

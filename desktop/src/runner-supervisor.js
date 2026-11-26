@@ -45,38 +45,48 @@ function portFromBaseUrl(baseUrl) {
   return port || "7667";
 }
 
-async function killPortListeners(port, exec = execFileAsync) {
-  // SECURITY-REVIEW: fixed lsof invocation for a fixed local dashboard port only.
+async function listenerPids(port) {
   try {
-    const { stdout } = await exec("lsof", ["-nP", `-iTCP:${port}`, "-sTCP:LISTEN", "-t"]);
-    const pids = stdout.trim().split("\n").filter(Boolean);
-    for (const pidText of pids) {
-      const pid = Number(pidText);
-      if (!Number.isInteger(pid) || pid <= 0) continue;
-      try {
-        process.kill(pid, "SIGTERM");
-      } catch {
-        // Process may already have exited.
-      }
-    }
-    if (pids.length) {
-      await new Promise((resolve) => setTimeout(resolve, 500));
-      for (const pidText of pids) {
-        const pid = Number(pidText);
-        if (!Number.isInteger(pid) || pid <= 0) continue;
-        try {
-          process.kill(pid, 0);
-          process.kill(pid, "SIGKILL");
-        } catch {
-          // Already gone.
-        }
-      }
-    }
-    return pids.length;
+    const { stdout } = await execFileAsync("lsof", ["-nP", `-iTCP:${port}`, "-sTCP:LISTEN", "-t"]);
+    return [...new Set(stdout.trim().split(/\s+/).filter(Boolean).map(Number))];
   } catch (error) {
-    if (error && error.code === 1) return 0;
+    if (error.code === 1 && !error.stderr) return [];
     throw error;
   }
+}
+
+async function stopExternalRunner(baseUrl, listeners = listenerPids, request = fetch, signal = process.kill) {
+  const port = portFromBaseUrl(baseUrl);
+  const pids = await listeners(port);
+  if (!pids.length) return;
+  const conflict = new Error(`Port ${port} is occupied. Stop its listener or choose another dashboard port.`);
+  const [pid] = pids;
+  if (pids.length !== 1 || !Number.isSafeInteger(pid) || pid <= 1) throw conflict;
+  try {
+    const response = await request(`${baseUrl}/api/runner/identity`, {
+      signal: AbortSignal.timeout(HEALTH_TIMEOUT_MS), redirect: "error",
+    });
+    const identity = response.ok && await response.json();
+    if (identity.service !== "roosta" || identity.pid !== pid) throw conflict;
+  } catch {
+    throw conflict;
+  }
+  const current = await listeners(port);
+  if (!current.length) return;
+  if (current.length !== 1 || current[0] !== pid) throw conflict;
+  try {
+    signal(pid, "SIGTERM");
+  } catch (error) {
+    if (error.code !== "ESRCH") throw error;
+  }
+  const deadline = Date.now() + START_TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    const remaining = await listeners(port);
+    if (!remaining.length) return;
+    if (remaining.length !== 1 || remaining[0] !== pid) throw conflict;
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+  throw new Error(`Roosta is still shutting down on port ${port}. Retry when it has finished.`);
 }
 
 class LogStore {
@@ -328,11 +338,7 @@ class RunnerSupervisor extends EventEmitter {
   async restart() {
     this.stopping = true;
     await this.stop();
-    const port = portFromBaseUrl(this.baseUrl);
-    const killed = await killPortListeners(port);
-    if (killed) {
-      this.log.append(`Stopped ${killed} external runner process${killed === 1 ? "" : "es"} on port ${port}`);
-    }
+    await stopExternalRunner(this.baseUrl);
     this.stopping = false;
     this.restartCount = 0;
     if (!this.roosta) throw missingRoosta();
@@ -391,7 +397,7 @@ module.exports = {
   RunnerSupervisor,
   buildRunnerEnv,
   findRoosta,
-  killPortListeners,
+  stopExternalRunner,
   portFromBaseUrl,
   restartDelay,
 };
