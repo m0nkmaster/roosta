@@ -1026,9 +1026,10 @@ async function load(){
   try{ d=await (await fetch('/api/board?'+threads)).json(); }catch(e){ return; }
   if(request<appliedBoardRequest) return;
   appliedBoardRequest=request;
+  const aiSetup=d.document.items.find(it=>it.id==='roosta-ai-setup');
   document.getElementById('status').innerHTML =
     // The engine only earns a mention when chats cannot start.
-    (d.document.items.some(it=>it.id==='roosta-ai-setup')?'Connect your AI · ':d.agent_up?'':`<span class="dot-down">●</span> ${esc(d.ai_backend||'Chat engine')} unavailable · `)
+    (aiSetup?esc(aiSetup.title)+' · ':d.agent_up?'':`<span class="dot-down">●</span> ${esc(d.ai_backend||'Chat engine')} unavailable · `)
     + `${d.document.items.length} need you`
     + (d.document.later&&d.document.later.length?` · ${d.document.later.length} later`:'')
     + freshness(d.last_run)

@@ -1,0 +1,7 @@
+#!/bin/sh
+set -eu
+if [ -n "$ROOSTA_WORKER_PACKAGE_PARENT" ]; then
+    # Load the serving package even if the working directory contains another roosta.
+    PYTHONPATH="$ROOSTA_WORKER_PACKAGE_PARENT" exec "$ROOSTA_WORKER_EXECUTABLE" -P -m roosta.cli "$@"
+fi
+PYINSTALLER_RESET_ENVIRONMENT=1 exec "$ROOSTA_WORKER_EXECUTABLE" "$@"

@@ -303,6 +303,10 @@ def cc_list(since):
         if not name.endswith(".jsonl"):
             continue
         path = os.path.join(CLAUDE_DIR, name)
+        # A file not written since `since` cannot hold a newer timestamp; skipping it avoids
+        # parsing thousands of transcripts (the full parse took minutes).
+        if os.path.getmtime(path) * 1000 <= since:
+            continue
         sid = name[:-6]
         title, last_ts, has_user, has_asst, is_bg = "", None, False, False, False
         for d in _cc_lines(path):

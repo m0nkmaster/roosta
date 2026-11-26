@@ -3,7 +3,7 @@ const test = require("node:test");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
-const { buildRunnerEnv, killPortListeners, restartDelay } = require("../src/runner-supervisor");
+const { buildRunnerEnv, stopExternalRunner, restartDelay } = require("../src/runner-supervisor");
 
 function setupRunner(t, confirmWorkspace) {
   const { RunnerSupervisor } = require("../src/runner-supervisor");
@@ -45,25 +45,23 @@ test("runner retries twice before stopping the crash loop", () => {
   assert.equal(restartDelay(2), null);
 });
 
-test("killPortListeners stops listeners reported by lsof", async () => {
-  const calls = [];
-  const exec = async (command, args) => {
-    calls.push([command, args]);
-    return { stdout: "4242\n" };
-  };
-  const originalKill = process.kill.bind(process);
-  const killed = [];
-  process.kill = (pid, signal) => {
-    killed.push([pid, signal]);
-  };
-  try {
-    const count = await killPortListeners("7667", exec);
-    assert.equal(count, 1);
-    assert.deepEqual(calls[0], ["lsof", ["-nP", "-iTCP:7667", "-sTCP:LISTEN", "-t"]]);
-    assert.deepEqual(killed, [[4242, "SIGTERM"], [4242, 0], [4242, "SIGKILL"]]);
-  } finally {
-    process.kill = originalKill;
+test("restart signals only the verified, still-listening Roosta pid", async () => {
+  const url = "http://127.0.0.1:7667";
+  const signals = [];
+  const signal = (...args) => signals.push(args);
+  const identity = async () => ({ ok: true, json: async () => ({ service: "roosta", pid: 4242 }) });
+  const reads = (...snapshots) => async () => snapshots.shift();
+  for (const [listeners, request] of [
+    [reads([4242]), async () => ({ ok: false })],
+    [reads([1234]), identity],
+    [reads([4242, 1234]), identity],
+    [reads([4242], [1234]), identity],
+  ]) {
+    await assert.rejects(stopExternalRunner(url, listeners, request, signal), /Port 7667 is occupied/);
   }
+  assert.deepEqual(signals, []);
+  await stopExternalRunner(url, reads([4242], [4242], []), identity, signal);
+  assert.deepEqual(signals, [[4242, "SIGTERM"]]);
 });
 
 test("the runner launches the installed roosta command, preferring the uv tool path", () => {

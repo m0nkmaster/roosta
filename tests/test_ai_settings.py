@@ -158,3 +158,9 @@ def test_first_run_setup_card_opens_settings_without_an_ai_turn():
     script = (static / 'ai-settings.js').read_text()
     assert "$('setup-notice').hidden = !state.workspace_setup_ready;" in script
     assert "$('setup-missing').textContent = 'Still missing: ' + (state.workspace_setup_missing || []).join(', ') + '.';" in script
+
+
+def test_settings_first_account_and_install_poll():
+    if not shutil.which('node'):
+        pytest.skip('Node is required for UI checks')
+    subprocess.run(['node', Path(__file__).with_name('settings_onboarding_probe.js')], check=True)

@@ -43,6 +43,10 @@ starting `assistant/` are under the workspace's `.roosta/state/`. Also see
   open the original thread. Its restore time ranks it among recent chats even if its last message
   predates the 100-row rail. Closing and restoring leave transcripts and running turns intact.
 
+- **First conductor pass.** A successful `roosta snapshot board` with empty active and deferred
+  card lists allows the conductor to start from an empty board before a cache exists. If the
+  snapshot fails and the prior cards cannot be recovered from cache, the conductor reports an
+  error without items so the runner carries its previous cards forward.
 - **Scheduled sensor feeds.** Every scheduled task may return board-shaped items in
   `details.items`; there is no allowlist. `/api/board` merges each task's latest findings into the
   conductor snapshot by stable id (`merge_board_feed_items`). A repeated id **refines** the
@@ -100,8 +104,7 @@ starting `assistant/` are under the workspace's `.roosta/state/`. Also see
 `setup_item()` offers the deterministic `roosta-ai-setup` card whenever no AI connection can run,
 including in an established workspace, because every chat and worker needs one; otherwise it
 checks whether workspace setup is pending (an empty profile or an existing setup conversation).
-The AI card stays until the default named account is connected and has installed software and a model when its provider requires one. A detected system Claude Code account
-explains login reuse; otherwise the card asks the user to connect AI. Its fixed Settings link needs
+The AI card stays until the default named account is connected and has installed software and a model when its provider requires one. The card points to the outstanding step for a saved account, including default selection, runtime installation, browser sign-in when Pi reports it missing, or model choice. A detected system Claude Code account explains login reuse. Its fixed Settings link needs
 no model, and the page hides its composer and Close/Not now controls. The disclosed connection check
 is optional. `/api/ai/connections.workspace_setup_ready` lets Settings show Continue workspace setup, a page-level notice above Your AI, only when the prerequisite
 is satisfied, `roosta-setup` is not yet handled and `workspace_setup_missing` lists a concrete gap (name in PROFILE.md, an item under `## My priorities`, or no tasks; see `setup_gaps()`), which the notice names; the board then replaces the AI card with `roosta-setup`. Only this prerequisite pane
@@ -128,6 +131,7 @@ or invoking a harness. Existing conversations keep their history.
   stay out of progress. Terminal events clear it, and history stores only the conversation.
   `SessionMap` (`assistant/sessions.json`), `TopicStore` (`assistant/topics.json`) and
   `ConversationHistoryStore` (`assistant/chat-history.json`) are keyed only by stable item id.
+  History mutations require a readable store and atomically replace the file after writing.
   Non-UUID session ids are discarded. The history store
   preserves the visible transcript when the user switches tabs or reloads the app; the topic store
   keeps a compact rolling summary and verified `project_ref`, then rotates the raw model session
@@ -218,7 +222,7 @@ emits `<<<REMIND>>>{title,body,due}` (validated in `chat.py`, `due` null = now, 
 future tz-aware instant); `ChatRouter.add_reminder` persists it to the gitignored
 `assistant/reminders.json` (`[{id,title,body,due,created}]`). This is deliberately distinct from
 snooze: a reminder has no live conductor source, so it can't rely on conductor re-validation to
-resurface - it must persist. `/api/board` calls `split_due_reminders`: due reminders become
+resurface - it must persist. Assistant, the Office count and Pulse share the active and later lanes: due reminders become
 `new` rail items (notified, deduped by id); future ones join the `later` lane by `snoozed_until`
 and auto-promote when due. Closing a reminder card runs `mark_handled`, which calls
 `remove_reminder` so the store entry is dropped rather than leaking. `/api/notify` with a `due`
@@ -255,13 +259,14 @@ while it is parked.
 
 ## Approval lifetime
 
+The approval endpoint requires a JSON boolean in `approved`. Invalid input leaves the draft pending.
 Approval cards survive a dropped stream, not a restart. `/api/board` re-offers
 `pending_approvals` until the user acts, so a queued turn or reload never loses a Send/Cancel card.
 Held cards live in memory (`ChatRouter._paused`), so a runner restart drops them.
 
 `teams`/`teams_message` and `jira`/`jira_ticket` remain accepted aliases for the generic `chat`
 and `ticket` visual categories. Service-specific permalink and content repair stay URL/CLI matched.
-Chats and paused approvals retain their named AI connection; see [AI harnesses](harnesses.md).
+A chat with a missing account recovers on its next turn. Pending approvals and approved sends stay tied to the drafting account. See [AI harnesses](harnesses.md).
 
 ## Starting a new conversation segment
 

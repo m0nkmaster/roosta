@@ -77,9 +77,10 @@ files without replacing existing configuration.
   forward (an unchanged pre-check) drop any old `details.error`, because the conductor reads
   every sensor cache and would re-raise it as a board card.
 
-- **A failed run keeps its last cards.** When an `error` run returns no `details.items`, the
+- **A failed run keeps its last cards.** When an `error` run omits `details.items` or returns an empty list, the
   runner keeps the previous items (not the old `details.error`), so one AI failure cannot empty
-  the Assistant board or blind the conductor's next pass.
+  the Assistant board or blind the conductor's next pass. A failed conductor pass also keeps its
+  previous cards when the model returns a partial list.
 
 - **Skill descriptions stay canonical.** The runner reads each task skill's `description` from
   `SKILL.md` frontmatter, using the same resolved file as the actual prompt, and shows it as
@@ -198,7 +199,8 @@ return `<task-output>` JSON with `summary`, `status` and `details`.
   does not keep a wrong note. Empty name, nickname or description removes the key (fallback: id,
   id, the skill's own description). Connection changes are sent only when changed and refused while
   the task is running or queued; identity and schedule edits are not. While a form is focused or
-  has unsaved edits the 5s poll does not re-render the list.
+  has unsaved edits the 5s poll does not re-render the list. Removing a worker uses YAML source
+  positions and checks the whole remaining schedule before saving, including an empty task list.
 
 - **Skill names open a read-only preview on the Workers page.** `GET /api/tasks/{id}/skill`
   follows the runner's skill lookup order for a configured task, with the document reader's

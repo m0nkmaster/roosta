@@ -23,6 +23,11 @@ whether Roosta or the user installed it. Downloads use the default SSL context w
 backend includes keyring's native backend, so installation needs neither Node nor system Python.
 Updating stages and verifies the download before replacing the managed copy. New harness releases do not require a Roosta update.
 
+Claude, Pi and Cursor runs prepend the package's `worker-bin` directory to their child PATH.
+Its `roosta` command re-enters the serving interpreter and package, or relaunches the frozen
+backend with a fresh PyInstaller environment. Runs inherit the serving workspace and port,
+including when a task has a different working directory.
+
 Settings uses one provider/account flow. AI software reports installation status; installed binaries offer Update to latest under Updates, which does not imply a detected failure. On macOS, Open in Terminal starts the exact installed Claude Code or Pi binary in `paths.WORKSPACE` as a standalone interactive session using the CLI’s own login/settings, not a Roosta connection. The local-only `POST /api/ai/terminal` accepts only the two runtime ids, refuses missing/installing binaries, shell-quotes both paths, and passes the command as an argument to a fixed AppleScript. It never exports Roosta connection credentials or submits a prompt. The `local_ai_settings` dependency
 requires a loopback client, a local Host, and a same-origin browser request for credential/setup APIs.
 Tests and installs run as supervised setup jobs; status contains no credentials or authentication output.
@@ -47,7 +52,7 @@ sign-in/logout subprocess ever runs for them — disconnect only marks the recor
 the login operation is rejected. At server startup (before workers start), and when `/api/ai/connections` is loaded, if no `system` connection
 exists, one is auto-provisioned ("Claude Code") if `find("claude")` succeeds; a top-level
 `system_offered` flag in the connections file makes this happen once, so deleting it never
-re-creates it. Choose any connected account as default with `POST /api/ai/default {connection}`. This does not list models or run a test. The first successful test sets the default only if none has been chosen.
+re-creates it. An explicit **Add and use as default** submits `default_if_unset: true` on account creation. The account and default are saved together, preserving any default chosen in another window. Detection alone leaves the choice open. Choose any connected account as default with `POST /api/ai/default {connection}`. This does not list models or run a test. The first successful test sets the default only if none has been chosen.
 
 A connection is an account (provider plus sign-in or key) and carries no model; any legacy `model`
 key in the file is ignored on load. Settings stores a top-level `model_choice: {provider, model, effort}` alongside the default account via
@@ -110,9 +115,13 @@ A product engineering worker can use the ordinary profile with a separate Git wo
 and launch from the workspace to discover its custom skill. Ordinary Claude runs use `dontAsk`.
 
 `SessionMap` reads old string values and writes `{session_id, connection}` records. New chats bind the connected default once.
-An existing legacy conversation needs an explicit account choice in Settings before Roosta sends
-any context. Its visible history and topic summary survive. The next turn starts a fresh provider
-session on the selected account. Changing the default never moves an existing chat or approval.
+An actor turn holding the item lock also binds that default when the chat has no named account
+or its account was deleted. It discards the old provider session and unverified model pick, keeps
+the visible transcript, and passes the topic summary into the fresh session. With an incomplete
+summary it includes recent messages from the current conversation segment. Reading Settings or
+the board does not rebind chats. A missing or disconnected default leaves an orphan untouched.
+Existing named accounts stay pinned, including on disconnect or authentication failure. A pending
+approval or sender in flight blocks recovery. The sender always uses the account that drafted the action.
 Explicit chat migration retains rendered history and topic summary,
 rotates execution context, and is rejected during a live turn or pending approval. Worker YAML omits
 `connection` to follow the current default and stores a stable id only for an explicit account pin. The

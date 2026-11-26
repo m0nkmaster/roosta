@@ -2,9 +2,40 @@
 
 Record each release newest first. Bump minor for features and visible behaviour, patch for fixes and polish.
 
-## 0.21.1 - 2026-11-25
+## 0.22.3 - 2026-11-26
 
 - `roosta usage` reads the workspace a worker is running in, not an older workspace saved in your config, so the engineer sees your real Assistant usage.
+
+## 0.22.2 - 2026-11-26
+
+- Removing a worker preserves neighbouring workers and leaves a valid schedule when the last worker is removed.
+- Chat history saves atomically. A damaged transcript file is preserved for recovery. Send and Cancel require an explicit boolean approval.
+- Desktop restart checks which process owns the dashboard port before stopping an external Roosta runner.
+- Assistant, Office and Pulse agree on active and later board items. Pulse includes installed core skills and workspace forks in its skill count.
+
+## 0.22.1 - 2026-11-26
+
+- When you revise a ticket or other item it already drafted, the Assistant first checks whether you approved and created it, then drafts an edit instead of a duplicate. It also reads reminders from Roosta's state file directly, so it can confirm reminders that workspace search misses.
+
+## 0.22.0 - 2026-11-26
+
+- Collections can maintain themselves. Add `collect_tag`, `collect_path`, `collect_order` or `exclude` to a collection index's frontmatter and the workspace gardener adds matching pages on every pass, without removing or reordering your own entries.
+
+## 0.21.4 - 2026-11-26
+
+- A chat reply or worker run that starts while Settings is repairing its AI software now waits up to 10 minutes for the repair to finish, instead of failing straight away and needing a resend.
+
+## 0.21.3 - 2026-11-26
+
+- Continuing a chat whose AI account is missing starts a fresh session on your connected default account and keeps the conversation history and topic. Disconnected accounts stay pinned.
+
+## 0.21.2 - 2026-11-25
+
+- Workers use the running Roosta installation for board snapshots, including on a fresh Mac or with an older CLI installed. The Assistant can start from a confirmed empty board and preserves unresolved cards when it cannot read their prior state.
+
+## 0.21.1 - 2026-11-25
+
+- Settings refreshes when AI setup finishes or you return from sign-in. Add and use as default saves the first account choice so the board can continue workspace setup after a restart, without a connection test.
 
 ## 0.21.0 - 2026-11-25
 

@@ -49,20 +49,11 @@ On first launch, Roosta uses your configured workspace or creates `~/workspace`.
 
 ### Set up your office
 
-1. **Connect your AI.** On a fresh workspace, the board offers **Connect your AI**, or **Choose your Claude Code account** if Claude Code is already installed. Open AI settings to select **Use as default** on that account, or connect another account and install its software.
+1. **Connect your AI.** On a fresh workspace, the board offers **Connect your AI**, or **Choose your Claude Code account** if Claude Code is already installed. Open AI settings to select **Use as default** on that account, or choose **Add and use as default** when adding your account. Install its software and complete any requested sign-in or model choice. The connection test is optional.
 2. **Tell Roosta about your work.** Choose **Continue workspace setup**, then open **Set up your workspace** on the board. Roosta helps you describe your priorities, projects and tools, sets up a starter schedule and creates your first board card.
 3. **Build your team.** Open Workers and choose **New worker** to describe a job. Each worker runs a named skill on a schedule. Visit the Office to find its desk and chat about the job.
 
 Bring your own AI accounts. Use an OpenAI or Anthropic subscription, or pay separately for API usage. OpenAI, OpenRouter and local Ollama models run through the [Pi](https://pi.dev/) agent harness. A Cursor account runs through the [Cursor Agent CLI](https://cursor.com/cli) with a Cursor API key.
-
-### Upgrading to 0.21.0
-
-- Existing named accounts are retained. If you used only the old CLI engine picker, configure or select an account in **Settings → Your AI** and choose a default for workers. You can use your existing Claude Code sign-in. Cursor requires the Agent CLI and a Cursor API key.
-- Check each worker’s connection before enabling its schedule. Workers without a pinned account follow the default. To keep Ollama work local, select the **Local (Ollama)** connection and an installed Ollama model. Roosta runs it through Pi.
-- For each existing conversation from the old picker, choose its account explicitly in Settings before sending more context. The board keeps the visible history and topic summary. The next turn starts a fresh provider session on the account you chose.
-- Default permissions now allow local file deletion, `git reset` and `git clean`. External writes still require approval. Workers already marked `unrestricted: true` now have standing approval for local and external actions on manual and scheduled runs. Review those workers before enabling schedules.
-- The old `allow_git_push`, `push_on_schedule` and per-connection GitHub issue grants are ignored. None enables Unrestricted automatically. `roosta doctor` warns about enabled push flags in `tasks.yaml`. Review old `issue-grants.json` files separately.
-- Before migrating worker model settings, Roosta saves the original beside `.roosta/tasks.yaml` as `tasks.yaml.pre-0.21.0`. It keeps the model field used by the old account or CLI. If the YAML layout cannot be edited safely, Roosta logs a warning and reads the original in place.
 
 ### Updating and diagnosing Python installations
 
@@ -174,6 +165,23 @@ Current engagements, in review order.
 - [Acme](Enterprise/Acme.md)
 ```
 
+To keep an index current without editing it, add membership rules to its
+frontmatter. The gardener appends matching pages on every pass and never removes,
+reorders or rewrites existing entries.
+
+```yaml
+---
+title: Clients
+collect_tag: client                  # pages tagged `client` join
+collect_path: Clients/*/README.md    # and/or a glob from the workspace root
+collect_order: alphabetical          # or newest-first (date-prefixed names); default appends
+exclude: [Enterprise/Old.md]         # never auto-add these, relative to the index
+---
+```
+
+To drop an added page, list it under `exclude`; deleting its line alone lets the
+next pass add it again.
+
 Use the first inline Markdown link on each top-level list item. Paths are relative
 to that index and case-sensitive. Encode spaces as `%20` or enclose the destination
 in angle brackets. Headings and paragraphs are yours. The first occurrence sets the
@@ -220,9 +228,11 @@ billable request to check that the model can read a temporary file. Choose **Can
 
 Anthropic models run through the unmodified Claude Code runtime. OpenAI, non-Anthropic OpenRouter
 models and local Ollama models run through Pi. Anthropic models on OpenRouter are rejected: choose
-an Anthropic connection explicitly. Roosta never automatically changes an account or billing route.
+an Anthropic connection explicitly.
 
-Chats retain their account when the default changes. Model changes in Settings apply to subsequent
+Chats retain their account when the default changes, even if you disconnect that account.
+If a chat has no named account or its account was deleted, your next message starts a fresh
+session on the connected default. The conversation history and topic summary stay with the chat. Model changes in Settings apply to subsequent
 turns on that provider; account and model controls live in Settings. Workers follow the connected
 default when `connection` is omitted; choosing a named connection pins only that worker.
 Disconnect lists affected chats, approvals and workers.

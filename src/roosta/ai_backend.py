@@ -6,6 +6,7 @@ from collections import Counter
 from dataclasses import dataclass, field
 import hashlib
 import signal
+import sys
 import tempfile
 import time
 import uuid
@@ -57,6 +58,8 @@ async def stop_all() -> None:
 
 ACTIVE_CONNECTIONS = Counter()
 LIVE_PROCESSES = set()
+REPAIR_WAIT = 600  # seconds a turn waits for a runtime repair in Settings to finish
+REPAIR_POLL = 1.0
 
 
 @dataclass
@@ -271,6 +274,13 @@ def prepare(connection_id: str, workspace: str, *, model: str = "", session_id: 
     if not binary:
         raise ValueError("AI runtime is missing or incompatible; use Install / repair in Settings")
     env = connection_env(connection)
+    env.update({
+        "PATH": str(paths.APP_ROOT / "worker-bin") + os.pathsep + env["PATH"],
+        "ROOSTA_WORKER_EXECUTABLE": sys.executable,
+        "ROOSTA_WORKER_PACKAGE_PARENT": "" if getattr(sys, "frozen", False) else str(paths.APP_ROOT.parent),
+        "ROOSTA_WORKSPACE": str(paths.WORKSPACE),
+        "ROOSTA_PORT": str(paths.PORT),
+    })
     secret = connections.credential(connection)
     if secret:
         env[{"anthropic": "ANTHROPIC_API_KEY", "openai": "OPENAI_API_KEY", "openrouter": "OPENROUTER_API_KEY",
@@ -419,8 +429,12 @@ async def stream(run: ConnectionRun, prompt: str, *, idle: float = 300, maximum:
     chunks, errors = [], []
     try:
         connections.get(run.connection["id"])
-        if run.backend in ai_runtime.INSTALLING:
-            raise ValueError("This AI runtime is being repaired; retry when Settings reports success")
+        # A turn that arrives mid-repair waits for it rather than failing and making the user resend.
+        repair_deadline = time.monotonic() + REPAIR_WAIT
+        while run.backend in ai_runtime.INSTALLING:
+            if time.monotonic() >= repair_deadline:
+                raise ValueError("This AI runtime is being repaired; retry when Settings reports success")
+            await asyncio.sleep(REPAIR_POLL)
         args = run.args
         if run.backend == CURSOR:
             if not run.session_id:

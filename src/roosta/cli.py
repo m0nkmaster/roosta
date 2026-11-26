@@ -364,7 +364,7 @@ def main(argv: list[str] | None = None) -> int:
         ("use-core", "archive the fork and resume installed core plus extensions"),
     ):
         command = skills_sub.add_parser(action, help=help_text)
-        command.add_argument("--workspace", default=".")
+        command.add_argument("--workspace", default=os.environ.get("ROOSTA_WORKSPACE") or ".")
         if action == "instructions":
             command.add_argument("name", nargs="?", default="")
         if action in {"extend", "fork", "use-core"}:
@@ -406,7 +406,12 @@ def main(argv: list[str] | None = None) -> int:
             response = httpx.get(f"http://127.0.0.1:{port}/api/{args.resource}",
                                  trust_env=False, follow_redirects=False, timeout=10)
             response.raise_for_status()
-            print(json.dumps(response.json()))
+            data = response.json()
+            if args.resource == "board":
+                document = data.get("document") if isinstance(data, dict) else None
+                if not isinstance(document, dict) or not all(isinstance(document.get(key), list) for key in ("items", "later")):
+                    raise ValueError("expected a board with document.items and document.later lists")
+            print(json.dumps(data))
         except (ValueError, httpx.HTTPError) as exc:
             print(f"Cannot read local {args.resource} snapshot: {exc}", file=sys.stderr)
             return 1

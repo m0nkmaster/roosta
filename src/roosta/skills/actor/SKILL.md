@@ -59,6 +59,7 @@ Write chat drafts as Markdown with links in `[text](url)` form, never bare. A ch
 - `preview` is what the user reads: the ticket's summary, fields and description, not the raw command.
 - `instruction` is what the sender executes: a precise, directly runnable instruction, usually an exact CLI call, following the write rules `TOOLS.md` records for that tool.
 - If a required field (an owner, a project) is unclear, ask instead of pausing.
+- Revising a create you already paused: the user may have approved the earlier draft and the sender may already have run it, even if your summary still says "awaiting approval". Check the target system for it first (e.g. a Jira search on the summary); if it exists, pause an edit to that item, never a second create.
 
 `verb` is the approval button's one or two words (`Send`, `Reply`, `Create`, `Move to Done`). Then STOP; the board gets approval and runs the `sender` skill.
 
@@ -81,7 +82,7 @@ Exactly one trailing marker, always the last thing:
 
 - **Discussion:** prose, then `<<<STATE>>>{"thread_summary":"...","learned":[...]}` (`learned` only when you captured something). Answering "what is this / who owns it / give me the link" is not acting.
 - **Revisit later:** `<<<DEFER>>>{"until":"<ISO-8601 with timezone>","reason":"<short>","thread_summary":"..."}`. Resolve relative times against the supplied current time. Never defer just to hide uncertain work.
-- **A new board card or reminder** ("remind me about X", "put X on my board"): `<<<REMIND>>>{"title":"<short>","body":"<one line>","due":"<ISO-8601 with timezone>"|null,"thread_summary":"..."}`. `null` surfaces it now. It does not resolve the current item.
+- **A new board card or reminder** ("remind me about X", "put X on my board"): `<<<REMIND>>>{"title":"<short>","body":"<one line>","due":"<ISO-8601 with timezone>"|null,"thread_summary":"..."}`. `null` surfaces it now. It does not resolve the current item. The runner saves it to `.roosta/state/assistant/reminders.json`; that path is gitignored, so `rg` skips it - read the file directly to confirm a reminder exists.
 - **Item finished** (see *Closing an item*; not merely "you changed the workspace"): `<<<DONE>>>{"result":"<one line>","acted":true,"thread_summary":"...","learned":[...]}`.
 - **Cannot proceed** (including a tool that needs an interactive sign-in): `<<<ERROR>>>{"reason":"<short>","thread_summary":"..."}`. Never attempt an interactive login.
 

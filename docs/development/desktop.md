@@ -7,9 +7,10 @@ live in [desktop/README.md](../../desktop/README.md).
 `roosta start`. Both run against the
 workspace (`ROOSTA_WORKSPACE`, else the one `roosta init` recorded, else `~/workspace`), launches the command without a shell and adds the GUI-only
 paths needed for local CLIs and Cursor Agent. A healthy process already on `127.0.0.1:7667` is reused and
-never stopped by the app on normal launch. **Restart Roosta** also kills any external listener
-on that port before relaunching, so dashboard HTML/API changes load without manually hunting stray
-`uvicorn` processes. HTML routes send `Cache-Control: no-store` so the Electron shell does not
+never stopped by the app on normal launch. **Restart Roosta** stops its owned child. For an external runner, it checks that the
+local `/api/runner/identity` response names Roosta and matches the only PID listening on the port.
+It rechecks the listener before sending SIGTERM and waits for the port to clear. An unknown or
+older listener requires a manual stop. HTML routes send `Cache-Control: no-store` so the Electron shell does not
 keep stale nav.
 
 - The window opens on `/assistant`; closing it leaves the app and runner in the menu bar. Explicit
@@ -102,6 +103,8 @@ rewrites framework links to absolute build-machine paths, which invalidates the 
 
 The frozen backend collects keyring and its macOS backend for Keychain API-key storage. The
 packaging smoke test checks the AI setup API and Settings with an empty home and restricted PATH.
+A scheduled worker then uses a fake Claude executable to run `roosta snapshot board` against the
+bundled backend on its selected port, with an obsolete CLI in the temporary home.
 
 The dashboard's shared release notice and Settings check use the serving backend for
 version and installation guidance. A frozen Mac backend links its architecture's DMG.

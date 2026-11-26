@@ -110,12 +110,21 @@ def test_scan_vault_hot_files_include_title(tmp_path):
     assert result["hot_files"][0]["path"] == "projects/demo/README.md"
 
 
-def test_scan_vault_counts_projects_and_skips_roosta_config(tmp_path):
+def test_scan_vault_counts_projects_and_skips_roosta_config(tmp_path, monkeypatch):
+    from roosta import paths
+
+    core = tmp_path / ".installed"
+    monkeypatch.setattr(paths, "CORE_SKILLS_DIR", core)
+    for directory in (core / "actor", core / "sender", tmp_path / ".roosta/skill-forks/actor",
+                      tmp_path / ".cursor/skills/custom"):
+        directory.mkdir(parents=True)
+        (directory / "SKILL.md").touch()
+
     (tmp_path / "projects" / "team-okrs").mkdir(parents=True)
     (tmp_path / "projects" / "team-okrs" / "README.md").write_text("# OKRs\n\nhello world")
     (tmp_path / "notes").mkdir()
     (tmp_path / "notes" / "note.md").write_text("one two three four")
-    (tmp_path / ".roosta").mkdir()
+    (tmp_path / ".roosta").mkdir(exist_ok=True)
     (tmp_path / ".roosta" / "secret.md").write_text("should not count")
     (tmp_path / ".claude" / "skills" / "actor").mkdir(parents=True)
     (tmp_path / ".claude" / "skills" / "actor" / "SKILL.md").write_text("skill")
@@ -129,7 +138,7 @@ def test_scan_vault_counts_projects_and_skips_roosta_config(tmp_path):
     assert result["project_signals"][0]["last_activity"]
     assert result["markdown_files"] == 2
     assert result["words"] >= 6
-    assert result["skills"] == 1
+    assert result["skills"] == 3
 
 
 def test_activity_stats_today_only():

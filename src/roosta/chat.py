@@ -1,7 +1,7 @@
 # roosta/chat.py
 """Per-item AI conversations on an AI connection, with a send-approval backstop."""
 from __future__ import annotations
-import asyncio, hashlib, json, re, uuid
+import asyncio, hashlib, json, re, tempfile, uuid
 from collections import deque
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -240,6 +240,18 @@ def extract_marker(text: str) -> tuple[str, dict | None]:
     return prose, payload
 
 
+def write_chat_json(path: Path, data: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(mode="w", dir=path.parent, delete=False) as stream:
+        temporary = Path(stream.name)
+        try:
+            json.dump(data, stream, indent=2)
+            stream.close()
+            temporary.replace(path)
+        finally:
+            temporary.unlink(missing_ok=True)
+
+
 class SessionMap:
     """Durable item_id -> AI session, connection and model."""
 
@@ -273,18 +285,14 @@ class SessionMap:
 
     def set(self, item_id: str, session_id: str) -> None:
         self._map[item_id] = session_id
-        self._path.parent.mkdir(parents=True, exist_ok=True)
         self._save()
 
     def _save(self) -> None:
-        self._path.parent.mkdir(parents=True, exist_ok=True)
         data = {key: {"session_id": self._map.get(key, ""), "connection": self._connections[key],
                       **({"model": self._models[key]} if self._models.get(key) else {})}
                 if key in self._connections else self._map[key]
                 for key in self._map.keys() | self._connections.keys()}
-        temporary = self._path.with_suffix(f".{uuid.uuid4().hex}.tmp")
-        temporary.write_text(json.dumps(data, indent=2))
-        temporary.replace(self._path)
+        write_chat_json(self._path, data)
 
     def selected(self, item_id: str) -> str:
         """Read the stored binding. Only a new chat inherits the default."""
@@ -299,16 +307,21 @@ class SessionMap:
         return sorted(item for item in self._map.keys() | self._connections.keys()
                       if self.selected(item).startswith("legacy:"))
 
-    def connection(self, item_id: str) -> str:
-        selected = self.selected(item_id)
-        if selected.startswith("legacy:"):
-            raise ValueError("Open Settings and choose an account under Continue older chats.")
-        if not selected:
-            raise ValueError("Choose a default AI account in Settings.")
-        if item_id not in self._connections:
-            self._connections[item_id] = selected
-            self._save()
-        return selected
+    def connection(self, item_id: str, *, allow_bind: bool = True) -> str:
+        """Resolve a turn's account. Only a missing record permits a new binding."""
+        if self.has_item(item_id):
+            try:
+                return ai_connections.get(self.selected(item_id))["id"]
+            except ai_connections.MissingConnection:
+                pass
+        if not allow_bind:
+            raise ValueError("Finish the pending approval before changing this chat's AI account.")
+        try:
+            default = ai_connections.get()["id"]
+        except ai_connections.MissingConnection as exc:
+            raise ValueError("Choose a connected default AI account in Settings.") from exc
+        self.bind(item_id, default)
+        return default
 
     def model(self, item_id: str) -> str:
         return self._models.get(item_id, "")
@@ -328,7 +341,7 @@ class SessionMap:
             return ""
 
     def bind(self, item_id: str, connection_id: str) -> None:
-        previous = self._connections.get(item_id)
+        previous = self.selected(item_id) if self.has_item(item_id) else None
         self._connections[item_id] = connection_id
         self._map.pop(item_id, None)
         stored = self._models.get(item_id)
@@ -346,7 +359,6 @@ class SessionMap:
         if item_id not in self._map:
             return
         del self._map[item_id]
-        self._path.parent.mkdir(parents=True, exist_ok=True)
         self._save()
 
 
@@ -376,13 +388,7 @@ class TopicStore:
             return {}
 
     def _write(self, data: dict) -> None:
-        self._path.parent.mkdir(parents=True, exist_ok=True)
-        temporary = self._path.with_suffix(f".{uuid.uuid4().hex}.tmp")
-        try:
-            temporary.write_text(json.dumps(data, indent=2))
-            temporary.replace(self._path)
-        finally:
-            temporary.unlink(missing_ok=True)
+        write_chat_json(self._path, data)
 
     def get(self, item_id: str, *, strict=False) -> dict:
         record = self._read(strict=strict).get(item_id, {})
@@ -517,10 +523,6 @@ class ConversationHistoryStore:
             }
         return {}
 
-    def _write_all(self, histories: dict[str, list[dict[str, str]]]) -> None:
-        self._path.parent.mkdir(parents=True, exist_ok=True)
-        self._path.write_text(json.dumps(histories, indent=2))
-
     def read(self, item_id: str) -> list[dict[str, str]]:
         return self._read_all().get(item_id, [])
 
@@ -532,19 +534,19 @@ class ConversationHistoryStore:
         files = self._normalise_attachments(attachments) if role == "user" else []
         if not item_id or role not in self._ROLES or not (clean or files):
             return
-        histories = self._read_all()
+        histories = self._read_all(strict=True)
         history = histories.get(item_id, [])
         entry = {"role": role, "text": clean, "at": datetime.now(timezone.utc).isoformat()}
         if files:
             entry["attachments"] = files
         history.append(entry)
         histories[item_id] = history
-        self._write_all(histories)
+        write_chat_json(self._path, histories)
 
     def clear(self, item_id: str) -> None:
-        histories = self._read_all()
+        histories = self._read_all(strict=True)
         histories.pop(item_id, None)
-        self._write_all(histories)
+        write_chat_json(self._path, histories)
 
 
 SENDER_PROMPT = (
@@ -1096,6 +1098,10 @@ class ChatRouter:
             item["project_ref"] = record["project_ref"]
         return item
 
+    def approval_in_progress(self, item_id: str) -> bool:
+        return (item_id in self._sending.values()
+                or any(p["item_id"] == item_id for p in self._paused.values()))
+
     def pending_approvals(self) -> dict[str, list[dict]]:
         """Approval cards still awaiting the user, by item id.
 
@@ -1108,12 +1114,16 @@ class ChatRouter:
                 {**pause.get("action", {}), "run_id": run_id})
         return out
 
+    @staticmethod
+    def _recent_context(history: list, boundaries: list) -> str:
+        start = boundaries[-1]["end"] if boundaries else 0
+        return "\n".join(f'{m["role"]}: {m["text"][:400]}' for m in history[start:][-4:])
+
     def reset_context(self, item_id: str, mode: str, revision: str | None, handoff: str) -> dict:
         # Check and commit synchronously on the same event loop that admits turns/approvals.
         lock = self._topic_locks.get(item_id)
         if (item_id in self.active_items() or self._message_queues.get(item_id)
-                or (lock and lock.locked()) or item_id in self._sending.values()
-                or any(p["item_id"] == item_id for p in self._paused.values())):
+                or (lock and lock.locked()) or self.approval_in_progress(item_id)):
             raise RuntimeError("Finish the turn, queued messages and approvals before refreshing context.")
         topics = self._topics._read(strict=True)
         record = topics.get(item_id, {})
@@ -1131,8 +1141,7 @@ class ChatRouter:
             if record.get("needs_session") and seed:
                 return {"revision": current, "handoff": seed}
             if not record.get("summary_current"):
-                start = boundaries[-1]["end"] if boundaries else 0
-                recent = "\n".join(f'{m["role"]}: {m["text"][:400]}' for m in history[start:][-4:])
+                recent = self._recent_context(history, boundaries)
                 if recent:
                     seed = f"{seed}\n\nRecent messages\n{recent}".strip()
             return {"revision": current, "handoff": "Decisions\n\nFacts and context\n"
@@ -1239,7 +1248,11 @@ class ChatRouter:
             if record.get("summary") and not record.get("summary_current"):
                 summary = "Possibly outdated or incomplete: " + summary
             try:
-                connection_id = self._sessions.connection(item_id)
+                connection_id = self._sessions.connection(item_id, allow_bind=not self.approval_in_progress(item_id))
+                if not self._sessions.get(item_id) and not record.get("summary_current") and not record.get("needs_session"):
+                    recent = self._recent_context(self.conversation_history(item_id), record.get("boundaries", []))
+                    if recent:
+                        summary += "\n\nRecent messages\n" + recent
                 uploads = item.get("uploaded_files") or []
                 if (message or uploads) and self._persistent_history:
                     self._persistent_history.append(item_id, "user", message, [

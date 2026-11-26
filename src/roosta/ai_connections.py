@@ -86,12 +86,16 @@ def directory(connection_id: str) -> Path:
     return destination
 
 
+class MissingConnection(ValueError):
+    """The selected account has no record in Settings."""
+
+
 def get(connection_id: str = "", *, connected: bool = True) -> dict:
     data = load()
     selected = data.get("default", "") if connection_id in ("", "default") else connection_id
     connection = next((c for c in data["connections"] if c.get("id") == selected), None)
     if connection is None:
-        raise ValueError("Choose an AI connection in Settings")
+        raise MissingConnection("Choose an AI connection in Settings")
     directory(connection["id"])
     if connected and not connection.get("connected"):
         raise ValueError(f"{connection['label']} is disconnected; reconnect it or choose a replacement in Settings")
@@ -172,6 +176,8 @@ def create(body: dict) -> dict:
     if auth == "api_key":
         _vault().set_password("Roosta AI", connection["credential_ref"], key.strip())
     data["connections"].append(connection)
+    if body.get("default_if_unset") is True and not data.get("default"):
+        data["default"] = connection_id
     try:
         save(data)
     except Exception:

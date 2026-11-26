@@ -88,6 +88,14 @@ def test_fallback_and_empty_index(tmp_path):
 
 def test_attention_and_review_use_selected_page_only(tmp_path, monkeypatch):
     seed(tmp_path)
+    noon = datetime.now(timezone.utc).replace(hour=12, minute=0, second=0, microsecond=0)
+
+    class FixedDatetime(datetime):
+        @classmethod
+        def now(cls, tz):
+            return noon.astimezone(tz)
+
+    monkeypatch.setattr(pulse, "datetime", FixedDatetime)
     monkeypatch.setattr(api.paths, "WORKSPACE", tmp_path)
     monkeypatch.setattr(api.profile, "load", lambda: type("Profile", (), {"reviewer": "human:owner"})())
     star = pulse.scan_vault(tmp_path)["project_signals"][0]
@@ -104,7 +112,7 @@ def test_attention_and_review_use_selected_page_only(tmp_path, monkeypatch):
     assert detail["path"] == CLIENT and detail["provenance"]["verified"][0]["by"] == "human:owner"
     assert page.read_bytes().endswith(body)
     fresh = pulse.scan_vault(tmp_path)["project_signals"][0]
-    assert fresh["attention_basis"] == "verified" and fresh["age_days"] < 1
+    assert fresh["attention_basis"] == "verified" and fresh["age_days"] == 0.5
     assert not (fresh["stale"] or fresh["expired"] or fresh["verification_due"])
     assert pulse.review_project(tmp_path, star["name"], "status", "paused")["status"] == "paused"
     page.unlink()
