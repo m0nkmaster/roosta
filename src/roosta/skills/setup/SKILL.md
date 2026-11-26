@@ -15,12 +15,15 @@ Ask for: full name and what to call them, role and team, the assistant's name if
 
 ## 2. Priorities and context
 
-Ask what matters most over the next month or quarter: three to five things, in their words. Write them under `## My priorities` in `PRIORITIES.md`, exactly as said. Ask who they work with most and which systems or products their work touches; seed `CONTEXT.md` with short entries. Offer to create a project for each priority that is really a project (the `workspace-new-project` skill).
+Before suggesting projects or collections, take a quick, read-only look at the workspace. Start with the top-level folders and loose files. Read any existing `WORKSPACE.md`, README and a few representative Markdown headings in likely work folders. For mixed files such as PDFs, spreadsheets and images, use names and location as clues. Stay within the workspace and skip hidden, private, symlinked and generated content. If you find only starter files, go straight to priorities.
 
-Ask how the user groups their knowledge. Offer to adopt the Markdown index convention
-in the operating model using their existing pages. With their agreement, add
-`WORKSPACE.md` and ordered links to collection overviews. Keep existing prose, link
-order and omissions. A workspace without an index already has a read-only fallback.
+For a populated folder, describe the pattern you see in a sentence or two, using actual paths. Ask one focused question about anything that would change your suggestion. For example, “I found `Clients/Acme/brief.md` and several loose Acme spreadsheets. Is the brief where you start client work?” If the layout is ambiguous, ask which file they usually open first.
+
+If moving files would help the user find related work, offer a small batch of moves. Show each current path and proposed destination relative to the workspace, and ask which moves they want. Move only the files they select. Check that both paths stay inside the workspace without crossing symlinks, and skip any occupied destination. Update affected workspace links, including relative links inside moved notes, then verify they resolve and report which files moved.
+
+Ask what matters most over the next month or quarter: three to five things, in their words. Write them under `## My priorities` in `PRIORITIES.md`, exactly as said. Ask who they work with most and which systems or products their work touches; seed `CONTEXT.md` with short entries. Reuse an existing project page wherever it lives. Offer `workspace-new-project` when a priority needs a new project.
+
+Use the user's groupings and vocabulary to suggest a small set of collection links, with the actual Markdown pages each would open. If a useful group has no overview, offer to write one. With their agreement, add the chosen links to `WORKSPACE.md` following the operating model. Preserve existing prose, link order and deliberate omissions. A workspace without an index already has a read-only fallback.
 
 
 ## 3. Tools
