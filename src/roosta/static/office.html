@@ -176,7 +176,7 @@
             <div class="card-footer keys">
                 <span><kbd>N</kbd> names</span><span><kbd>Esc</kbd> close</span><span><b>Workers</b> click for their card · drag onto the ops floor to run · drag off it to leave the queue</span>
                 <span class="toys" aria-label="Things to click in the office"><b>Click to play</b>
-                    <span><i>Ops floor</i> copier · front door · employee-of-the-week frame</span>
+                    <span><i>Ops floor</i> copier · front door · pigeonholes · employee-of-the-week frame</span>
                     <span><i>Meeting room</i> call screen · whiteboard (opens the Assistant board)</span>
                     <span><i>Kitchen</i> coffee machine · fridge</span>
                     <span><i>Lounge</i> fireplace · grandfather clock · TV (Ceefax)</span>
@@ -1043,14 +1043,14 @@
             const r = ROLES[w.role], phase = phaseNow();
             const due = w.task ? dueAt(w.task, Date.now()) : null, dueIn = due === null ? null : due - Date.now();
             if (w.role === "guard" && phase !== "night" && phase !== "lunch") { const d = POIS.find((p) => p.only === "guard"); if (d && !d.taken && w.lastPoi !== d && Math.random() < .6) return d; }
-            const free = POIS.filter((p) => !p.taken && (!p.only || p.only === w.role) && p !== w.lastPoi && !(p.tag === "meeting" && counts.locked) && (p.tag !== "fire" || fireNow() === 2) && (p.tag !== "post" || postLeft().length) && (p.tag !== "peek" || (deskBusy(p.desk) && p.desk.owner !== w.id)));
+            const free = POIS.filter((p) => !p.taken && (!p.only || p.only === w.role) && p !== w.lastPoi && !(p.tag === "meeting" && counts.locked) && (p.tag !== "fire" || fireNow() === 2) && (p.tag !== "post" || postLeft().some((x) => x.i !== OWN_SLOT)) && (p.tag !== "peek" || (deskBusy(p.desk) && p.desk.owner !== w.id)));
             const weights = free.map((p) => {
                 const rm = roomAt(p.x, p.y), bias = dayBias(p.tag, phase, rm);
                 if (!bias) return 0;
                 let k = (r.likes.includes(p.tag) ? 4 : 1) * bias * shiftPull(dueIn, rm);
                 if (p.pair && free.length && POIS.some((q) => q.pair === p.pair && q !== p && q.taken)) k *= 3.5;
                 if (p.tag === "peek") k *= 1.5;
-                if (p.tag === "post") k *= 1 + postLeft().length; // a full bank of post draws people over
+                if (p.tag === "post") k *= 1 + postLeft().filter((x) => x.i !== OWN_SLOT).length; // a full bank of post draws people over
                 if (p.dine && cakeNow() && cakeNow() !== "slice") k *= 4; // word gets round: there's cake
                 k *= 1 / (1 + Math.hypot(p.x - w.x, p.y - w.y) / 260);
                 if (w.carry) {
@@ -1620,7 +1620,7 @@
             for (const wx of WINDOWS) { bx.clearRect(wx + 2, 8, 28, 66); bx.drawImage(A.img.windowCut, wx, -4); bx.fillStyle = "#00000040"; bx.fillRect(wx + 1, 76, 30, 2); }
             // wall decor, top row
             blit(bx, "paintL", 98, 30); blit(bx, "poster", 262, 20); blit(bx, "lampWall", 140, 0); blit(bx, "lampWall", 404, 0);
-            bx.fillStyle = "#00000038"; bx.fillRect(PIGEON.x + 2, PIGEON.y + PIGEON.h, PIGEON.w - 2, 2); blit(bx, "pigeonholes", PIGEON.x, PIGEON.y);
+            bx.fillStyle = "#00000038"; bx.fillRect(PIGEON.x + 2, PIGEON.y + PIGEON.h, PIGEON.w - 2, 2); blit(bx, "pigeonholes", PIGEON.x, PIGEON.y); bx.fillStyle = "#c9a24a"; bx.fillRect(PIGEON.x + 16, PIGEON.y + 15 + 3, 5, 1); // brass name plate on {user}'s own slot (OWN_SLOT)
             splashback(886, 1030); splashback(1066, 1210);
             // whiteboard frame (live content drawn each frame)
             bx.fillStyle = "#3a3a4a"; bx.fillRect(BOARD.x - 3, BOARD.y - 3, BOARD.w + 6, BOARD.h + 6); bx.fillStyle = "#8c8ca0"; bx.fillRect(BOARD.x - 2, BOARD.y - 2, BOARD.w + 4, BOARD.h + 4);
@@ -3287,6 +3287,7 @@
         // The post: ambient, seeded per date like the weather. Monday to Saturday it lands mid-morning (Monday's is heavier,
         // with the weekend's), a slot at a time it's collected by colleagues who wander over, and anything left is gone by
         // 17:30 (13:00 on Saturdays), so a reload never shows a stale bank. No Sunday post. Never runner output.
+        const OWN_SLOT = 4; // {user}'s own pigeonhole, the middle one: colleagues leave it alone, so it waits for a click
         function postFor(key, day) {
             if (day === 0) return null;
             const sat = day === 6, at = Math.round((sat ? 600 : 570) + hash("postAt" + key) * (sat ? 120 : 90)), end = sat ? 780 : 1050;
@@ -3294,14 +3295,14 @@
             const order = [0, 1, 2, 3, 4, 5, 6, 7, 8].sort((a, b) => hash("postI" + key + a) - hash("postI" + key + b));
             return { at, slots: order.slice(0, n).sort((a, b) => a - b).map((i) => {
                 const r = hash("postK" + key + i);
-                return { i, kind: r < .55 ? "letter" : r < .85 ? "flyer" : "postcard", by: Math.round(at + 20 + hash("postBy" + key + i) * (end - at - 20)) };
+                return { i, kind: r < .55 ? "letter" : r < .85 ? "flyer" : "postcard", by: i === OWN_SLOT ? end : Math.round(at + 20 + hash("postBy" + key + i) * (end - at - 20)) };
             }) };
         }
         function postWaiting(plan, min, taken) { return plan && min >= plan.at ? plan.slots.filter((s) => min < s.by && !taken.has(s.i)) : []; }
-        const postTaken = new Set(); let postKey = "", postMin = null;
+        const postTaken = new Set(); let postKey = "", postMin = null, ownChecked = false;
         function postNow() {
             const T = clock(), d = new Date(), key = `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`;
-            if (key !== postKey) { postKey = key; postTaken.clear(); postCache.k = -1; }
+            if (key !== postKey) { postKey = key; postTaken.clear(); postCache.k = -1; ownChecked = false; }
             return { plan: postFor(key, T.day), min: T.h * 60 + T.m };
         }
         const postCache = { k: -1, v: [] };
@@ -3315,7 +3316,7 @@
             postcard: ["a postcard! wish you were here, apparently", "postcard from somewhere sunny", "someone's having a nice time"],
             none: ["nothing for me", "beaten to it", "empty again"] };
         function collectPost(w, now) {
-            const left = postLeft(), s = left.length ? left[Math.floor(Math.random() * left.length)] : null;
+            const left = postLeft().filter((x) => x.i !== OWN_SLOT), s = left.length ? left[Math.floor(Math.random() * left.length)] : null;
             if (s) postTaken.add(s.i);
             w.item = s ? "papers" : null; w.emote = s ? (s.kind === "postcard" ? "heart" : s.kind === "letter" ? "q" : "note") : "q"; w.emoteUntil = now + 2200;
             if (now - lastQuip > 3000 || s) say(w, pick(POST_QUIPS[s ? s.kind : "none"], Math.random()), now);
@@ -3339,7 +3340,33 @@
             const p = postNow(), n = postWaiting(p.plan, p.min, postTaken).length, hm = (m) => `${Math.floor(m / 60)}:${String(m % 60).padStart(2, "0")}`;
             if (!p.plan) return "pigeonholes · no post on Sundays";
             if (p.min < p.plan.at) return "pigeonholes · post usually comes about " + hm(Math.round(p.plan.at / 30) * 30);
-            return n ? `pigeonholes · ${n} waiting` : "pigeonholes · all collected";
+            const mine = postWaiting(p.plan, p.min, postTaken).some((s) => s.i === OWN_SLOT);
+            return n ? `pigeonholes · ${n} waiting` + (mine ? " · one's yours" : "") : "pigeonholes · all collected";
+        }
+        // Click the pigeonholes to check {user}'s own slot (world-only; lifted into tests/test_office.py). Colleagues never
+        // take it, so whatever lands there waits until {user} looks, or the bank is cleared at the end of the day.
+        function ownPost(plan, min, taken, checked) {
+            if (!plan) return "sunday";
+            if (min < plan.at) return "early";
+            const s = plan.slots.find((x) => x.i === OWN_SLOT);
+            if (s && min < s.by && !taken.has(OWN_SLOT)) return s.kind;
+            return checked ? "again" : "empty";
+        }
+        function checkPost(now) {
+            const p = postNow(), out = ownPost(p.plan, p.min, postTaken, ownChecked), who = USER_NAME === "You" ? "you" : USER_NAME;
+            const cx = PIGEON.x + 18, cy = PIGEON.y - 2, hm = (m) => `${Math.floor(m / 60)}:${String(m % 60).padStart(2, "0")}`;
+            const got = out === "letter" || out === "flyer" || out === "postcard";
+            if (got) { postTaken.add(OWN_SLOT); ownChecked = true; }
+            else if (out === "empty") ownChecked = true;
+            floatText(cx, cy, { sunday: "*rattle* no post on Sundays", early: `nothing yet · post's about ${p.plan ? hm(Math.round(p.plan.at / 30) * 30) : ""}`,
+                letter: `a letter for ${who}`, flyer: `flyers for ${who}`, postcard: `a postcard for ${who}!`,
+                empty: `*rattle* nothing for ${who}`, again: "already collected yours" }[out], got ? "#ffd166" : "#f4efe1");
+            const c = cheerer({ x: 402, y: 100 }, [...workers.values()], 160);
+            if (!c || now < c.quipUntil || (!got && Math.random() < .5)) return;
+            c.emote = out === "postcard" ? "heart" : "q"; c.emoteUntil = now + 2200;
+            say(c, pick({ letter: ["ooh, who's it from?", "bill or birthday?", "handwritten, {user}?"], flyer: ["same pizza menu as me", "straight in the recycling", "solar again?"],
+                postcard: ["where's that from?", "wish I was there", "lucky {user}"], empty: ["nothing for me either", "it's all email now", "maybe tomorrow"],
+                early: ["post's not been yet", "keen, {user}"], sunday: ["it's Sunday, {user}", "no post today"], again: ["you've had yours, {user}", "checking twice?"] }[out], Math.random()), now);
         }
         function clockStep() {
             if (!booted) return; // never during ?warp or away catch-up
@@ -4259,7 +4286,7 @@
             if (kind === "call") return st === "locked" ? (demo ? "click: inspect the frozen call" : "click: re-check sign-in") : "click: test the video call";
             if (kind === "copier") return "click: print a test page";
             if (kind === "door") return "click: check badge reader";
-            return { cat: "click: pet the cat", darts: "click: throw a dart", console: "click: swap game and call players", arcade: "click: insert a coin", pong: "click: call the rally", foos: "click: call a game or spin the rods", coffee: "click: brew a fresh pot", fridge: "click: open the fridge", fire: "click: poke the fire", clock: "click: strike the hour", tv: "click: Ceefax", board: "click: open the Assistant board", frame: "click: employee of the week", egg: "click: pick up the egg" }[kind] || null;
+            return { cat: "click: pet the cat", darts: "click: throw a dart", console: "click: swap game and call players", arcade: "click: insert a coin", pong: "click: call the rally", foos: "click: call a game or spin the rods", coffee: "click: brew a fresh pot", fridge: "click: open the fridge", fire: "click: poke the fire", clock: "click: strike the hour", tv: "click: Ceefax", board: "click: open the Assistant board", frame: "click: employee of the week", post: "click: check your pigeonhole", egg: "click: pick up the egg" }[kind] || null;
         }
         // drag a worker onto the ops floor to arm its Run now confirm, or a queued worker off it to arm Cancel; never fires itself (lifted into tests/test_office.py)
         function dropAction(st, room, demo, canCancel = true) {
@@ -4277,7 +4304,7 @@
         const hintCount = {}; // cached so the render loop never touches localStorage
         const hintUses = (kind) => { if (!(kind in hintCount)) { try { hintCount[kind] = Number(localStorage.getItem("office-hint-" + kind)) || 0; } catch (e) { hintCount[kind] = HINT_LEARNT; } } return hintCount[kind]; };
         function hintUsed(kind) { if (kind) { hintCount[kind] = hintUses(kind) + 1; try { localStorage.setItem("office-hint-" + kind, hintCount[kind]); } catch (e) { /* ignore */ } } hint.since = Infinity; }
-        function hintKind(p, w, c) { return c ? "cat" : w ? "worker" : hitEgg(p) ? "egg" : hitFrame(p) ? "frame" : hitCall(p) ? "call" : hitCopier(p) ? "copier" : hitDoor(p) ? "door" : hitDartboard(p) ? "darts" : hitConsole(p) ? "console" : hitArcade(p) ? "arcade" : hitPong(p) ? "pong" : hitFoos(p) ? "foos" : hitCoffee(p) ? "coffee" : hitFridge(p) ? "fridge" : hitFire(p) ? "fire" : hitClock(p) ? "clock" : hitTV(p) ? "tv" : hitBoard(p) ? "board" : null; }
+        function hintKind(p, w, c) { return c ? "cat" : w ? "worker" : hitEgg(p) ? "egg" : hitFrame(p) ? "frame" : hitPost(p) ? "post" : hitCall(p) ? "call" : hitCopier(p) ? "copier" : hitDoor(p) ? "door" : hitDartboard(p) ? "darts" : hitConsole(p) ? "console" : hitArcade(p) ? "arcade" : hitPong(p) ? "pong" : hitFoos(p) ? "foos" : hitCoffee(p) ? "coffee" : hitFridge(p) ? "fridge" : hitFire(p) ? "fire" : hitClock(p) ? "clock" : hitTV(p) ? "tv" : hitBoard(p) ? "board" : null; }
         view.addEventListener("mousemove", (e) => {
             const p = worldPoint(e), c = hitCat(p), w = c ? null : hit(p), cl = !c && !w && hitCall(p), cp = !c && !w && !cl && hitCopier(p), dr = !c && !w && !cl && !cp && hitDoor(p), cn = !c && !w && !cl && !cp && !dr && hitConsole(p);
             hoverEgg = !c && !w ? hitEgg(p) : null;
@@ -4333,6 +4360,7 @@
             }
             { const e = hitEgg(p); if (e) { clickEgg(e, now); return; } }
             if (hitFrame(p)) { clickFrame(now); return; }
+            if (hitPost(p)) { checkPost(now); return; }
             if (hitCall(p)) { clickCall(now); return; }
             if (hitCopier(p)) { clickCopier(now); return; }
             if (hitDoor(p)) { clickDoor(now); return; }
