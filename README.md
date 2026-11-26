@@ -211,9 +211,11 @@ billable request to check that the model can read a temporary file. Choose **Can
 
 Anthropic models run through the unmodified Claude Code runtime. OpenAI, non-Anthropic OpenRouter
 models and local Ollama models run through Pi. Anthropic models on OpenRouter are rejected: choose
-an Anthropic connection explicitly. Roosta never automatically changes an account or billing route.
+an Anthropic connection explicitly.
 
-Chats retain their account when the default changes. Model changes in Settings apply to subsequent
+Chats retain their account when the default changes, even if you disconnect that account.
+If a chat has no named account or its account was deleted, your next message starts a fresh
+session on the connected default. The conversation history and topic summary stay with the chat. Model changes in Settings apply to subsequent
 turns on that provider; account and model controls live in Settings. Workers follow the connected
 default when `connection` is omitted; choosing a named connection pins only that worker.
 Disconnect lists affected chats, approvals and workers.

@@ -554,8 +554,7 @@ async def api_ai_chat_connection(body: dict):
         return ai_settings_result({"error": "Choose a chat"}, 400)
     if not isinstance(connection_id, str) or connection_id in ("", "default"):
         return ai_settings_result({"error": "Choose a named AI account"}, 400)
-    if (item_id in chat_router.active_items() or item_id in chat_router._sending.values()
-            or any(p["item_id"] == item_id for p in chat_router._paused.values())):
+    if item_id in chat_router.active_items() or chat_router.approval_in_progress(item_id):
         return ai_settings_result({"error": "Finish this turn or its pending approval before changing connection"}, 409)
     try:
         selected = ai_connections.get(connection_id)
@@ -576,7 +575,10 @@ async def api_ai_chat_model(body: dict):
     model = model.strip()
     try:
         if model:
-            selected = chat_router._sessions.connection(item_id)
+            sessions = chat_router._sessions
+            if not sessions.has_item(item_id) and chat_router.known_item(item_id):
+                raise ValueError("Continue this chat or choose its account in Settings before changing the model.")
+            selected = sessions.selected(item_id) if sessions.has_item(item_id) else sessions.connection(item_id)
             current = chat_router._sessions.model(item_id)
             await validate_model(ai_connections.get(selected, connected=False)["provider"], model, selected, current)
         chat_router._sessions.set_model(item_id, model)

@@ -264,7 +264,7 @@ Held cards live in memory (`ChatRouter._paused`), so a runner restart drops them
 
 `teams`/`teams_message` and `jira`/`jira_ticket` remain accepted aliases for the generic `chat`
 and `ticket` visual categories. Service-specific permalink and content repair stay URL/CLI matched.
-Chats and paused approvals retain their named AI connection; see [AI harnesses](harnesses.md).
+A chat with a missing account recovers on its next turn. Pending approvals and approved sends stay tied to the drafting account. See [AI harnesses](harnesses.md).
 
 ## Starting a new conversation segment
 
