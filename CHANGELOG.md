@@ -2,6 +2,10 @@
 
 Record each release newest first. Bump minor for features and visible behaviour, patch for fixes and polish.
 
+## 0.21.4 - 2026-11-26
+
+- A chat reply or worker run that starts while Settings is repairing its AI software now waits up to 10 minutes for the repair to finish, instead of failing straight away and needing a resend.
+
 ## 0.21.3 - 2026-11-26
 
 - Continuing a chat whose AI account is missing starts a fresh session on your connected default account and keeps the conversation history and topic. Disconnected accounts stay pinned.
