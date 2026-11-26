@@ -1,7 +1,7 @@
 # roosta/chat.py
 """Per-item AI conversations on an AI connection, with a send-approval backstop."""
 from __future__ import annotations
-import asyncio, hashlib, json, re, uuid
+import asyncio, hashlib, json, re, tempfile, uuid
 from collections import deque
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -240,6 +240,18 @@ def extract_marker(text: str) -> tuple[str, dict | None]:
     return prose, payload
 
 
+def write_chat_json(path: Path, data: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(mode="w", dir=path.parent, delete=False) as stream:
+        temporary = Path(stream.name)
+        try:
+            json.dump(data, stream, indent=2)
+            stream.close()
+            temporary.replace(path)
+        finally:
+            temporary.unlink(missing_ok=True)
+
+
 class SessionMap:
     """Durable item_id -> AI session, connection and model."""
 
@@ -273,18 +285,14 @@ class SessionMap:
 
     def set(self, item_id: str, session_id: str) -> None:
         self._map[item_id] = session_id
-        self._path.parent.mkdir(parents=True, exist_ok=True)
         self._save()
 
     def _save(self) -> None:
-        self._path.parent.mkdir(parents=True, exist_ok=True)
         data = {key: {"session_id": self._map.get(key, ""), "connection": self._connections[key],
                       **({"model": self._models[key]} if self._models.get(key) else {})}
                 if key in self._connections else self._map[key]
                 for key in self._map.keys() | self._connections.keys()}
-        temporary = self._path.with_suffix(f".{uuid.uuid4().hex}.tmp")
-        temporary.write_text(json.dumps(data, indent=2))
-        temporary.replace(self._path)
+        write_chat_json(self._path, data)
 
     def selected(self, item_id: str) -> str:
         """Read the stored binding. Only a new chat inherits the default."""
@@ -351,7 +359,6 @@ class SessionMap:
         if item_id not in self._map:
             return
         del self._map[item_id]
-        self._path.parent.mkdir(parents=True, exist_ok=True)
         self._save()
 
 
@@ -381,13 +388,7 @@ class TopicStore:
             return {}
 
     def _write(self, data: dict) -> None:
-        self._path.parent.mkdir(parents=True, exist_ok=True)
-        temporary = self._path.with_suffix(f".{uuid.uuid4().hex}.tmp")
-        try:
-            temporary.write_text(json.dumps(data, indent=2))
-            temporary.replace(self._path)
-        finally:
-            temporary.unlink(missing_ok=True)
+        write_chat_json(self._path, data)
 
     def get(self, item_id: str, *, strict=False) -> dict:
         record = self._read(strict=strict).get(item_id, {})
@@ -522,10 +523,6 @@ class ConversationHistoryStore:
             }
         return {}
 
-    def _write_all(self, histories: dict[str, list[dict[str, str]]]) -> None:
-        self._path.parent.mkdir(parents=True, exist_ok=True)
-        self._path.write_text(json.dumps(histories, indent=2))
-
     def read(self, item_id: str) -> list[dict[str, str]]:
         return self._read_all().get(item_id, [])
 
@@ -537,19 +534,19 @@ class ConversationHistoryStore:
         files = self._normalise_attachments(attachments) if role == "user" else []
         if not item_id or role not in self._ROLES or not (clean or files):
             return
-        histories = self._read_all()
+        histories = self._read_all(strict=True)
         history = histories.get(item_id, [])
         entry = {"role": role, "text": clean, "at": datetime.now(timezone.utc).isoformat()}
         if files:
             entry["attachments"] = files
         history.append(entry)
         histories[item_id] = history
-        self._write_all(histories)
+        write_chat_json(self._path, histories)
 
     def clear(self, item_id: str) -> None:
-        histories = self._read_all()
+        histories = self._read_all(strict=True)
         histories.pop(item_id, None)
-        self._write_all(histories)
+        write_chat_json(self._path, histories)
 
 
 SENDER_PROMPT = (

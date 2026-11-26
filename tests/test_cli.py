@@ -205,6 +205,8 @@ def test_fresh_init_starts_with_ai_connection_before_workspace_setup(tmp_path):
             except OSError:
                 time.sleep(0.3)
         assert board is not None, "runner did not start"
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/runner/identity", timeout=2) as response:
+            assert json.load(response) == {"service": "roosta", "pid": proc.pid}
         ids = [item["id"] for item in board["document"]["items"]]
         assert "roosta-ai-setup" in ids and "roosta-setup" not in ids
         card = next(i for i in board["document"]["items"] if i["id"] == "roosta-ai-setup")

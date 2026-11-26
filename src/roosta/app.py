@@ -12,7 +12,6 @@ import shlex
 import shutil
 import subprocess
 import sys
-import tempfile
 import time
 import uuid
 from contextlib import asynccontextmanager
@@ -31,7 +30,7 @@ from roosta import connectors as connectors_mod
 from roosta import cli, paths, profile, skills
 from roosta import __version__
 from roosta.chat import (ChatRouter, clip_body, ConversationHistoryStore, SessionMap, TopicStore,
-                  is_general_chat_id, normalise_defer_until)
+                  is_general_chat_id, normalise_defer_until, write_chat_json)
 from roosta import ai_backend
 from roosta import ai_connections, ai_runtime, ai_settings, pages, pi_agent, teletext
 from roosta.activity_log import ActivityLog
@@ -45,10 +44,8 @@ from roosta.board import (
     SETUP_ITEM_ID,
     attach_raised_at,
     board_health,
-    board_merges,
+    board_lanes,
     collect_board_items,
-    merge_board_feed_items,
-    merge_pushed_notifications,
     normalise_board_doc,
     push_notification,
     recently_closed,
@@ -56,8 +53,6 @@ from roosta.board import (
     setup_gaps,
     setup_item,
     snooze_deadline,
-    split_due_reminders,
-    split_snoozed_items,
 )
 from roosta.chat_items import (
     DOCUMENT_CHAT_PREFIX,
@@ -271,6 +266,11 @@ def local_ai_settings(request: Request) -> None:
         raise HTTPException(403, "Cross-origin AI settings request denied")
     if request.headers.get("sec-fetch-site") == "cross-site":
         raise HTTPException(403, "Cross-site AI settings request denied")
+
+
+@app.get("/api/runner/identity", dependencies=[Depends(local_ai_settings)])
+async def api_runner_identity():
+    return {"service": "roosta", "pid": os.getpid()}
 
 
 def same_origin_upload(request: Request) -> None:
@@ -760,7 +760,7 @@ async def api_unscheduled_skills():
 @app.get("/api/skills/{skill}/skill")
 async def api_workspace_skill(skill: str):
     """Preview one of the workspace's own skills; global and unknown names are refused."""
-    if skill not in await asyncio.to_thread(workspace_skills):
+    if skill not in await asyncio.to_thread(workspace_skills, paths.WORKSPACE):
         return JSONResponse({"error": "Skill not found in this workspace"}, status_code=404)
     return skill_preview(skill, paths.WORKSPACE)
 
@@ -1097,16 +1097,8 @@ async def api_board(threads: str = "", thread: Annotated[list[str] | None, Query
     state = runner.get_state("assistant")
     doc = normalise_board_doc((state or {}).get("last_output", {}).get("details", {}))
     states = runner.get_states()
-    reminders = chat_router.reminders() if chat_router else []
-    doc["items"], later_reminders = collect_board_items(doc["items"], states, reminders, chat_router)
     handled = chat_router.handled() if chat_router else {}
-    current_items = [i for i in doc["items"] if i["id"] not in handled]
-    snoozed = chat_router.snoozed() if chat_router else {}
-    doc["items"], doc["later"] = split_snoozed_items(current_items, snoozed)
-    parked = {i["id"] for i in doc["later"]}
-    doc["later"] = doc["later"] + [r for r in later_reminders
-                                   if r["id"] not in parked and r["id"] not in handled]
-    doc["later"].sort(key=lambda i: i.get("snoozed_until", ""))
+    doc["items"], doc["later"] = board_lanes(doc["items"], states, chat_router, handled)
     if chat_router:
         track_ids = [
             item["id"] for item in doc["items"] + doc["later"] if item.get("id")
@@ -1154,11 +1146,8 @@ async def api_board_count():
     """Rail item count for the nav badge; mirrors api_board's filtering without its side effects."""
     state = runner.get_state("assistant")
     doc = normalise_board_doc((state or {}).get("last_output", {}).get("details", {}))
-    reminders = chat_router.reminders() if chat_router else []
-    items, _ = collect_board_items(doc["items"], runner.get_states(), reminders, chat_router)
     handled = chat_router.handled() if chat_router else {}
-    snoozed = chat_router.snoozed() if chat_router else {}
-    items, later = split_snoozed_items([i for i in items if i["id"] not in handled], snoozed)
+    items, later = board_lanes(doc["items"], runner.get_states(), chat_router, handled)
     today = datetime.now(timezone.utc).date().isoformat()
     # notes/later/done feed the Office whiteboard kanban
     notes = [{"title": i.get("title", ""), "owner": i.get("action_owner", "assistant"),
@@ -1284,11 +1273,7 @@ async def api_board_snooze(body: dict):
         return JSONResponse({"error": "unknown snooze preset"}, status_code=400)
     state = runner.get_state("assistant")
     doc = normalise_board_doc((state or {}).get("last_output", {}).get("details", {}))
-    current_items, _ = collect_board_items(
-        doc["items"], runner.get_states(), chat_router.reminders(), chat_router)
-    handled = chat_router.handled()
-    current_items = [item for item in current_items if item["id"] not in handled]
-    active_items, _ = split_snoozed_items(current_items, chat_router.snoozed())
+    active_items, _ = board_lanes(doc["items"], runner.get_states(), chat_router, chat_router.handled())
     if not any(item["id"] == item_id for item in active_items):
         return JSONResponse({"error": "item not found"}, status_code=404)
     chat_router.snooze(item_id, until)
@@ -1474,14 +1459,7 @@ async def api_chats_archive(body: dict):
 
 def save_chat_state(archived: dict, item_id: str, record: dict) -> None:
     archived[item_id] = record
-    ARCHIVED_CHATS_FILE.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.NamedTemporaryFile(dir=ARCHIVED_CHATS_FILE.parent, delete=False, mode="w") as temp:
-        try:
-            json.dump(archived, temp, indent=2)
-            temp.close()
-            Path(temp.name).replace(ARCHIVED_CHATS_FILE)
-        finally:
-            Path(temp.name).unlink(missing_ok=True)
+    write_chat_json(ARCHIVED_CHATS_FILE, archived)
 
 
 @app.get("/api/chats/archived")
@@ -1507,8 +1485,10 @@ async def api_chats_restore(body: dict):
 async def api_board_approve(run_id: str, body: dict):
     if chat_router is None and not await ensure_chat_router():
         return chat_unavailable()
-    approved = bool(body.get("approved")) if isinstance(body, dict) else False
-    edit = body.get("edit") if isinstance(body, dict) else None
+    approved = body.get("approved")
+    if not isinstance(approved, bool):
+        return JSONResponse({"error": "approved must be a boolean"}, status_code=400)
+    edit = body.get("edit")
     result = await chat_router.approve(run_id, approved, edit)
     return JSONResponse(result, status_code=200 if result.get("ok") else 409)
 
@@ -1698,21 +1678,7 @@ async def api_pulse():
     handled = chat_router.handled() if chat_router else {}
     state = runner.get_state("assistant")
     doc = normalise_board_doc((state or {}).get("last_output", {}).get("details", {}))
-    doc["items"] = merge_board_feed_items(doc["items"], states, board_merges(states, chat_router))
-    doc["items"] = merge_pushed_notifications(doc["items"])
-    reminders = chat_router.reminders() if chat_router else []
-    due_reminders, later_reminders = split_due_reminders(reminders)
-    have = {item["id"] for item in doc["items"]}
-    doc["items"] = [item for item in due_reminders if item["id"] not in have] + doc["items"]
-    current_items = [item for item in doc["items"] if item["id"] not in handled]
-    snoozed = chat_router.snoozed() if chat_router else {}
-    active_items, later_items = split_snoozed_items(current_items, snoozed)
-    parked = {item["id"] for item in later_items}
-    later_items = later_items + [
-        item for item in later_reminders
-        if item["id"] not in parked and item["id"] not in handled
-    ]
-    task_states = runner.get_states()
+    active_items, later_items = board_lanes(doc["items"], states, chat_router, handled)
     chat_items = []
     if chat_router:
         for item_id in chat_router.active_items():
@@ -1725,7 +1691,7 @@ async def api_pulse():
         len(active_items),
         len(later_items),
         health,
-        task_states=task_states,
+        task_states=states,
         running_activity=activity.running(),
         chat_items=chat_items,
         active_project_items=[

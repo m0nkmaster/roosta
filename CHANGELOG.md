@@ -2,6 +2,13 @@
 
 Record each release newest first. Bump minor for features and visible behaviour, patch for fixes and polish.
 
+## 0.22.2 - 2026-11-26
+
+- Removing a worker preserves neighbouring workers and leaves a valid schedule when the last worker is removed.
+- Chat history saves atomically. A damaged transcript file is preserved for recovery. Send and Cancel require an explicit boolean approval.
+- Desktop restart checks which process owns the dashboard port before stopping an external Roosta runner.
+- Assistant, Office and Pulse agree on active and later board items. Pulse includes installed core skills and workspace forks in its skill count.
+
 ## 0.22.1 - 2026-11-26
 
 - When you revise a ticket or other item it already drafted, the Assistant first checks whether you approved and created it, then drafts an edit instead of a duplicate. It also reads reminders from Roosta's state file directly, so it can confirm reminders that workspace search misses.

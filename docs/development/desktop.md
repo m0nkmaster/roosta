@@ -7,9 +7,10 @@ live in [desktop/README.md](../../desktop/README.md).
 `roosta start`. Both run against the
 workspace (`ROOSTA_WORKSPACE`, else the one `roosta init` recorded, else `~/workspace`), launches the command without a shell and adds the GUI-only
 paths needed for local CLIs and Cursor Agent. A healthy process already on `127.0.0.1:7667` is reused and
-never stopped by the app on normal launch. **Restart Roosta** also kills any external listener
-on that port before relaunching, so dashboard HTML/API changes load without manually hunting stray
-`uvicorn` processes. HTML routes send `Cache-Control: no-store` so the Electron shell does not
+never stopped by the app on normal launch. **Restart Roosta** stops its owned child. For an external runner, it checks that the
+local `/api/runner/identity` response names Roosta and matches the only PID listening on the port.
+It rechecks the listener before sending SIGTERM and waits for the port to clear. An unknown or
+older listener requires a manual stop. HTML routes send `Cache-Control: no-store` so the Electron shell does not
 keep stale nav.
 
 - The window opens on `/assistant`; closing it leaves the app and runner in the menu bar. Explicit

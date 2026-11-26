@@ -558,8 +558,13 @@ def test_board_surfaces_due_reminders_and_parks_future(monkeypatch, fake_chat_co
         "last_output": {"details": {"items": []}}})
     monkeypatch.setattr(appmod.runner, "get_states", lambda: [])
 
+    monkeypatch.setattr(board, "setup_item", lambda router: {"id": board.SETUP_ITEM_ID, "title": "Setup"})
     body = json.loads(asyncio.run(appmod.api_board()).body)
-    assert [i["id"] for i in body["document"]["items"]] == ["remind-due"]
+    count = json.loads(asyncio.run(appmod.api_board_count()).body)
+    pulse = json.loads(asyncio.run(appmod.api_pulse()).body)["board"]
+    assert count["items"] == pulse["board_active"] == 2
+    assert count["later"] == pulse["board_later"] == 1
+    assert [i["id"] for i in body["document"]["items"]] == ["remind-due", board.SETUP_ITEM_ID]
     assert [i["id"] for i in body["document"]["later"]] == ["remind-later"]
 
 
@@ -649,6 +654,46 @@ def test_jira_comment_cards_convert_wiki_markup_to_markdown():
 ])
 def test_normalise_sender_action_rejects_invalid_payloads(action):
     assert cmod.normalise_sender_action(action) is None
+
+
+@pytest.mark.parametrize("body", [{}, {"approved": "false"}, {"approved": 1}, {"approved": None}])
+def test_invalid_approval_keeps_the_draft(monkeypatch, tmp_path, body):
+    router = cmod.ChatRouter(cmod.SessionMap(tmp_path / "sessions.json"), str(tmp_path))
+    router._paused["draft"] = {"item_id": "item", "action": {}}
+    monkeypatch.setattr(appmod, "chat_router", router)
+    response = asyncio.run(appmod.api_board_approve("draft", body))
+    assert response.status_code == 400
+    assert "draft" in router._paused
+    assert json.loads(asyncio.run(appmod.api_board_approve("draft", {"approved": False})).body)["sent"] is False
+
+
+@pytest.mark.parametrize("operation", ["append", "clear"])
+def test_history_mutations_preserve_unreadable_file(tmp_path, operation):
+    path = tmp_path / "history.json"
+    path.write_text('{"prior":')
+    store = cmod.ConversationHistoryStore(path)
+    with pytest.raises(ValueError):
+        if operation == "append":
+            store.append("new", "user", "hello")
+        else:
+            store.clear("prior")
+    assert path.read_text() == '{"prior":'
+
+
+def test_history_failure_before_replace_preserves_prior_messages(tmp_path, monkeypatch):
+    path = tmp_path / "history.json"
+    store = cmod.ConversationHistoryStore(path)
+    store.append("chat", "user", "first")
+    original = path.read_bytes()
+
+    def disk_full(src, dest):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(Path, "replace", disk_full)
+    with pytest.raises(OSError, match="disk full"):
+        store.append("chat", "user", "second")
+    assert path.read_bytes() == original
+    assert list(tmp_path.iterdir()) == [path]
 
 
 def test_approve_sends_normalised_edited_action(monkeypatch, tmp_path, fake_chat_connection):
@@ -3620,6 +3665,19 @@ def test_remove_task_drops_only_that_block(tmp_path):
     assert [t["id"] for t in appmod.yaml.safe_load(path.read_text())["tasks"]] == ["b"]
     with pytest.raises(ValueError):
         task_config.remove_task(path, "missing")
+
+
+def test_remove_worker_preserves_quoted_id_then_loads_empty_schedule(tmp_path, monkeypatch):
+    path = tmp_path / "tasks.yaml"
+    monkeypatch.setattr(task_config.paths, "TASKS_FILE", path)
+    other = '  # second worker\n  - skill: actor\n    id: "second"\n'
+    footer = "settings: {keep: true}\n"
+    path.write_text("tasks:\n  - id: first\n    skill: actor\n" + other + footer)
+    task_config.remove_task(path, "first")
+    assert path.read_text() == "tasks:\n" + other + footer
+    task_config.remove_task(path, "second")
+    assert appmod.yaml.safe_load(path.read_text()) == {"tasks": [], "settings": {"keep": True}}
+    assert task_config.load_tasks() == []
 
 
 def test_chat_retrieval_lifecycle(monkeypatch, tmp_path):

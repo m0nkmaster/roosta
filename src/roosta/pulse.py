@@ -10,6 +10,7 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from threading import Lock
 
+from roosta.task_config import workspace_skills
 from roosta.workspace import (catalogue_files, index_links, index_members, markdown_title, metadata,
                               read_document, selected_collections)
 
@@ -387,15 +388,6 @@ def scan_vault(root: Path) -> dict:
         project_readmes[slug] = text
     link_projects(project_signals, project_readmes)
 
-    skill_names = set()
-    for skills_dir in (root / ".agents" / "skills", root / ".claude" / "skills"):
-        if skills_dir.is_dir():
-            skill_names.update(
-                p.name for p in skills_dir.iterdir()
-                if p.is_dir() and (p / "SKILL.md").is_file()
-            )
-    skills = len(skill_names)
-
     recent_edits.sort(key=lambda item: item["mtime"], reverse=True)
     return {
         "projects": sum(1 for p in known if re.fullmatch(r"projects/[^/]+/README\.md", p)),
@@ -405,7 +397,7 @@ def scan_vault(root: Path) -> dict:
         "stale_after_days": STALE_AFTER_DAYS,
         "markdown_files": len(known),
         "words": sum(len(re.findall(r"\b\w+\b", f["text"])) for f in known.values()),
-        "skills": skills,
+        "skills": len(workspace_skills(root)),
         "recent_files_7d": len(recent_edits),
         "hot_files": recent_edits[:6],
     }
