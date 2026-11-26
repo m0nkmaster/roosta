@@ -115,9 +115,13 @@ A product engineering worker can use the ordinary profile with a separate Git wo
 and launch from the workspace to discover its custom skill. Ordinary Claude runs use `dontAsk`.
 
 `SessionMap` reads old string values and writes `{session_id, connection}` records. New chats bind the connected default once.
-An existing legacy conversation needs an explicit account choice in Settings before Roosta sends
-any context. Its visible history and topic summary survive. The next turn starts a fresh provider
-session on the selected account. Changing the default never moves an existing chat or approval.
+An actor turn holding the item lock also binds that default when the chat has no named account
+or its account was deleted. It discards the old provider session and unverified model pick, keeps
+the visible transcript, and passes the topic summary into the fresh session. With an incomplete
+summary it includes recent messages from the current conversation segment. Reading Settings or
+the board does not rebind chats. A missing or disconnected default leaves an orphan untouched.
+Existing named accounts stay pinned, including on disconnect or authentication failure. A pending
+approval or sender in flight blocks recovery. The sender always uses the account that drafted the action.
 Explicit chat migration retains rendered history and topic summary,
 rotates execution context, and is rejected during a live turn or pending approval. Worker YAML omits
 `connection` to follow the current default and stores a stable id only for an explicit account pin. The

@@ -186,9 +186,6 @@ def test_default_change_does_not_adopt_legacy_chats(accounts, tmp_path, monkeypa
     monkeypatch.setattr(app, 'chat_router', chat.ChatRouter(sessions, str(tmp_path)))
     original = path.read_bytes()
     assert sessions.selected('cursor') == 'legacy:cursor'
-    for item in ('bare', 'cursor'):
-        with pytest.raises(ValueError, match='Settings'):
-            sessions.connection(item)
     assert asyncio.run(app.api_ai_default({'connection': new['id']})).status_code == 200
     assert path.read_bytes() == original
     restored = chat.SessionMap(path)

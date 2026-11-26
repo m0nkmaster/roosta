@@ -2,6 +2,10 @@
 
 Record each release newest first. Bump minor for features and visible behaviour, patch for fixes and polish.
 
+## 0.21.3 - 2026-11-26
+
+- Continuing a chat whose AI account is missing starts a fresh session on your connected default account and keeps the conversation history and topic. Disconnected accounts stay pinned.
+
 ## 0.21.2 - 2026-11-25
 
 - Workers use the running Roosta installation for board snapshots, including on a fresh Mac or with an older CLI installed. The Assistant can start from a confirmed empty board and preserves unresolved cards when it cannot read their prior state.
