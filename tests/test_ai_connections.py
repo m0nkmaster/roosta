@@ -467,6 +467,33 @@ def test_timeout_reaps_child_and_clears_active_account(accounts, tmp_path):
     assert not ai_backend.ACTIVE_CONNECTIONS[c['id']]
 
 
+def test_a_turn_during_runtime_repair_waits_for_it_instead_of_failing(accounts, tmp_path, monkeypatch):
+    create, _ = accounts
+    c = create()
+    run = ai_backend.prepare(c['id'], str(tmp_path))
+    run.backend = 'claude'
+    run.args = [sys.executable, '-c', 'print("answered")']
+    installing = {'claude'}
+    monkeypatch.setattr(ai_runtime, 'INSTALLING', installing)
+    monkeypatch.setattr(ai_backend, 'REPAIR_POLL', .01)
+    async def finish_repair():
+        await asyncio.sleep(.1)
+        installing.discard('claude')
+    async def consume():
+        repair = asyncio.create_task(finish_repair())
+        text = ''.join([line async for line in ai_backend.stream(run, 'test', maximum=5)])
+        await repair
+        return text
+    assert 'answered' in asyncio.run(consume())
+    # A repair that outlasts the wait still fails with the Settings hint.
+    installing.add('claude')
+    monkeypatch.setattr(ai_backend, 'REPAIR_WAIT', .05)
+    async def stuck(): return [line async for line in ai_backend.stream(run, 'test', maximum=5)]
+    with pytest.raises(ValueError, match='being repaired'):
+        asyncio.run(stuck())
+    assert not ai_backend.ACTIVE_CONNECTIONS[c['id']]
+
+
 def test_checksum_failure_preserves_existing_runtime(tmp_path, monkeypatch):
     destination = ai_runtime.binary_path(tmp_path,'pi','9.1.0')
     destination.parent.mkdir(); destination.write_text('working')

@@ -58,6 +58,8 @@ async def stop_all() -> None:
 
 ACTIVE_CONNECTIONS = Counter()
 LIVE_PROCESSES = set()
+REPAIR_WAIT = 600  # seconds a turn waits for a runtime repair in Settings to finish
+REPAIR_POLL = 1.0
 
 
 @dataclass
@@ -427,8 +429,12 @@ async def stream(run: ConnectionRun, prompt: str, *, idle: float = 300, maximum:
     chunks, errors = [], []
     try:
         connections.get(run.connection["id"])
-        if run.backend in ai_runtime.INSTALLING:
-            raise ValueError("This AI runtime is being repaired; retry when Settings reports success")
+        # A turn that arrives mid-repair waits for it rather than failing and making the user resend.
+        repair_deadline = time.monotonic() + REPAIR_WAIT
+        while run.backend in ai_runtime.INSTALLING:
+            if time.monotonic() >= repair_deadline:
+                raise ValueError("This AI runtime is being repaired; retry when Settings reports success")
+            await asyncio.sleep(REPAIR_POLL)
         args = run.args
         if run.backend == CURSOR:
             if not run.session_id:

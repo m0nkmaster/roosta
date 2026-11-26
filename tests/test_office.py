@@ -86,6 +86,64 @@ def test_coffee_runner_is_nearest_free_off_shift_colleague():
     assert _node(js) == ["near", "far", None]
 
 
+def test_mentor_is_most_senior_free_colleague_never_a_new_starter():
+    ws = [
+        {"id": "new", "state": "working", "x": 0, "y": 0, "path": [], "task": {"run_count": 3}},
+        {"id": "junior", "state": "resting", "x": 5, "y": 0, "path": [], "task": {"run_count": 4}},
+        {"id": "mid", "state": "resting", "x": 10, "y": 0, "path": [], "task": {"run_count": 50}},
+        {"id": "veteran-far", "state": "resting", "x": 400, "y": 0, "path": [], "task": {"run_count": 900}},
+        {"id": "veteran-near", "state": "resting", "x": 40, "y": 0, "path": [], "task": {"run_count": 900}},
+        {"id": "boss-busy", "state": "working", "x": 1, "y": 0, "path": [], "task": {"run_count": 5000}},
+        {"id": "boss-nap", "state": "resting", "x": 1, "y": 0, "path": [], "act": "nap", "task": {"run_count": 4000}},
+        {"id": "boss-walk", "state": "resting", "x": 1, "y": 0, "path": [1], "task": {"run_count": 3000}},
+    ]
+    js = (f"{_lift('mentorFor')}const ws={json.dumps(ws)};"
+          "const a=mentorFor(ws[0],ws).id;ws[4].errand='x';const b=mentorFor(ws[0],ws).id;"
+          "const c=mentorFor(ws[0],[ws[0],ws[1]]);"
+          "process.stdout.write(JSON.stringify([a,b,c]))")
+    assert _node(js) == ["veteran-near", "veteran-far", None]
+
+
+def test_mentor_of_record_leads_the_probation_high_five():
+    js = (f"{_lift('coffeeRunner')}{_lift('mentorFree')}{_lift('tallyMentor')}{_lift('mentorOfRecord')}{_lift('milestoneGreet')}"
+          "const d1 = { id: 1 };"
+          "const judy = { id: 'judy', state: 'resting', x: 100, y: 150, path: [] };"
+          "const near = { id: 'monty', state: 'resting', x: 120, y: 150, path: [] };"
+          "const phil = { id: 'phil', state: 'resting', x: 900, y: 600, path: [] };"
+          "const hunter = { id: 'hunter', state: 'resting', x: 800, y: 600, path: [] };"
+          "let tally = {};"
+          "tally = tallyMentor(tally, 'judy', 'hunter'); tally = tallyMentor(tally, 'judy', 'phil');"
+          "tally = tallyMentor(tally, 'judy', 'phil'); tally = tallyMentor(tally, 'kat', 'monty');"
+          "const ws = [judy, near, phil, hunter], peeker = { ...near, poi: { tag: 'peek', desk: d1 } };"
+          "const rec = mentorOfRecord(tally, 'judy', ws);"
+          "const tie = mentorOfRecord(tallyMentor(tally, 'judy', 'hunter'), 'judy', ws);"
+          "const out = {"
+          "  tally, rec: rec && rec.id, tie: tie && tie.id,"
+          "  none: mentorOfRecord(tally, 'oscar', ws), gone: mentorOfRecord(tally, 'judy', [judy, near]),"
+          "  walk: milestoneGreet(true, 0, ws, judy, d1, false, rec),"
+          "  noMentor: milestoneGreet(true, 0, ws, judy, d1, false, null),"
+          "  comeback: milestoneGreet(false, 3, ws, judy, d1, false, rec),"
+          "  busy: milestoneGreet(true, 0, ws, judy, d1, false, { ...phil, state: 'working' }),"
+          "  napping: milestoneGreet(true, 0, ws, judy, d1, false, { ...phil, act: 'nap' }),"
+          "  taken: milestoneGreet(true, 0, ws, judy, d1, true, rec),"
+          "  atDesk: milestoneGreet(true, 0, [judy, peeker], judy, d1, true, peeker),"
+          "  free: [mentorFree(phil), mentorFree({ ...phil, path: [1] }), mentorFree({ ...phil, errand: 'x' }), mentorFree({ ...phil, poi: { pair: 1 } }), mentorFree(null)],"
+          "};"
+          "process.stdout.write(JSON.stringify(out))")
+    out = _node(js)
+    assert out["tally"] == {"judy": {"hunter": 1, "phil": 2}, "kat": {"monty": 1}}
+    assert out["rec"] == "phil" and out["tie"] == "phil"  # earlier in the roster wins a tie
+    assert out["none"] is None and out["gone"] is None
+    assert out["walk"] == {"kind": "welcome", "badge": "PROBATION PASSED!", "line": "I'm staying!", "peer": "phil", "mode": "walk", "proud": True}
+    assert out["noMentor"]["peer"] == "monty" and "proud" not in out["noMentor"]
+    assert out["comeback"]["peer"] == "monty" and "proud" not in out["comeback"]  # only probation is the mentor's moment
+    assert out["busy"]["peer"] == "monty" and "proud" not in out["busy"]
+    assert out["napping"]["peer"] == "monty"
+    assert out["taken"] == {"kind": "welcome", "badge": "PROBATION PASSED!", "line": "I'm staying!", "peer": None, "mode": "call"}
+    assert out["atDesk"]["mode"] == "atDesk" and out["atDesk"]["peer"] == "monty" and out["atDesk"]["proud"] is True
+    assert out["free"] == [True, False, False, False, False]
+
+
 def test_new_starter_tag_and_probation():
     cases = [[None, 0], [None, 9], [None, 10], [9, 10], [8, 9], [10, 11], [None, None]]
     out = _node(f"const NEW_RUNS = 10;{_lift('starter')}process.stdout.write(JSON.stringify("
@@ -891,7 +949,7 @@ def test_pong_click_calls_jinxes_or_starts_a_game():
           "process.stdout.write(JSON.stringify([pongClickOutcome(true, 0, 2, 0), pongClickOutcome(true, 3, 2, 0), pongClickOutcome(false, 0, 2, 1),"
           " pongClickOutcome(false, 0, 2, 0), pongClickOutcome(false, 0, 1, 1), pongClickOutcome(false, 0, 0, 0),"
           " hintFor('pong', null, false), hintFor('foos', null, false)]))")
-    assert _node(js) == ["cheer", "jinx", "game", "warmup", "alone", "alone", "click: call the rally", "click: call a game"]
+    assert _node(js) == ["cheer", "jinx", "game", "warmup", "alone", "alone", "click: call the rally", "click: call a game or spin the rods"]
 
 
 def test_pong_point_is_first_to_eleven_win_by_two():
@@ -899,6 +957,14 @@ def test_pong_point_is_first_to_eleven_win_by_two():
           "process.stdout.write(JSON.stringify([pongPoint([0, 0], 1), pongPoint([10, 4], 0), pongPoint([10, 10], 1), pongPoint([11, 10], 0), pongPoint([9, 12], 1)]))")
     assert _node(js) == [{"score": [0, 1], "won": -1}, {"score": [11, 4], "won": 0}, {"score": [10, 11], "won": -1},
                          {"score": [12, 10], "won": 0}, {"score": [9, 13], "won": 1}]
+
+
+def test_pong_call_names_game_point_deuce_and_advantage():
+    js = (f"{_lift('pongCall')}"
+          "process.stdout.write(JSON.stringify([[0, 0], [9, 3], [10, 3], [4, 10], [10, 10], [11, 10], [12, 13], [10, 11], [13, 13]].map(pongCall)))")
+    assert _node(js) == [{"call": "", "side": -1}, {"call": "", "side": -1}, {"call": "game point", "side": 0},
+                         {"call": "game point", "side": 1}, {"call": "deuce", "side": -1}, {"call": "advantage", "side": 0},
+                         {"call": "advantage", "side": 1}, {"call": "advantage", "side": 1}, {"call": "deuce", "side": -1}]
 
 
 @pytest.mark.parametrize("game,click", [("pong", "clickPong"), ("foos", "clickFoos")])
@@ -918,6 +984,41 @@ process.stdout.write(JSON.stringify({sent, spots:PONG_POIS.map(p => p.taken || n
     out = _node(js)
     assert out == ({"sent": ["0", "1"], "spots": ["0", "1"]} if available == 2
                    else {"sent": [], "spots": [None, None]})
+
+
+def test_arcade_coin_extends_a_game_or_tempts_a_colleague_over():
+    js = (f"{_lift('arcadeCoin')}{_lift('actionFor')}{_lift('hintFor')}"
+          "process.stdout.write(JSON.stringify([arcadeCoin(true, true, false), arcadeCoin(false, true, true), arcadeCoin(false, false, true),"
+          " arcadeCoin(false, false, false), hintFor('arcade', null, false)]))")
+    assert _node(js) == ["continue", "walking", "recruit", "credit", "click: insert a coin"]
+
+
+@pytest.mark.parametrize("case", ["playing", "free", "nobody"])
+def test_insert_coin_is_world_only_and_never_moves_a_busy_worker(case):
+    js = (f"{_lift('coffeeRunner')}{_lift('arcadeCoin')}{_lift('insertCoin')}" + """
+const a = {x:100,y:100}, spot = {x:112,y:158,arcade:a}, POIS = [spot];
+const CASE = 'X', ws = [];
+if (CASE === 'playing') { ws.push({id:'p',state:'resting',x:112,y:158,path:[],dwellUntil:5000,quipUntil:0}); spot.taken = 'p'; }
+if (CASE === 'free') ws.push({id:'f',state:'resting',x:200,y:200,path:[],quipUntil:0});
+ws.push({id:'busy',state:'running',x:110,y:150,path:[],quipUntil:0});
+const workers = new Map(ws.map(w => [w.id, w]));
+const sent = [], floats = [], floatText = (x,y,t) => floats.push(t), cheerer = () => null, say = () => {}, pick = l => l[0];
+const leaveSpot = () => {}, sendTo = (w,p) => {p.taken = w.id; w.path = [1]; sent.push(w.id);};
+const fetch = () => { throw new Error('no runner calls'); };
+insertCoin(a, 1000);
+process.stdout.write(JSON.stringify({sent, floats, credit: !!a.credit, dwell: workers.get('p') ? workers.get('p').dwellUntil : null}));
+""".replace("'X'", repr(case)))
+    out = _node(js)
+    assert out == {"playing": {"sent": [], "floats": ["*clink* CONTINUE?"], "credit": False, "dwell": 21000},
+                   "free": {"sent": ["f"], "floats": ["*clink* CREDIT 1"], "credit": True, "dwell": None},
+                   "nobody": {"sent": [], "floats": ["*clink* CREDIT 1"], "credit": True, "dwell": None}}[case]
+
+
+def test_foos_goal_is_first_to_five_and_spun_goals_never_count():
+    js = (f"{_lift('foosGoal')}"
+          "process.stdout.write(JSON.stringify([foosGoal([0, 0], 0, false), foosGoal([4, 3], 1, false), foosGoal([4, 3], 0, false), foosGoal([4, 3], 0, true)]))")
+    assert _node(js) == [{"score": [1, 0], "won": -1, "void": False}, {"score": [4, 4], "won": -1, "void": False},
+                         {"score": [5, 3], "won": 0, "void": False}, {"score": [4, 3], "won": -1, "void": True}]
 
 
 def test_ceefax_keeps_distressing_stories_off_the_wall_tv():
@@ -955,3 +1056,95 @@ def test_overdue_only_when_the_scheduler_is_well_past_a_slot_it_could_have_run()
                                     capture_output=True, text=True, check=True, env={**os.environ, "TZ": "Europe/London"}).stdout)
     assert out == {"on_time": 0, "just_late": 0, "stalled": 30, "running": 0, "lock_wait": 0, "manual_queued": 0,
                    "sign_in": 0, "daily_missed": 240, "daily_done": 0, "never_ran": 0, "off_day": 0}
+
+
+def test_friday_cake_arrives_gets_cut_and_leaves_a_last_slice():
+    js = (f"{_lift('cakeStage')}"
+          "process.stdout.write(JSON.stringify([cakeStage(4, 15), cakeStage(5, 14.4), cakeStage(5, 14.5), cakeStage(5, 15.5),"
+          " cakeStage(5, 16.8), cakeStage(5, 18), cakeStage(6, 15)]))")
+    assert _node(js) == [None, None, "whole", "cut", "slice", None, None]
+
+
+def test_post_lands_mid_morning_monday_to_saturday_and_never_lingers():
+    hash_js = re.search(r"const hash = .*?;\n", PAGE.read_text()).group(0)
+    js = (f"const OWN_SLOT = 4;{hash_js}{_lift('postFor')}{_lift('postWaiting')}" + """
+const days = [0,1,2,3,4,5,6].map((d) => postFor('2026-11-24', d));
+const tue = days[2], none = new Set();
+const out = {
+  sunday: days[0],
+  at: days.slice(1).map((p) => p.at),
+  counts: days.slice(1).map((p) => p.slots.length),
+  bys: days.slice(1).map((p) => [Math.min(...p.slots.map((s) => s.by - p.at)), Math.max(...p.slots.map((s) => s.by))]),
+  kinds: [...new Set(days.flatMap((p) => p ? p.slots.map((s) => s.kind) : []))].sort(),
+  before: postWaiting(tue, tue.at - 1, none).length,
+  landed: postWaiting(tue, tue.at, none).length,
+  taken: postWaiting(tue, tue.at, new Set([tue.slots[0].i])).length,
+  evening: postWaiting(tue, 17 * 60 + 30, none).length,
+  stable: JSON.stringify(postFor('2026-11-24', 2)) === JSON.stringify(tue),
+};
+process.stdout.write(JSON.stringify(out));
+""")
+    out = _node(js)
+    assert out["sunday"] is None
+    assert all(570 <= a <= 660 for a in out["at"][:5]) and 600 <= out["at"][5] <= 720
+    assert all(1 <= n <= 9 for n in out["counts"]) and out["counts"][0] >= 3  # Monday brings the weekend's post
+    assert all(lo >= 20 for lo, _ in out["bys"]) and all(hi <= 1050 for _, hi in out["bys"][:5]) and out["bys"][5][1] <= 780
+    assert set(out["kinds"]) <= {"letter", "flyer", "postcard"}
+    assert out["before"] == 0 and out["landed"] == out["counts"][1] and out["taken"] == out["landed"] - 1
+    assert out["evening"] == 0 and out["stable"]
+
+
+def test_collecting_post_takes_one_slot_and_makes_no_runner_calls():
+    js = (f"{_lift('collectPost')}" + """
+const OWN_SLOT = 4, slots = [{i: 2, kind: 'postcard', by: 900}, {i: 4, kind: 'letter', by: 1050}], postTaken = new Set();
+const postLeft = () => slots.filter((s) => !postTaken.has(s.i));
+let said = []; const say = (w, t) => said.push(t), pick = (l) => l[0], lastQuip = 0;
+const POST_QUIPS = {letter: ['l'], flyer: ['f'], postcard: ['p'], none: ['n']};
+const fetch = () => { throw new Error('no runner calls'); };
+const a = {}, b = {};
+collectPost(a, 10000); collectPost(b, 20000);
+process.stdout.write(JSON.stringify({taken: [...postTaken], a: [a.item, a.emote], b: [b.item, b.emote], said}));
+""")
+    assert _node(js) == {"taken": [2], "a": ["papers", "heart"], "b": [None, "q"], "said": ["p", "n"]}
+
+
+
+def test_own_pigeonhole_waits_for_the_user_and_says_what_is_there():
+    hash_js = re.search(r"const hash = .*?;\n", PAGE.read_text()).group(0)
+    js = (f"const OWN_SLOT = 4;{hash_js}{_lift('postFor')}{_lift('ownPost')}{_lift('actionFor')}{_lift('hintFor')}" + """
+const plan = {at: 600, slots: [{i: 1, kind: 'flyer', by: 700}, {i: 4, kind: 'postcard', by: 1050}]};
+const none = new Set(), mine = new Set([4]);
+const week = [1,2,3,4,5,6].map((d) => postFor('2026-11-24', d)).map((p) => p.slots.filter((s) => s.i === OWN_SLOT).map((s) => s.by));
+process.stdout.write(JSON.stringify({
+  outs: [ownPost(null, 700, none, false), ownPost(plan, 599, none, false), ownPost(plan, 600, none, false), ownPost(plan, 1049, none, false),
+         ownPost(plan, 700, mine, true), ownPost(plan, 1050, none, false), ownPost({at: 600, slots: [{i: 1, kind: 'flyer', by: 700}]}, 650, none, false),
+         ownPost({at: 600, slots: [{i: 1, kind: 'flyer', by: 700}]}, 650, none, true)],
+  week, hint: hintFor('post', null, false)}));
+""")
+    out = _node(js)
+    assert out["outs"] == ["sunday", "early", "postcard", "postcard", "again", "empty", "empty", "again"]
+    assert all(b == [1050] for b in out["week"][:5] if b) and all(b == [780] for b in out["week"][5:] if b)  # it waits all day
+    assert out["hint"] == "click: check your pigeonhole"
+
+
+@pytest.mark.parametrize("own_only", [False, True])
+def test_colleagues_never_take_the_users_own_post(own_only):
+    js = (f"{_lift('collectPost')}" + """
+const OWN_SLOT = 4, slots = (X ? [] : [{i: 2, kind: 'flyer', by: 900}]).concat([{i: 4, kind: 'letter', by: 1050}]), postTaken = new Set();
+const postLeft = () => slots.filter((s) => !postTaken.has(s.i));
+const say = () => {}, pick = (l) => l[0], lastQuip = 0, POST_QUIPS = {letter: ['l'], flyer: ['f'], postcard: ['p'], none: ['n']};
+for (let k = 0; k < 20; k++) collectPost({}, 10000 * k);
+process.stdout.write(JSON.stringify([...postTaken]));
+""".replace("X ?", "true ?" if own_only else "false ?"))
+    assert _node(js) == ([] if own_only else [2])
+
+
+def test_late_note_names_the_latest_overdue_worker_and_counts_the_rest():
+    js = (f"{_lift('lateNote')}"
+          "const who = (w) => w.n, fmt = (s) => Math.round(s / 60) + 'm';"
+          "process.stdout.write(JSON.stringify(["
+          " lateNote([], who, fmt),"
+          " lateNote([{n: 'Phil', late: 0}, {n: 'Kat'}], who, fmt),"
+          " lateNote([{n: 'Phil', late: 1500000}], who, fmt),"
+          " lateNote([{n: 'Phil', late: 900000}, {n: 'Kat', late: 2400000}, {n: 'Suki', late: 0}, {n: 'Tina', late: 660000}], who, fmt)]))")
+    assert _node(js) == ["", "", "Phil 25m overdue", "Kat 40m overdue (+2 more)"]

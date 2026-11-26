@@ -33,9 +33,16 @@ Preservation rules, ground-truth verification and canonical architecture princip
 Read `WORKSPACE.md` when present. Follow its collection overviews and the
 operating model's Markdown index convention. Maintain the user's introductions,
 topic reading lists and links to canonical decision or plan sections. Keep each
-decision in its source page. Suggest a new collection or a possible addition on
-the board for the user to choose. Preserve the user's prose, ordering and omitted
-or removed entries across passes. Never regenerate lists from folder contents.
+decision in its source page. Start every pass by running the
+`sync-collections.py` beside this file from the workspace root, as
+`python3 -I "<absolute path>/sync-collections.py" --write`, and commit any index it
+changes with the pass. It appends pages matching an index's `collect_tag` or
+`collect_path` frontmatter and never removes or reorders entries. Repair the
+missing targets it reports as link repair. For indexes without membership rules,
+suggest a possible addition on the board; always suggest a new collection or a
+membership rule there for the user to choose. Preserve the user's prose, ordering
+and omitted or removed entries across passes. Never regenerate lists from folder
+contents.
 These rules apply to every consolidation phase and take precedence over refactor
 examples. Formatting, link repair and index maintenance do not update
 `last_updated`, `verified` or `stale_after` on underlying pages. Date substantive
