@@ -225,13 +225,9 @@ def test_learner_cc_ignores_nonhuman_and_malformed_attachments(tmp_path):
 
 
 def test_learner_cc_lists_queued_human_by_embedded_timestamp_and_filters_runners(tmp_path):
-    import os
-
     reply = {"type": "assistant", "message": {"content": "Okay"}}
     queued = {**_queued("Change direction"), "timestamp": "2026-11-17T23:04:00Z"}
-    chat = tmp_path / "chat.jsonl"
-    _write_cc(chat, [reply, queued])
-    os.utime(chat, (1, 1))
+    _write_cc(tmp_path / "chat.jsonl", [reply, queued])
     for i, marker in enumerate((
         "running as an unattended background task.",
         "running as an unattended scheduled background task.",
@@ -244,3 +240,17 @@ def test_learner_cc_lists_queued_human_by_embedded_timestamp_and_filters_runners
     assert [(r["id"], r["title"], r["timestamp_utc"]) for r in rows] == [
         ("chat", "Change direction", "2026-11-17 23:04"),
     ]
+
+
+def test_learner_cc_skips_transcripts_not_written_since_the_window(tmp_path):
+    import os
+
+    reply = {"type": "assistant", "message": {"content": "Okay"}}
+    queued = {**_queued("Change direction"), "timestamp": "2026-11-17T23:04:00Z"}
+    stale = tmp_path / "stale.jsonl"
+    _write_cc(stale, [reply, queued])
+    _write_cc(tmp_path / "fresh.jsonl", [reply, queued])
+    os.utime(stale, (1, 1))
+
+    rows = json.loads("\n".join(_cc_cli(tmp_path, "list", "1794956337000", "--source", "cc", "--json")))
+    assert [r["id"] for r in rows] == ["fresh"]
