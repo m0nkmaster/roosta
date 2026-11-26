@@ -1106,3 +1106,14 @@ collectPost(a, 10000); collectPost(b, 20000);
 process.stdout.write(JSON.stringify({taken: [...postTaken], a: [a.item, a.emote], b: [b.item, b.emote], said}));
 """)
     assert _node(js) == {"taken": [2], "a": ["papers", "heart"], "b": [None, "q"], "said": ["p", "n"]}
+
+
+def test_late_note_names_the_latest_overdue_worker_and_counts_the_rest():
+    js = (f"{_lift('lateNote')}"
+          "const who = (w) => w.n, fmt = (s) => Math.round(s / 60) + 'm';"
+          "process.stdout.write(JSON.stringify(["
+          " lateNote([], who, fmt),"
+          " lateNote([{n: 'Phil', late: 0}, {n: 'Kat'}], who, fmt),"
+          " lateNote([{n: 'Phil', late: 1500000}], who, fmt),"
+          " lateNote([{n: 'Phil', late: 900000}, {n: 'Kat', late: 2400000}, {n: 'Suki', late: 0}, {n: 'Tina', late: 660000}], who, fmt)]))")
+    assert _node(js) == ["", "", "Phil 25m overdue", "Kat 40m overdue (+2 more)"]
