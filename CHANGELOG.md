@@ -2,6 +2,10 @@
 
 Record each release newest first. Bump minor for features and visible behaviour, patch for fixes and polish.
 
+## 0.22.3 - 2026-11-26
+
+- `roosta usage` reads the workspace a worker is running in, not an older workspace saved in your config, so the engineer sees your real Assistant usage.
+
 ## 0.22.2 - 2026-11-26
 
 - Removing a worker preserves neighbouring workers and leaves a valid schedule when the last worker is removed.
