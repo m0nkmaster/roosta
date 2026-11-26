@@ -809,6 +809,13 @@
             const late = at === null ? 0 : now - at;
             return late > OVERDUE ? late : 0;
         }
+        // The status bar's overdue clause: the latest worker the Office has watched stay late (w.late), plus how many others.
+        function lateNote(list, who, fmt) {
+            const late = list.filter((w) => w.late > 0).sort((a, b) => b.late - a.late);
+            if (!late.length) return "";
+            const first = `${who(late[0])} ${fmt(late[0].late / 1000)} overdue`;
+            return late.length === 1 ? first : `${first} (+${late.length - 1} more)`;
+        }
         function queueOrder(list, since = {}) {
             return list.map((t, i) => [t, i]).sort((a, b) => ((since[a[0].id] ?? Infinity) - (since[b[0].id] ?? Infinity)) || a[1] - b[1]).map((p) => p[0]);
         }
@@ -3967,7 +3974,7 @@
             const chips = [["working", "on shift"], ["queued", "queued"], ["locked", "signed out"], ["hurt", "sick"], ["resting", "roaming"]];
             document.getElementById("hud-chips").innerHTML = chips.map(([k, l]) => `<span class="badge state-badge${counts[k] ? "" : " zero"}" style="--c:${UI_COL[k]}"><i class="dot"></i><b>${counts[k]}</b>${l}</span>`).join("");
             let head, sub, col;
-            const night = nightShift(T);
+            const night = nightShift(T), late = lateNote([...workers.values()], whoOf, fmtDur);
             if (counts.locked) {
                 const signIn = tasks.some((t) => t.status === "blocked");
                 const sickSub = counts.hurt ? ` · ${counts.hurt} in the sick bay` : "";
@@ -3985,7 +3992,9 @@
                 head = night ? (wk ? "Weekend night shift" : "Night shift") : wk ? (T.day ? "Saturday" : "Sunday") + " skeleton crew" : ph === "lunch" ? "Lunch hour" : ph === "evening" ? "Evening wind-down" : dusk ? "Lamps on" : "All quiet";
                 sub = wk ? "Weekend: the crew lounges between runs" : ph === "lunch" ? "Lunch hour: the crew is in the kitchen between runs" : ph === "morning" ? "Morning: coffee and stand-up around the board between runs" : ph === "evening" ? "Evening: the crew winds down in the lounge and games room between runs" : dusk ? "Dark outside, lamps on inside while the crew works on between runs" : "Crew busy with off-shift life between runs";
                 col = UI_COL.resting;
+                if (late) { head = "Running late"; sub = `${late}, not started yet: has the runner nodded off?`; }
             }
+            if (late && head !== "Running late") sub += ` · ${late}`;
             const st = document.getElementById("hud-status"); st.textContent = head; st.style.color = col;
             const subEl = document.getElementById("hud-sub"); subEl.textContent = sub; subEl.title = sub;
         }
