@@ -108,6 +108,7 @@ are denied unless its resolved path is inside the selected workspace (an editabl
 Pi also blocks shell commands that mention an absolute private root or the external package
 root. With the external package, Pi accepts a standalone `python3` invocation of the literal
 absolute path to `skills/workspace-learner/sessions.py` for `status`, `list` and `transcript`.
+The helper command also accepts the literal prefix `PYTHONDONTWRITEBYTECODE=1`.
 Use the workspace as the working directory and quote paths containing spaces. For source inspection
 use the read tool, `cat FILE`, or `grep -F -- PATTERN FILE` with one absolute package file.
 These shell reads accept literal arguments only. Redirection and chained commands remain blocked.

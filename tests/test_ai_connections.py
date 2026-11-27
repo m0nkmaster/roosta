@@ -348,11 +348,16 @@ const helper = 'python3 ' + file;
 assert.equal(JSON.parse(run(helper + ' status')).assistant.available, true);
 const [row] = JSON.parse(run(helper + ' list 0 --source assistant --newest-first --limit 1 --json'));
 assert.equal(row.id, 'chat:fixture');
+for (const source of ['oc', 'cc', 'cursor', 'assistant']) {
+  const rows = JSON.parse(run('PYTHONDONTWRITEBYTECODE=1 ' + helper + ' list 0 --source ' + source + ' --json'));
+  if (source === 'assistant') assert.equal(rows[0].id, 'chat:fixture');
+}
 assert.match(run(helper + ' transcript ' + row.transcript_id + ' --tools'), /The engineer runs daily/);
 assert.match(run("grep -F -- 'def cmd_list' " + file), /def cmd_list/);
 for (const command of [helper + ' status && echo done', helper + ' status > log', helper + ' status\ntouch log',
                        helper + ' list "$(date)"', helper + ' transcript cc:../file', helper + ' update',
-                       'python3 -i ' + file + ' status', 'touch ' + file, 'cat ' + file + ' | sh']) {
+                       'PYTHONDONTWRITEBYTECODE=1 ' + helper + ' status && echo done',
+                       'PYTHONPATH=other ' + helper + ' status', 'python3 -i ' + file + ' status', 'touch ' + file, 'cat ' + file + ' | sh']) {
   assert(check(command), command);
 }
 """

@@ -25,6 +25,7 @@ function packageRead(command, policy, cwd) {
   const word = /[ \t]*(?:'([^'\r\n]*)'|"([^"$`\\!\r\n]*)"|([a-zA-Z0-9_./:+@%-]+))(?=[ \t]|$)/gy;
   const args = [];
   let offset = 0;
+  command = command.replace(/^[ \t]*PYTHONDONTWRITEBYTECODE=1[ \t]+(?=python3[ \t])/, '');
   command = command.replace(/[ \t]+$/, '');
   while (offset < command.length) {
     const match = word.exec(command);

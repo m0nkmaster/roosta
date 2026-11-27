@@ -2,6 +2,10 @@
 
 Record each release newest first. Bump minor for features and visible behaviour, patch for fixes and polish.
 
+## 0.22.4 - 2026-11-27
+
+- Pi workers can read chat history when they run the bundled helper with Python bytecode writes disabled through `PYTHONDONTWRITEBYTECODE=1`.
+
 ## 0.22.3 - 2026-11-26
 
 - `roosta usage` reads the workspace a worker is running in, not an older workspace saved in your config, so the engineer sees your real Assistant usage.
