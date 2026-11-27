@@ -82,7 +82,8 @@ entry and the exact-model check on Pi's `get_state`. `SessionMap` records are
 `{session_id, connection, model}` (model optional); `POST /api/ai/chat-model` changes it without rotating
 the session and is refused during a live turn; changing a chat's connection keeps the model only if it
 is still valid for the new provider. Workers use their `model` when valid for the provider,
-otherwise the default; the worker form saves it through `connection_model`. Cursor model ids get a
+otherwise the default; the worker form saves it through `connection_model`, and `TaskRunner.set_settings`
+checks a new choice against the list of the worker's pinned connection, or of the default it follows. Cursor model ids get a
 format check only, because listing them needs the account's key.
 `GET /api/ai/models?connection=<id>&general=0|1` lists the default and choices (`?provider=` also works).
 
