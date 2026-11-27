@@ -117,6 +117,77 @@ def test_claude_activity_transcript_returns_outcome_and_claude_resume(monkeypatc
     asyncio.run(scenario())
 
 
+def _connection_store(tmp_path, monkeypatch, **record):
+    from roosta import ai_connections, claude_code
+
+    monkeypatch.setattr(ai_connections, "CONNECTIONS_FILE", tmp_path / "connections.json")
+    monkeypatch.setattr(ai_connections, "CONNECTIONS_DIR", tmp_path / "accounts")
+    monkeypatch.setattr(claude_code, "CLAUDE_PROJECTS", tmp_path / "home/.claude/projects")
+    monkeypatch.setattr("roosta.cursor_sessions.Path.home", lambda: tmp_path / "home")
+    connection = {"id": "a" * 32, "label": "AI", "connected": True, **record}
+    ai_connections.save({"default": connection["id"], "connections": [connection]})
+    ai_connections.directory(connection["id"]).mkdir(parents=True)
+    return connection
+
+
+def _jsonl(path, records):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("\n".join(json.dumps(record) for record in records), encoding="utf-8")
+
+
+CLAUDE_REPLY = [{"type": "assistant", "message": {"content": [{"type": "text", "text": "Done."}]}}]
+SESSION = "70734d05-4cb8-41bc-9e2a-712d13d75a9a"
+
+
+def test_claude_transcript_is_read_where_its_connection_wrote_it(tmp_path, monkeypatch):
+    """A system sign-in writes to ~/.claude; a managed account to its own config directory."""
+    from roosta import ai_backend, ai_connections, claude_code
+
+    for auth, other in (("system", "cli"), ("cli", "system")):
+        connection = _connection_store(tmp_path / auth, monkeypatch, provider="anthropic", auth=auth)
+        projects = ai_backend.claude_projects(connection)
+        _jsonl(projects / "-office" / f"{SESSION}.jsonl", CLAUDE_REPLY)
+        assert ai_backend.transcript(connection["id"], "claude", SESSION) == [{"role": "assistant", "text": "Done."}]
+        # The session lives only where this connection's runs store it.
+        ai_connections.save({"default": "", "connections": [{**connection, "auth": other}]})
+        assert ai_backend.transcript(connection["id"], "claude", SESSION) == []
+    assert ai_backend.claude_projects({"id": "a" * 32, "auth": "system"}) == claude_code.CLAUDE_PROJECTS
+
+
+def test_cursor_and_pi_transcripts_follow_the_run_workspace(tmp_path, monkeypatch):
+    from roosta import ai_backend, ai_connections, cursor_sessions
+
+    connection = _connection_store(tmp_path, monkeypatch, provider="cursor", auth="api_key")
+    project = tmp_path / "worker project"
+    cursor_sid = "019bf2f4-9c27-49a5-8c09-707860e58585"
+    _jsonl(cursor_sessions.cursor_transcript_dir(project) / cursor_sid / f"{cursor_sid}.jsonl",
+           [{"role": "assistant", "message": {"content": [{"type": "text", "text": "From the project."}]}}])
+    assert ai_backend.transcript(connection["id"], "cursor", cursor_sid, str(project)) == [
+        {"role": "assistant", "text": "From the project."}]
+    assert ai_backend.transcript(connection["id"], "cursor", cursor_sid) == []  # not the serving workspace
+
+    _jsonl(ai_connections.directory(connection["id"]) / "pi/0123/sessions" / f"x_{SESSION}.jsonl",
+           [{"type": "message", "message": {"role": "user", "content": "Hi"}}])
+    assert ai_backend.transcript(connection["id"], "pi", SESSION) == [{"role": "user", "text": "Hi"}]
+    assert ai_backend.transcript("not-a-connection", "pi", SESSION) == []
+
+
+def test_activity_transcript_reads_a_system_sign_in_run(tmp_path, monkeypatch):
+    from fastapi.testclient import TestClient
+    from roosta import ai_backend
+
+    connection = _connection_store(tmp_path, monkeypatch, provider="anthropic", auth="system")
+    final = '<task-output>{"summary": "2 items raised", "status": "success"}</task-output>'
+    _jsonl(ai_backend.claude_projects(connection) / "-office" / f"{SESSION}.jsonl",
+           [{"type": "assistant", "message": {"content": [{"type": "text", "text": final}]}}])
+    eid = appmod.activity.start("skill", "assistant", "scheduled", backend="claude",
+                                connection_id=connection["id"], workspace=str(tmp_path))
+    appmod.activity.set_session(eid, SESSION)
+    body = TestClient(appmod.app, base_url="http://localhost").get(f"/api/activity/{eid}/transcript").json()
+    assert body["outcome"] == "2 items raised"
+    assert "original connection" in body["resume_command"]
+
+
 def test_activity_static_routes_precede_param_route():
     """`/api/activity/stream` must register before `{activity_id}` or SSE 404s."""
     activity_paths = [

@@ -188,19 +188,7 @@ async def run_task(
     return status, output, "" if status == "success" else str(output.get("summary", ""))[:500], chat_id
 
 
-OFFLINE_FAILURES = (
-    "reach the api server",
-    "computer went to sleep",
-    "failed to reach the cursor api",
-    "econnreset",
-    "getaddrinfo enotfound",
-)
 OFFLINE_RETRY_SECONDS = 900.0
-
-
-def is_offline_failure(text: str) -> bool:
-    lowered = text.lower()
-    return any(marker in lowered for marker in OFFLINE_FAILURES)
 
 
 TASK_STATUS_ALIASES = {
@@ -700,7 +688,7 @@ class TaskRunner:
                     log.info("Task %s: starting (%s)", task_id, source)
                     act_id = self._activity().start(
                         "skill", task.skill, source, task_id=task.id,
-                        backend=task_engine(task), connection_id=task.connection,
+                        backend=task_engine(task), connection_id=task.connection, workspace=task.dir,
                     )
 
                     start = time.monotonic()
@@ -723,7 +711,7 @@ class TaskRunner:
                     state.last_error = error
                     state.retry_at = (
                         (datetime.now(timezone.utc) + timedelta(seconds=self._offline_retry)).isoformat()
-                        if status == "error" and is_offline_failure(outcome_summary(output, error))
+                        if status == "error" and ai_backend.is_offline_failure(outcome_summary(output, error))
                         else ""
                     )
                     self._save_state(state)

@@ -59,9 +59,11 @@ files without replacing existing configuration.
   next day the runner is up (`missed_weekly_slot`); on its scheduled day the normal time gate
   decides, and a task that has never run is not caught up.
 
-- **Runs lost to the network retry in 15 minutes.** A failed run whose error matches
-  `OFFLINE_FAILURES` (Claude "Can't reach the API server", "computer went to sleep", Cursor "Failed
-  to reach the Cursor API", ECONNRESET, DNS) sets `retry_at`; once due it bypasses the time and
+- **Runs lost to the network retry in 15 minutes.** `ai_backend.is_offline_failure` owns the
+  classification: a runtime diagnostic matching `OFFLINE_FAILURES` (Claude "Can't reach the API
+  server", "computer went to sleep", Cursor "Failed to reach the Cursor API", ECONNRESET, DNS) makes
+  `stream` raise the fixed `OFFLINE_MESSAGE`, which it recognises along with a raw marker in a
+  task's own summary. Such a failed run sets `retry_at`; once due it bypasses the time and
   interval gate (not the day gate), so a daily task does not lose its slot. Any other outcome
   clears it. The Skill runner row reads "offline · retrying HH:MM".
 
@@ -220,7 +222,7 @@ return `<task-output>` JSON with `summary`, `status` and `details`.
 ## AI activity feed
 
 `ActivityLog` in `activity_log.py` (the `app.activity` instance) records every scheduled or manual skill run the dashboard spawns:
-`start("skill", skill, source, task_id=, backend=)`, then
+`start("skill", skill, source, task_id=, backend=, connection_id=, workspace=)`, then
 `set_session(id, session_id)` and `finish(id, status, summary)`. Board chat turns are not logged
 here.
 
@@ -232,8 +234,10 @@ here.
   `activity.jsonl`, collapsing each id to its last write. An entry still marked `running` belonged
   to the previous process, whose harness child died with it, so it is recorded as `interrupted`.
 - **Session drill-down.** Each run records its model session id; clicking a feed row loads the
-  transcript and a resume command (`GET /api/activity/{id}/transcript`, Cursor transcripts via
-  `cursor_sessions.py`).
+  transcript and a resume command (`GET /api/activity/{id}/transcript`). `ai_backend.transcript`
+  reads a connection run's session from where `prepare` stored it: `~/.claude/projects` for a
+  system sign-in, the connection's own directory otherwise, and Cursor's project for the run's
+  recorded `workspace`.
 - **Endpoints:** `GET /api/activity?limit=` is a snapshot; `GET /api/activity/stream` is live SSE;
   `GET /api/activity/{id}` is one entry.
 - **Queued runs can be cancelled.** `POST /api/tasks/{id}/cancel` clears a trigger, including one

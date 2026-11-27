@@ -105,17 +105,19 @@ class ActivityLog:
         session_id: str = "",
         backend: str = "",
         connection_id: str = "",
+        workspace: str = "",
     ) -> str:
         """Record a spawn. kind: skill|chat|action|send. source: scheduled|manual|you.
 
-        `backend` names the engine whose session store holds the transcript.
+        `backend`, `connection_id` and the run's `workspace` locate its transcript.
         """
         eid = uuid.uuid4().hex[:12]
         entry = {
             "id": eid, "kind": kind, "label": label, "source": source,
             "status": "running", "started": datetime.now(timezone.utc).isoformat(),
             "finished": "", "duration": 0.0, "task_id": task_id, "session_id": session_id,
-            "backend": backend, "connection_id": connection_id, "summary": "", "_t0": time.monotonic(),
+            "backend": backend, "connection_id": connection_id, "workspace": workspace,
+            "summary": "", "_t0": time.monotonic(),
         }
         self._entries[eid] = entry
         self._order.append(eid)

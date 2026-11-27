@@ -1448,13 +1448,6 @@ def test_daily_run_lost_to_the_network_retries_soon_but_real_errors_wait(tmp_pat
     asyncio.run(scenario())
 
 
-def test_offline_failure_matches_observed_messages_only():
-    assert scheduler.is_offline_failure("API Error: Your computer went to sleep mid-response.")
-    assert scheduler.is_offline_failure("\x1b[31m✗ Failed to reach the Cursor API.")
-    assert scheduler.is_offline_failure("Error: [aborted] read ECONNRESET")
-    assert not scheduler.is_offline_failure("Teams not connected - run `msteams login`.")
-
-
 def test_a_task_added_to_tasks_yaml_starts_even_without_file_events(tmp_path):
     """Setup writes the schedule while the runner is up; a missed file event must not hide it."""
     async def scenario():

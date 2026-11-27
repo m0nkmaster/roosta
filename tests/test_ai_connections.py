@@ -425,6 +425,30 @@ def test_pi_chat_progress_is_transient_and_uses_only_tool_identifiers(accounts, 
     assert "private" not in ai_backend.repair_message('{"thinking":"private"}')
 
 
+@pytest.mark.parametrize('diagnostic,offline', [
+    ("API Error: Can't reach the API server — check your internet", True),
+    ("API Error: Your computer went to sleep mid-response.", True),
+    ("\x1b[31m✗ Failed to reach the Cursor API.", True),
+    ("Error: [aborted] read ECONNRESET", True),
+    ("Teams not connected - run `msteams login`.", False),
+])
+def test_worker_run_lost_to_the_network_is_recognised_as_offline(accounts, tmp_path, monkeypatch, diagnostic, offline):
+    """The runner's offline retry must see through the fixed message a failed run raises."""
+    connection = accounts[0]('anthropic', auth='cli')
+    prepare = ai_backend.prepare
+
+    def failing(*args, **kwargs):
+        run = prepare(*args, **kwargs)
+        run.args = [sys.executable, '-c', 'import sys; sys.stdin.read(); sys.stderr.write(sys.argv[1]); sys.exit(1)', diagnostic]
+        return run
+
+    monkeypatch.setattr(ai_backend, 'prepare', failing)
+    task = task_config.TaskConfig(id='x', skill='skill', dir=str(tmp_path), connection=connection['id'])
+    status, _, error, _ = asyncio.run(scheduler.run_task(task, idle_timeout=5))
+    assert status == 'error' and diagnostic not in error
+    assert ai_backend.is_offline_failure(scheduler.outcome_summary({}, error)) is offline
+
+
 def test_parallel_runs_keep_credentials_and_session_directories(accounts, tmp_path, monkeypatch):
     create, _ = accounts
     a, b = create(key='one'), create(key='two')
