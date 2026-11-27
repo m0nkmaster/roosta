@@ -89,7 +89,28 @@ The Assistant board brings together what needs you now. Workers handle recurring
 
 ### Skills give your workers their jobs
 
-A skill is a set of instructions for one job. Roosta has built-in skills for keeping knowledge current, learning from feedback, improving the office and handling work that needs your approval. Add your own as your team grows.
+A skill teaches a worker or chat how to do one job. **Built-in skills** (called core skills in the CLI) come with Roosta and receive updates with it. **Custom skills** are new jobs you add to your workspace; Roosta updates leave them alone. For a separate job, ask `write-a-skill` to create a skill with a distinct name, such as `client-briefing`, or write its instructions in `.agents/skills/client-briefing/SKILL.md`.
+
+Extensions and forks are two ways to customise a built-in skill, not extra types of job. For a skill such as `workspace-gardener`, choose how much you want to change.
+
+- **Extensions add preferences.** For example, ask the gardener to check active client notes first. It still follows its usual gardening procedure. Start here for most customisation: the built-in keeps receiving updates and your additions stay in place.
+- **Forks replace the whole built-in skill tree.** For example, give the gardener your own duplicate-review procedure and script. A fork pins a complete workspace copy that you maintain, including its instructions, scripts and references. Package upgrades update the built-in tree. Roosta never automatically merges those updates into your fork.
+
+```mermaid
+flowchart LR
+    Q{Pinned fork?} -->|No| B["Read built-in skill<br/>Updated with Roosta"]
+    Q -->|Yes| F["Read your fork instead<br/>Maintained by you"]
+    B --> E[Then read extension if present]
+    F --> E
+```
+
+On each turn, workers and chats read the installed operating model. For each skill they use, they read one `SKILL.md` and use scripts and references from that same tree. A gardener extension applies whichever gardener is selected, including a fork. The operating model and Roosta’s tool, approval and output rules take precedence over both forks and extensions.
+
+To run a custom job regularly, open **Workers → New worker** and ask it to use your skill. Choose a distinct name: a same-named custom skill does not override a built-in.
+
+For commands to extend, fork or return to a built-in skill, see [Managing workspace skills](docs/skills.md).
+
+#### Built-in skill catalogue
 
 | Skill | Job |
 |-------|-----|
@@ -106,21 +127,6 @@ A skill is a set of instructions for one job. Roosta has built-in skills for kee
 | `page-builder` | Builds custom pages |
 | `write-a-skill` | Writes and sharpens skills |
 | `roosta-engineer` | Evolves your pages, tasks and skills from how you use them |
-
-Workers and chats read core skills, their scripts and references, and the operating model directly from the installed package. In Settings → Workspace and runner, **Review customisations** opens an unsent chat draft comparing your local behaviour with installed core. You choose which preferences to keep. For terminal use, run the following commands from your workspace (or pass `--workspace <folder>` to workspace commands).
-
-- **Add a preference.** `roosta skills extend NAME` prints the editable file at `.roosta/skill-extensions/NAME.md`. Roosta reads it after the skill on each turn. The installed instructions keep improving on upgrade. Additions cannot change approval, tool or output protocols.
-- **Replace a skill.** `roosta skills fork NAME` pins a complete editable tree under `.roosta/skill-forks/NAME/`. Settings and `roosta skills status` identify forks and flag when the installed tree has changed since the fork was created.
-- **Return to core.** Compare the fork with `NAME/` under the folder printed by `roosta skills path`. Move the preferences you want into an extension, then run `roosta skills use-core NAME`. With the runner open, the switch takes effect on restart so active turns can finish. The complete fork moves into `.roosta/skill-archive/forks/` for recovery. The same command archives a retired skill under `retired/`. Setup can help review scripts, references and behavioural differences before you switch.
-
-**Upgrading an older workspace.** Run `roosta skills sync` to see pending changes. Let active runs finish, then restart to apply them.
-
-- Roosta archives verified generated copies in `.roosta/skill-archive/`. Clean or missing copies use installed core. Edited or unverifiable trees become active forks for review.
-- Roosta checks independent Claude and Agents copies separately. A clean Agents copy follows core even if the Claude copy differs. If both have edits, the Agents copy stays active and the Claude copy goes into the archive's `review-claude/` folder for review.
-- Retired skills in the old lock survive as workspace forks. Other custom skills stay in place. Linked or incomplete trees remain available for review in Settings while other skills migrate.
-- Roosta keeps the old lock and archives recognised generated operating models before installing a small pointer. Edited operating models and workspace instructions stay in place.
-
-For standalone agent sessions, run `roosta skills instructions [NAME]` in the workspace. It prints the same operating model and effective file routes as dashboard turns. A same-named project or global skill cannot shadow installed core.
 
 ### Shared knowledge you own
 

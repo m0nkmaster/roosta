@@ -259,4 +259,4 @@ Workers with no `connection` resolve the default once at execution, after the wr
 to that connection id. Missing or disconnected connections wait with a Settings repair message;
 manual triggers are cleared on the same auth gate as legacy tasks. See [AI harnesses](harnesses.md).
 
-Startup migrates legacy skill copies before starting workers or chats. Skills resolve to an active workspace fork, then installed core, then custom task/workspace/global skills. See [skill ownership and recovery](../../README.md#skills-give-your-workers-their-jobs) for CLI commands.
+Startup migrates legacy skill copies before starting workers or chats. Skills resolve to an active workspace fork, then installed core, then custom task/workspace/global skills. See [skill ownership and recovery](../skills.md) for CLI commands.
