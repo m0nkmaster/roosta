@@ -365,7 +365,7 @@ def is_workspace_config(parts: tuple[str, ...]) -> bool:
 
 
 def _viewable_parts(parts: tuple[str, ...]) -> bool:
-    if any(part == ".." for part in parts):
+    if any(part == ".." or part.lower() == "private" for part in parts):
         return False
     return is_workspace_config(parts) or not any(part.startswith(".") for part in parts)
 

@@ -35,6 +35,25 @@ def chat_accounts(tmp_path, monkeypatch):
     return data, new, prepare, prompts
 
 
+def test_old_chat_model_change_binds_the_default_account(tmp_path, monkeypatch, chat_accounts):
+    """A chat saved before named accounts takes a model without an error and moves to the default."""
+    data = chat_accounts[0]
+    item = "chat:123456789abc"
+    path = tmp_path / "sessions.json"
+    path.write_text(json.dumps({item: OLD_SESSION}))
+    history = chat.ConversationHistoryStore(tmp_path / "history.json")
+    history.append(item, "user", "Focus on the November launch")
+    monkeypatch.setattr(app, "chat_router", chat.ChatRouter(chat.SessionMap(path), str(tmp_path),
+                                                           persistent_history=history))
+    validate = AsyncMock()
+    monkeypatch.setattr(app, "validate_model", validate)
+    response = asyncio.run(app.api_ai_chat_model({"item_id": item, "model": "fast-model"}))
+    assert response.status_code == 200
+    validate.assert_awaited_once_with("openai", "fast-model", data["default"], "")
+    restored = chat.SessionMap(path)
+    assert restored.selected(item) == data["default"] and restored.model(item) == "fast-model"
+
+
 @pytest.mark.parametrize("binding", [None, OLD_SESSION, "legacy:cursor", "", "default", MISSING_ACCOUNT])
 def test_turn_recovers_missing_account_and_retains_context(tmp_path, monkeypatch, chat_accounts, binding):
     data, new, prepare, prompts = chat_accounts

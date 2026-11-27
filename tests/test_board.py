@@ -1321,10 +1321,15 @@ def test_resolve_vault_markdown_checks_where_a_symlink_lands(tmp_path):
     (notes / "leak.md").symlink_to(state / "creds.txt")
     (notes / "state.md").symlink_to(state / "notes.md")
     (notes / "pay.md").symlink_to(tmp_path / "private" / "pay.md")
+    (tmp_path / "private" / "pay.txt").write_text("salary")
+    (notes / "pay.txt").symlink_to(tmp_path / "private" / "pay.txt")
 
     for bad in ("notes/leak.md", "notes/state.md", "notes/pay.md", "private/pay.md"):
         with pytest.raises(ValueError):
             workspace.resolve_vault_markdown(bad, tmp_path)
+        with pytest.raises(ValueError):
+            workspace.resolve_vault_text(bad, tmp_path)
+    for bad in ("notes/pay.txt", "private/pay.txt"):
         with pytest.raises(ValueError):
             workspace.resolve_vault_text(bad, tmp_path)
 

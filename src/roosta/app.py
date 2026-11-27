@@ -497,11 +497,11 @@ async def api_ai_chat_model(body: dict):
     try:
         if model:
             sessions = chat_router.sessions
-            if not sessions.has_item(item_id) and chat_router.known_item(item_id):
-                raise ValueError("Continue this chat or choose its account in Settings before changing the model.")
-            selected = sessions.selected(item_id) if sessions.has_item(item_id) else sessions.connection(item_id)
-            current = chat_router.sessions.model(item_id)
-            await validate_model(ai_connections.get(selected, connected=False)["provider"], model, selected, current)
+            selected = sessions.selected(item_id)  # the default account for a chat with none yet
+            await validate_model(ai_connections.get(selected, connected=False)["provider"], model, selected,
+                                 sessions.model(item_id))
+            if not sessions.has_item(item_id):
+                sessions.connection(item_id)  # bind it, or the save below drops a model with no account
         chat_router.sessions.set_model(item_id, model)
         return ai_settings_result({"ok": True, "model": model})
     except ValueError as exc:
