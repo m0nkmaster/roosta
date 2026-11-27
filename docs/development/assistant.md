@@ -18,7 +18,9 @@ starting `assistant/` are under the workspace's `.roosta/state/`. Also see
   referenced Markdown documents as relative Markdown links. As a backstop, the sanitised reply
   renderer turns an inline-code relative `.md` path into an in-app document link. Absolute paths,
   traversal, URLs and dashboard internals are never linked; the document endpoint still performs
-  authoritative server-side path validation.
+  authoritative server-side path validation. Markdown links to workspace skill forks open in the same
+  viewer. A heading fragment such as `#workspace-scope` scrolls to the first matching heading on
+  load. An unmatched fragment opens the full document at the top.
 
 - **Documents can open their own chat.** The viewer's *Chat about this* opens
   `/assistant?item=doc:<vault path>`, a persistent standing thread like `person:` (no Close or

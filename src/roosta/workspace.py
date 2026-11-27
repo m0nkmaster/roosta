@@ -369,10 +369,9 @@ def _viewable_parts(parts: tuple[str, ...]) -> bool:
 def resolve_vault_text(raw_path: str, root: Path | None = None) -> Path:
     """Resolve a vault Markdown document, an allowlisted plain-text file, or `.roosta/` config."""
     path = Path(str(raw_path or "").strip())
-    suffix = path.suffix.lower()
-    config = is_workspace_config(path.parts) and suffix in VAULT_SOURCE_SUFFIXES | {".md"}
-    if suffix not in VAULT_SOURCE_SUFFIXES and not config:
-        return resolve_vault_markdown(raw_path, root)
+    suffixes = VAULT_SOURCE_SUFFIXES | {".md"}
+    if path.suffix.lower() not in suffixes:
+        raise ValueError("invalid document path")
     if len(str(path)) > 500 or path.is_absolute() or not _viewable_parts(path.parts):
         raise ValueError("invalid document path")
     vault = (root or paths.WORKSPACE).resolve()
@@ -384,7 +383,7 @@ def resolve_vault_text(raw_path: str, root: Path | None = None) -> Path:
         relative = target.relative_to(vault)
     except ValueError as exc:
         raise ValueError("invalid document path") from exc
-    if not _viewable_parts(relative.parts):
+    if not _viewable_parts(relative.parts) or target.suffix.lower() not in suffixes:
         raise ValueError("invalid document path")
     if not target.is_file():
         raise FileNotFoundError("document not found")

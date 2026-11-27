@@ -4,6 +4,7 @@ Record each release newest first. Bump minor for features and visible behaviour,
 
 ## 0.22.4 - 2026-11-27
 
+- Assistant links to workspace skill files now open in the document viewer and jump to a matching section heading.
 - Pi workers can read chat history when they run the bundled helper with Python bytecode writes disabled through `PYTHONDONTWRITEBYTECODE=1`.
 
 ## 0.22.3 - 2026-11-26
