@@ -135,6 +135,7 @@ async function loadDocument(){
     editor.setPath(path,data.title);
     const version=JSON.stringify([data.content,data.properties]);
     if(version===shownVersion) return;
+    const firstLoad=shownVersion===null;
     shownVersion=version;
     shownMarkdown=data.content;
     document.getElementById('copy').hidden=false;
@@ -147,7 +148,9 @@ async function loadDocument(){
     article.innerHTML=safeMarkdown(wikiLinks(data.content,await vaultPaths(data.content),data.path));
     keepLinksInPage(article,params);
     renderProperties(article,data.properties);
-    window.scrollTo(0,top);
+    const heading=firstLoad && linkedHeading(article,location.hash);
+    if(heading) heading.scrollIntoView();
+    else window.scrollTo(0,top);
   }catch(error){
     if(token!==loadToken || editor.active()) return;
     editor.setPath('');shownVersion=null;
@@ -157,6 +160,13 @@ async function loadDocument(){
     state.textContent=error.message||'Document could not be loaded';
     article.appendChild(state);
   }
+}
+function linkedHeading(article,hash){
+  if(!hash) return;
+  return [...article.querySelectorAll('h1,h2,h3,h4,h5,h6')].find(heading=>{
+    const slug=heading.textContent.trim().toLowerCase().replace(/[^\p{L}\p{N}\s_-]/gu,'').replace(/\s+/g,'-');
+    return '#'+encodeURIComponent(slug)===hash;
+  });
 }
 // The vault file list is only needed (and fetched once) when a document holds vault links.
 let pathsPromise=null;

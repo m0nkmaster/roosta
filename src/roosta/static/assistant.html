@@ -286,6 +286,19 @@ function vaultMarkdownPath(text){
   const parts=path.split('/');
   return parts.some(part=>!part||part==='.'||part==='..')?'':path;
 }
+function assistantLinkHref(href){
+  const path=href.split('#',1)[0];
+  if(!/^[a-z][a-z0-9+.-]*:|^\/\//i.test(path)&&!path.includes('?')&&/\.(md|html|txt|json|ya?ml|csv)$/i.test(path)){
+    const relative=decodeURIComponent(path.replace(/^\//,''));
+    const parts=relative.toLowerCase().split('/').filter(part=>part && part!=='.');
+    const config=parts[0]==='.roosta' && parts[1]!=='state';
+    if(relative.startsWith('/') || relative.includes('\\') || parts.slice(config?1:0).some(part=>part.startsWith('.'))) throw new Error('unsafe path');
+    return documentHref(relative)+href.slice(path.length);
+  }
+  const url=new URL(href,location.origin);
+  if(!['http:','https:'].includes(url.protocol)) throw new Error('unsafe link');
+  return url.toString();
+}
 function md(source,copyBlocks=true){
   try{
     const template=document.createElement('template');
@@ -299,14 +312,7 @@ function md(source,copyBlocks=true){
       [...element.attributes].forEach(attribute=>element.removeAttribute(attribute.name));
       if(element.tagName==='A'&&href){
         try{
-          if(!/^[a-z][a-z0-9+.-]*:/i.test(href)&&/\.(md|html|txt|json|ya?ml|csv)$/i.test(href)){
-            element.href=documentHref(href.replace(/^\//,''));
-            element.target='_blank'; element.rel='noopener';
-            return;
-          }
-          const url=new URL(href,location.origin);
-          if(!['http:','https:'].includes(url.protocol)) throw new Error('unsafe link');
-          element.href=url.toString(); element.target='_blank'; element.rel='noopener';
+          element.href=assistantLinkHref(href); element.target='_blank'; element.rel='noopener';
         }catch(error){ element.removeAttribute('href'); }
       }
     });

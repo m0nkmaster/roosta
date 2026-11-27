@@ -1364,8 +1364,66 @@ def test_vault_document_endpoint_shows_linked_text_files_as_source(monkeypatch, 
                  "projects/ai-office-hours/run.sh"):
         assert asyncio.run(appmod.api_vault_document(path)).status_code == 400, path
     assert asyncio.run(appmod.api_vault_document("projects/missing.csv")).status_code == 404
-    html = (Path(appmod.DASHBOARD_ROOT) / "static" / "assistant.html").read_text()
-    assert r"\.(md|html|txt|json|ya?ml|csv)$/i.test(href)" in html
+
+
+def test_assistant_skill_section_link_opens_validated_document():
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node not available")
+    static = Path(appmod.DASHBOARD_ROOT) / "static"
+    assistant = (static / "assistant.html").read_text()
+    viewer = (static / "document.html").read_text()
+    assert "element.href=assistantLinkHref(href)" in assistant
+    helpers = (assistant[assistant.index("function assistantLinkHref"):assistant.index("function md(source")]
+               + assistant[assistant.index("const currentFrom="):assistant.index("const visibleReply=")]
+               + re.search(r"function linkedHeading\(.*?\n\}", viewer, re.S).group())
+    path = ".roosta/skill-forks/roosta-engineer/SKILL.md"
+    js = helpers + """
+const location = new URL('https://roosta.test/assistant?item=worker');
+const link = new URL(assistantLinkHref(process.argv[1]), location);
+const requestedPath = href => new URL(assistantLinkHref(href), location).searchParams.get('path');
+const refused = href => { try { assistantLinkHref(href); return false; } catch { return true; } };
+const headings = [{textContent:'Overview'}, {textContent:'Workspace scope'}];
+const article = {querySelectorAll:() => headings};
+console.log(JSON.stringify([link.pathname, link.searchParams.get('path'), link.searchParams.get('from'),
+  linkedHeading(article,link.hash)?.textContent, linkedHeading(article,'#absent') ?? null,
+  assistantLinkHref('https://example.com/other.md#section'), requestedPath('drafts/notes.txt'),
+  requestedPath('drafts/my%20notes.md#overview'),
+  ['../outside.md', 'drafts/%2e%2e/outside.md', '.roosta/state/private.md',
+   '.roosta/skill-forks/.secret.md', '.git/config.md', 'javascript:alert(1)'].every(refused)]));
+"""
+    result = subprocess.run([node, "-e", js, path + "#workspace-scope"],
+                            capture_output=True, text=True, check=True)
+    route, requested_path, back, heading, missing, external, text_path, spaced, refused = json.loads(result.stdout)
+    assert refused
+    assert (text_path, spaced) == ("drafts/notes.txt", "drafts/my notes.md")
+    assert (route, requested_path, back) == ("/document", path, "/assistant?item=worker")
+    assert (heading, missing, external) == ("Workspace scope", None, "https://example.com/other.md#section")
+
+
+def test_vault_document_skill_fork_containment(monkeypatch, tmp_path):
+    path = ".roosta/skill-forks/roosta-engineer/SKILL.md"
+    vault = tmp_path / "workspace"
+    skill = vault / path
+    skill.parent.mkdir(parents=True)
+    skill.write_text("# Engineer\n\n## Workspace scope")
+    monkeypatch.setattr(appmod.paths, "WORKSPACE", vault)
+    response = asyncio.run(appmod.api_vault_document(path))
+    assert response.status_code == 200
+    assert "## Workspace scope" in json.loads(response.body)["content"]
+    alias = vault / "public.md"
+    for target in (tmp_path / "outside.md", vault / ".roosta/state/secret.md",
+                   skill.parent / ".private.md", vault / ".hidden.md", vault / "private.key"):
+        target.parent.mkdir(exist_ok=True)
+        target.write_text("private")
+        if target.is_relative_to(vault):
+            assert asyncio.run(appmod.api_vault_document(str(target.relative_to(vault)))).status_code == 400
+        skill.unlink()
+        skill.symlink_to(target)
+        alias.unlink(missing_ok=True)
+        alias.symlink_to(target)
+        assert asyncio.run(appmod.api_vault_document(alias.name)).status_code == 400
+        assert asyncio.run(appmod.api_vault_document(path)).status_code == 400
 
 
 def test_vault_document_endpoint_splits_front_matter_into_properties(monkeypatch, tmp_path):
