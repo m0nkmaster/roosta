@@ -47,7 +47,8 @@ and [redistribution terms](https://code.claude.com/docs/en/legal-and-compliance)
 
 Anthropic connections may instead use auth `system`: the user's own Claude Code sign-in. These runs
 get no `CLAUDE_CONFIG_DIR` and no `CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST`, so Claude reads `~/.claude`
-and the user's existing login; session-resume detection looks under `~/.claude/projects`. No
+and the user's existing login; session-resume detection and the activity transcript look under
+`~/.claude/projects` (`ai_backend.claude_projects`). No
 sign-in/logout subprocess ever runs for them — disconnect only marks the record disconnected, and
 the login operation is rejected. At server startup (before workers start), and when `/api/ai/connections` is loaded, if no `system` connection
 exists, one is auto-provisioned ("Claude Code") if `find("claude")` succeeds; a top-level

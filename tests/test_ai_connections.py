@@ -425,6 +425,75 @@ def test_pi_chat_progress_is_transient_and_uses_only_tool_identifiers(accounts, 
     assert "private" not in ai_backend.repair_message('{"thinking":"private"}')
 
 
+@pytest.mark.parametrize('diagnostic,offline', [
+    ("API Error: Can't reach the API server — check your internet", True),
+    ("API Error: Your computer went to sleep mid-response.", True),
+    ("\x1b[31m✗ Failed to reach the Cursor API.", True),
+    ("Error: [aborted] read ECONNRESET", True),
+    ("Teams not connected - run `msteams login`.", False),
+])
+def test_worker_run_lost_to_the_network_is_recognised_as_offline(accounts, tmp_path, monkeypatch, diagnostic, offline):
+    """The runner's offline retry must see through the fixed message a failed run raises."""
+    connection = accounts[0]('anthropic', auth='cli')
+    prepare = ai_backend.prepare
+
+    def failing(*args, **kwargs):
+        run = prepare(*args, **kwargs)
+        run.args = [sys.executable, '-c', 'import sys; sys.stdin.read(); sys.stderr.write(sys.argv[1]); sys.exit(1)', diagnostic]
+        return run
+
+    monkeypatch.setattr(ai_backend, 'prepare', failing)
+    task = task_config.TaskConfig(id='x', skill='skill', dir=str(tmp_path), connection=connection['id'])
+    status, _, error, _ = asyncio.run(scheduler.run_task(task, idle_timeout=5))
+    assert status == 'error' and diagnostic not in error
+    assert ai_backend.is_offline_failure(scheduler.outcome_summary({}, error)) is offline
+
+
+@pytest.mark.parametrize('result,stderr,expected', [
+    ('Request failed', 'private diagnostic: ECONNRESET', ai_backend.OFFLINE_MESSAGE),
+    ('private diagnostic: ECONNRESET', 'authentication', ai_backend.OFFLINE_MESSAGE),
+    ('Quota exceeded', 'private-ECONNRESET-key', ai_backend.repair_message('quota')),
+])
+def test_stream_classifies_redacted_result_and_stderr(accounts, tmp_path, result, stderr, expected):
+    connection = accounts[0]('anthropic', key='private-ECONNRESET-key')
+    run = ai_backend.prepare(connection['id'], str(tmp_path))
+    event = json.dumps({'type': 'result', 'is_error': True, 'result': result})
+    run.args = [sys.executable, '-c',
+                'import sys; sys.stdin.read(); print(sys.argv[1]); print(sys.argv[2], file=sys.stderr)',
+                event, stderr]
+
+    async def consume():
+        return [line async for line in ai_backend.stream(run, 'test', maximum=5)]
+
+    with pytest.raises(ValueError) as exc:
+        asyncio.run(consume())
+    assert str(exc.value) == expected
+
+
+def test_worker_keeps_caller_session_when_prepare_fails(accounts, tmp_path, monkeypatch):
+    connection = accounts[0]('cursor')
+    task = task_config.TaskConfig(id='x', skill='skill', dir=str(tmp_path), connection=connection['id'])
+    monkeypatch.setattr(ai_runtime, 'find', lambda _: None)
+    status, _, error, session = asyncio.run(scheduler.run_task(task, session_id='original'))
+    assert status == 'error' and 'AI runtime is missing' in error
+    assert session == 'original'
+
+
+def test_cursor_worker_keeps_allocated_session_when_stream_fails(accounts, tmp_path, monkeypatch):
+    connection = accounts[0]('cursor')
+    task = task_config.TaskConfig(id='x', skill='skill', dir=str(tmp_path), connection=connection['id'])
+
+    async def create_chat(*args):
+        return 'chat-9'
+
+    async def failed_spawn(*args, **kwargs):
+        raise OSError('spawn failed')
+
+    monkeypatch.setattr(ai_backend.cursor_agent, 'create_chat', create_chat)
+    monkeypatch.setattr(ai_backend, 'spawn_group', failed_spawn)
+    assert asyncio.run(scheduler.run_task(task)) == ('error', {}, 'spawn failed', 'chat-9')
+
+
 def test_parallel_runs_keep_credentials_and_session_directories(accounts, tmp_path, monkeypatch):
     create, _ = accounts
     a, b = create(key='one'), create(key='two')

@@ -15,7 +15,7 @@ import os
 from pathlib import Path
 
 from roosta import claude_code
-from roosta import cursor_agent
+from roosta import cursor_agent, cursor_sessions
 
 from roosta import paths, ai_connections as connections, ai_runtime, pi_agent
 
@@ -234,6 +234,26 @@ def signed_in(connection: dict) -> bool | None:
     return isinstance(entry, dict) and any(isinstance(entry.get(k), str) and entry[k] for k in ("refresh", "access"))
 
 
+def claude_projects(connection: dict) -> Path:
+    """Where Claude Code keeps this connection's sessions: a system sign-in uses the user's own ~/.claude."""
+    if connection["auth"] == "system":
+        return claude_code.CLAUDE_PROJECTS
+    return connections.directory(connection["id"]) / "claude" / "projects"
+
+
+def transcript(connection_id: str, backend: str, session_id: str, workspace: str = "") -> list[dict]:
+    """A connection run's user/assistant turns, read from where that run stored its session."""
+    try:
+        connection = connections.get(connection_id, connected=False)
+        if backend == CLAUDE:
+            return claude_code.read_claude_transcript(session_id, claude_projects(connection))
+        if backend == CURSOR:  # Cursor files sessions under the run's working directory
+            return cursor_sessions.read_cursor_transcript(session_id, workspace or paths.WORKSPACE)
+        return pi_agent.read_transcript(connections.directory(connection["id"]) / "pi", session_id)
+    except ValueError:
+        return []
+
+
 def mcp_config(workspace: str) -> dict:
     """Keep existing explicitly configured tools without copying runtime/account state."""
     servers = {}
@@ -290,10 +310,8 @@ def prepare(connection_id: str, workspace: str, *, model: str = "", session_id: 
     if backend == CLAUDE:
         mcp_path = directory / f"mcp-{workspace_key}.json"
         paths.write_json(mcp_path, mcp)
-        projects = (Path.home() / ".claude" / "projects" if connection["auth"] == "system"
-                    else directory / "claude" / "projects")
         args = claude_code.claude_args(binary=binary, model=model or None, profile=profile,
-                                      session_id=sid, partial=True, projects=projects)
+                                      session_id=sid, partial=True, projects=claude_projects(connection))
         settings_index = args.index("--settings") + 1
         settings = json.loads(Path(args[settings_index]).read_text())
         permissions = settings["permissions"]
@@ -401,8 +419,27 @@ async def terminate(proc) -> None:
         await proc.wait()
 
 
+# Observed runtime diagnostics for a lost network; the runner retries these runs soon.
+OFFLINE_FAILURES = (
+    "reach the api server",
+    "computer went to sleep",
+    "failed to reach the cursor api",
+    "econnreset",
+    "getaddrinfo enotfound",
+)
+OFFLINE_MESSAGE = "Couldn't reach the AI provider; check this computer's internet connection"
+
+
+def is_offline_failure(text: str) -> bool:
+    """Whether a run failed for want of a network: a raw diagnostic or the message `stream` raises for one."""
+    lowered = text.lower()
+    return OFFLINE_MESSAGE.lower() in lowered or any(marker in lowered for marker in OFFLINE_FAILURES)
+
+
 def repair_message(output: str) -> str:
     lowered = output.lower()
+    if is_offline_failure(lowered):
+        return OFFLINE_MESSAGE
     if any(word in lowered for word in ("401", "unauthorized", "authentication", "api key", "oauth", "login")):
         return "Sign-in failed or expired; reconnect this account in Settings"
     if any(word in lowered for word in ("credit", "quota", "billing", "insufficient")):
@@ -504,8 +541,10 @@ async def stream(run: ConnectionRun, prompt: str, *, idle: float = 300, maximum:
                              "Endpoint security can kill a process over a word in the message, so try "
                              "rephrasing or removing a link.")
         if proc.returncode or failure:
-            diagnostic = run.redact(failure or b"".join(errors).decode(errors="replace") or stdout)
-            raise ValueError(repair_message(diagnostic))
+            stderr = run.redact(b"".join(errors).decode(errors="replace"))
+            if is_offline_failure(stderr):
+                raise ValueError(OFFLINE_MESSAGE)
+            raise ValueError(repair_message(run.redact(failure or stderr or stdout)))
     finally:
         async def cleanup():
             if run.probe and proc is not None:

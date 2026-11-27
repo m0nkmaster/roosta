@@ -31,7 +31,7 @@ from roosta import __version__
 from roosta.chat import (ChatRouter, clip_body, ConversationHistoryStore, SessionMap, TopicStore,
                   is_general_chat_id, normalise_defer_until)
 from roosta import ai_backend
-from roosta import ai_connections, ai_runtime, ai_settings, office, pages, pi_agent, teletext
+from roosta import ai_connections, ai_runtime, ai_settings, office, pages, teletext
 from roosta.activity_log import ActivityLog
 from roosta.board_state import BoardState
 from roosta.claude_code import (
@@ -788,11 +788,8 @@ async def api_activity_transcript(activity_id: str):
     if not valid_session_id(session_id):
         return JSONResponse({"error": "no session"}, status_code=404)
     if entry.get("connection_id"):
-        directory = ai_connections.directory(entry["connection_id"])
-        backend = entry.get("backend")
-        turns = (read_claude_transcript(session_id, directory / "claude/projects") if backend == ai_backend.CLAUDE
-                 else read_cursor_transcript(session_id) if backend == ai_backend.CURSOR
-                 else pi_agent.read_transcript(directory / "pi", session_id))
+        turns = ai_backend.transcript(entry["connection_id"], entry.get("backend", ""), session_id,
+                                      entry.get("workspace", ""))
         resume = "Continue this conversation in Roosta using its original connection"
     elif entry.get("backend") == ai_backend.CLAUDE or claude_session_exists(session_id):  # runs from before connections
         turns = read_claude_transcript(session_id)
