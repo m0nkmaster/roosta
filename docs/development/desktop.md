@@ -36,7 +36,7 @@ keep stale nav.
   for the runner health check. Time `zsh -i -l -c exit` and check the Roosta port for a stale
   runner before relaunching.
 - Native notifications are owned solely by the Electron main process. New board items from the
-  conductor or a scheduled sensor feed notify once per id across restarts, including while the
+  assistant task or a scheduled sensor feed notify once per id across restarts, including while the
   window is focused. An item is recorded as seen only after Electron emits `show`; failed or
   unconfirmed deliveries are released for retry. A sign-in wait notifies once per
   distinct reason and resets once no task is waiting on it. The tray menu reports notification health.

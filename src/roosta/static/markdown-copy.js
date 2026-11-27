@@ -1,4 +1,4 @@
-// Copy rendered vault Markdown back out as Markdown. Pages register the
+// Copy rendered workspace Markdown back out as Markdown. Pages register the
 // elements that hold rendered documents with watch(selector); highlighting
 // inside one (or Cmd+C) copies the selection as Markdown. copyMarkdown(text)
 // backs each page's Copy button. Needs Turndown and its GFM plugin loaded first.
@@ -16,7 +16,7 @@
     if(turndown||typeof TurndownService==='undefined') return turndown;
     turndown=new TurndownService({headingStyle:'atx',codeBlockStyle:'fenced',bulletListMarker:'-',emDelimiter:'*',hr:'---'});
     if(typeof turndownPluginGfm!=='undefined') turndown.use(turndownPluginGfm.gfm);
-    // Vault style: "- item" and "1. item", not Turndown's padded "-   item".
+    // Workspace style: "- item" and "1. item", not Turndown's padded "-   item".
     turndown.addRule('listItem',{filter:'li',replacement:(content,node)=>{
       const parent=node.parentNode;
       let marker='- ';
@@ -70,7 +70,7 @@
     holder.append(node);
     holder.querySelectorAll('.copy-code').forEach(button=>button.remove());
     holder.querySelectorAll('mark').forEach(mark=>mark.replaceWith(...mark.childNodes));
-    // In-app document links become vault paths, which mean something once pasted.
+    // In-app document links become workspace paths, which mean something once pasted.
     holder.querySelectorAll('a[href]').forEach(link=>{
       try{
         const url=new URL(link.getAttribute('href'),location.origin);

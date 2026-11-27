@@ -2,7 +2,7 @@
 tasks:
   - id: assistant
     skill: assistant
-    name: Assistant conductor
+    name: Assistant
     nickname: Roosta
     interval: 900  # 15 minutes
 

@@ -13,6 +13,7 @@ import threading
 import pytest
 from fastapi.testclient import TestClient
 
+from roosta.board_state import BoardState
 from roosta import paths, scheduler, skills
 from roosta import ai_settings
 from roosta import board
@@ -29,11 +30,11 @@ def accounts(tmp_path, monkeypatch):
     monkeypatch.setattr(ai_runtime, 'model_catalog', lambda provider: ['gpt-5.4', 'gpt-5-mini', 'openai/gpt-5.4'])
     monkeypatch.setattr(ai_runtime, 'default_model', lambda provider: {'openai': 'gpt-5.4', 'openrouter': 'openai/gpt-5.4'}.get(provider, ''))
     secrets = {}
-    class Vault:
+    class Keyring:
         def get_password(self, service, key): return secrets.get(key)
         def set_password(self, service, key, value): secrets[key] = value
         def delete_password(self, service, key): secrets.pop(key, None)
-    monkeypatch.setattr(connections, '_vault', lambda: Vault())
+    monkeypatch.setattr(connections, '_keyring', lambda: Keyring())
     def create(provider='openai', key='first-test-key', tested=True, **kwargs):
         c = connections.create({'provider': provider, 'api_key': key, **kwargs})
         return connections.update(c['id'], tested=tested)
@@ -559,7 +560,7 @@ def test_worker_dispatch_uses_connection_and_retains_legacy_model(accounts, tmp_
 def test_plaintext_keyring_fallback_is_rejected(monkeypatch):
     import keyring
     monkeypatch.setattr(keyring,'get_keyring',lambda:object())
-    with pytest.raises(ValueError,match='OS credential store'): connections._vault()
+    with pytest.raises(ValueError,match='OS credential store'): connections._keyring()
 
 
 def test_mcp_configuration_preserves_project_scopes(tmp_path, monkeypatch):
@@ -1371,10 +1372,14 @@ def test_first_run_requires_default_before_workspace_setup(accounts, tmp_path, m
     monkeypatch.setattr(app.profile, 'load', lambda: app.profile.Profile())
     monkeypatch.setattr(app.paths, 'WORKSPACE', tmp_path)
     monkeypatch.setattr(app.paths, 'TASKS_FILE', tmp_path / 'tasks.yaml')
-    router = chat.ChatRouter(chat.SessionMap(tmp_path/'sessions.json'), str(tmp_path))
+    history = chat.ConversationHistoryStore(tmp_path/'history.json')
+    state = BoardState(tmp_path, history)
+    router = chat.ChatRouter(chat.SessionMap(tmp_path/'sessions.json'), str(tmp_path),
+                             persistent_history=history, board=state)
     monkeypatch.setattr(app, 'chat_router', router)
+    monkeypatch.setattr(app, 'board', state)
     c = create('anthropic', auth='system', tested=False) if existing_claude else None
-    card = board.setup_item(router)
+    card = board.setup_item(state)
     assert card['id'] == board.AI_SETUP_ITEM_ID
     assert card['action_owner'] == 'user'
     assert ('Claude Code' in card['title']) == existing_claude
@@ -1386,36 +1391,36 @@ def test_first_run_requires_default_before_workspace_setup(accounts, tmp_path, m
         assert json.loads(response.body)['settings_url'] == '/settings#account-setup'
     assert not router._sessions._map and not router._sessions._connections
     # Cached model output cannot replace the deterministic prerequisite or show workspace setup early.
-    monkeypatch.setattr(board, 'board_merges', lambda states, router=None: {})
+    monkeypatch.setattr(board, 'board_merges', lambda states, _board: {})
     monkeypatch.setattr(board, 'roosta_engineer_item', lambda states: None)
     items, _ = board.collect_board_items([
         {'id':board.AI_SETUP_ITEM_ID, 'title':'wrong', 'action_owner':'assistant'},
         {'id':board.SETUP_ITEM_ID, 'title':'too early'},
-    ], [], [])
+    ], [], BoardState())
     assert [i['id'] for i in items] == [board.AI_SETUP_ITEM_ID]
     assert items[0]['action_owner'] == 'user'
     # Choosing an untested account unlocks setup.
-    assert board.setup_item(router)['id'] == board.AI_SETUP_ITEM_ID
+    assert board.setup_item(state)['id'] == board.AI_SETUP_ITEM_ID
     c = c or create(tested=False)
     connections.set_default(c['id'])
-    assert board.setup_item(router)['id'] == board.SETUP_ITEM_ID
+    assert board.setup_item(state)['id'] == board.SETUP_ITEM_ID
     data = json.loads(asyncio.run(app.api_ai_connections()).body)
     assert data['workspace_setup_ready'] is True
     assert data['workspace_setup_missing'] == ['your name in PROFILE.md', 'your priorities in PRIORITIES.md',
                                                'a starter schedule of workers']
     assert not router._sessions._connections
     assert router._sessions.connection(board.SETUP_ITEM_ID) == c['id']
-    monkeypatch.setattr(router, 'handled', lambda: {board.SETUP_ITEM_ID: {'result': 'done', 'at': 'now'}})
+    state.mark_handled(board.SETUP_ITEM_ID, 'done')
     data = json.loads(asyncio.run(app.api_ai_connections()).body)
     assert data['workspace_setup_ready'] is False
     assert data['workspace_setup_missing'] == []
-    monkeypatch.setattr(router, 'handled', lambda: {})
+    state.unhandle(board.SETUP_ITEM_ID)
     # A named user with priorities and a schedule needs nothing, even with setup history present.
     monkeypatch.setattr(app.profile, 'load', lambda: app.profile.Profile(name='Sam'))
-    monkeypatch.setattr(router, 'conversation_history', lambda item: [{'role': 'user'}], raising=False)
+    history.append(board.SETUP_ITEM_ID, 'user', 'hi')
     (tmp_path / 'PRIORITIES.md').write_text('## My priorities\n\n1. Ship it\n')
     (tmp_path / 'tasks.yaml').write_text('tasks:\n  - id: t\n    skill: actor\n')
-    assert board.setup_item(router)['id'] == board.SETUP_ITEM_ID
+    assert board.setup_item(state)['id'] == board.SETUP_ITEM_ID
     data = json.loads(asyncio.run(app.api_ai_connections()).body)
     assert data['workspace_setup_ready'] is False
     assert data['workspace_setup_missing'] == []

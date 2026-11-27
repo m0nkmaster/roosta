@@ -11,7 +11,7 @@ check and still fail these.
 | **Bloat** | Body repeats itself; > ~250 lines of prose; a 500-line catalogue inline | Tighten; move depth into `references/`; the SKILL routes, references hold detail |
 | **Description & triggers** | Won't fire when it should; vague; overlaps another skill's triggers | Sharpen the frontmatter `description` and trigger phrases |
 | **Overlap / duplication** | Two skills cover the same ground | Merge into one canonical skill; delete the loser; fix inbound links |
-| **Portability** | Depends on a vault-only path or `[[wikilink]]` prerequisite (but see the vault-management carve-out in SKILL.md - don't re-flag those) | Bundle the reference inside the skill; make paths relative |
+| **Portability** | Depends on a workspace-only path or `[[wikilink]]` prerequisite (but see the workspace-management carve-out in SKILL.md - don't re-flag those) | Bundle the reference inside the skill; make paths relative |
 | **Dead references** | Links, paths or bundled files that no longer exist | Repoint or remove |
 | **Staleness** | Example or fact contradicted by current reality | Correct against ground truth |
 

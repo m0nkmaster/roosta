@@ -107,19 +107,19 @@ See [Assistant contracts](assistant.md) and [Office rendering](office.md) for pa
 - **Custom pages** - static HTML/JS in the workspace's `.roosta/pages/<name>/`, served at
   `/pages/<name>/` and added to every page's nav by `nav-count.js` (from `/api/pages`, cached in
   `localStorage` so the link paints at once; folders that override a shipped page are not listed). They read
-  only `/api/vault/files?glob=` (frontmatter, no bodies), `/api/vault-document`, `/api/tasks`,
+  only `/api/workspace/files?glob=` (frontmatter, no bodies), `/api/workspace/document`, `/api/tasks`,
   `/api/board`, `/api/profile` and `/api/pages/<name>/data/<file>.json`, which serves JSON skills
   write to `.roosta/state/pages/<name>/`. A page folder named like a shipped page replaces it
   (`pages.page_file`). There are no Python plug-ins: a missing capability becomes a generic API here.
 
 ## Workspace and documents
 
-- **`static/document.html`** - Markdown viewer and source editor for validated vault documents linked
+- **`static/document.html`** - Markdown viewer and source editor for validated workspace documents linked
   from Assistant items
 
 - **`static/workspace.html` / `workspace.js`** - Fluid Tabler document navigator; in-memory literal
   search over `/api/workspace`, ordered Markdown collections, topics and decision/plan sections, highlighted previews and
-  up to eight selected files; collection names, descriptions and membership come from vault metadata.
+  up to eight selected files; collection names, descriptions and membership come from workspace metadata.
   Open folder posts to local-only `/api/workspace/reveal`, which opens the active workspace (never a
   request-supplied path) in the OS file browser
 
@@ -135,7 +135,7 @@ See [Assistant contracts](assistant.md) and [Office rendering](office.md) for pa
   identifies the retained file for recovery. The lock is advisory for external writers.
   Drafts live in the page until Save or confirmed discard. Copy draft includes frontmatter.
 
-- **`static/vault-markdown.js`** - Shared sanitised Markdown renderer for document and Workspace previews
+- **`static/safe-markdown.js`** - Shared sanitised Markdown renderer for document and Workspace previews
 
 - **`static/markdown-copy.js`** - Copy-as-Markdown for the document page, Workspace preview and
   the whole Assistant board (items, chats, document pane; text fields keep native copy): `watch(selector)` makes highlighting (or Cmd+C) copy the selection via
@@ -155,8 +155,8 @@ See [Assistant contracts](assistant.md) and [Office rendering](office.md) for pa
 
 Pulse counts the same installed and workspace skill names as Workers, once per name.
 
-- **`static/pulse.html`** - Vault Pulse telemetry page (workspace constellation first, then
-  AI activity, live vault stats and hot files); polls `/api/pulse`. `/constellation` serves the same file, which hides
+- **`static/pulse.html`** - Pulse telemetry page (workspace constellation first, then
+  AI activity, live workspace stats and hot files); polls `/api/pulse`. `/constellation` serves the same file, which hides
   everything but the constellation when it sees that path
 
 - **Workspace and Constellation share selected pages.** See the [portable index examples and fallback rules](../../README.md#choose-your-workspace-collections).
@@ -197,13 +197,13 @@ For collection QA run the static interaction probes from the checkout on a host 
 ```
 
 Use a fresh temporary directory for each run. Pytest replaces its base directory.
-The probes use the shipped page, styles and scripts, a synthetic Markdown vault, and
+The probes use the shipped page, styles and scripts, a synthetic Markdown workspace, and
 in-memory API responses. Set `ROOSTA_QA_MARKED` to a trusted local copy of
 `marked/lib/marked.umd.js` for visual QA. Each fixture copies it alongside its HTML.
 Without the variable, the interaction probe uses a text-only parser. The fixture
 removes remote scripts and turns off intervals and animation scheduling. At 1440 and 480 pixels they click
 through collections, section previews, attachments, star search, filters and review.
-Each case leaves a standalone `workspace.html` or `pulse.html` beside its mock vault.
+Each case leaves a standalone `workspace.html` or `pulse.html` beside its mock workspace.
 For a screenshot, open that generated file at its test width or pass its file URL
 to Chrome with `--headless=new --allow-file-access-from-files --window-size=1440,900
 --screenshot=/tmp/roosta-collection.png`.

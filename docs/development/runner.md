@@ -17,10 +17,10 @@ ignore rules root-anchored so these starter files ship in wheels. Rerunning init
 files without replacing existing configuration.
 
 - **Writer-locked concurrency, not global serialisation.** Tasks run in parallel by default. A task
-  flagged `writer: true` in `tasks.yaml` (may rewrite vault docs or auto-commit) is serialised against
+  flagged `writer: true` in `tasks.yaml` (may rewrite workspace docs or auto-commit) is serialised against
   *other writers* via `TaskRunner._writer_lock`, so two doc-rewriting passes can never race on
   the same files/git index.
-  Read/fetch-only tasks (watchers, the assistant conductor, briefs) carry no lock
+  Read/fetch-only tasks (watchers, the assistant task, briefs) carry no lock
   and can run whenever their own schedule fires, including alongside a writer. `is_queued()`
   reports true for a task whose trigger fired but is still waiting on the writer lock.
 
@@ -74,12 +74,12 @@ files without replacing existing configuration.
   failed; still fix a skill's contract wording when it drifts.
 
 - **Carried-forward output must not carry stale errors.** Fast paths that copy `last_output`
-  forward (an unchanged pre-check) drop any old `details.error`, because the conductor reads
+  forward (an unchanged pre-check) drop any old `details.error`, because the assistant task reads
   every sensor cache and would re-raise it as a board card.
 
 - **A failed run keeps its last cards.** When an `error` run omits `details.items` or returns an empty list, the
   runner keeps the previous items (not the old `details.error`), so one AI failure cannot empty
-  the Assistant board or blind the conductor's next pass. A failed conductor pass also keeps its
+  the Assistant board or blind the assistant task's next pass. A failed assistant pass also keeps its
   previous cards when the model returns a partial list.
 
 - **Skill descriptions stay canonical.** The runner reads each task skill's `description` from
@@ -124,7 +124,7 @@ prefixes enforced by the default profile. Unrestricted runs omit Roosta's connec
   `examples/organisation-pack/` and are not shipped; a workspace adds them through TOOLS.md.
 
 By default workers return board-shaped `details.items`, `/api/board`
-merges those feeds with the conductor snapshot, and the Electron main process owns native
+merges those feeds with the assistant snapshot, and the Electron main process owns native
 notifications. Assistant drafts use the board's Send/Cancel flow.
 The default worker profile permits local deletion, `git reset` and `git clean`. Workers already
 marked `unrestricted: true` have broader standing approval in 0.21.0, covering local and external
@@ -147,7 +147,7 @@ Add to the workspace's `.roosta/tasks.yaml`:
     run_at: "09:00"         # optional: HH:MM local time; run once per day at this time
     weekdays_only: true     # optional: skip Saturday and Sunday (default false)
     days_of_week: [monday]  # optional: run only on these lowercase day names
-    writer: true            # optional: rewrites vault docs/auto-commits (default false, see Scheduling and execution)
+    writer: true            # optional: rewrites workspace docs/auto-commits (default false, see Scheduling and execution)
     requires: [github]       # optional: wait while these connectors are signed out
     precheck: scripts/new.sh # optional: exit 1 = nothing new, skip the scheduled model run
     sensor: true             # optional: feeds the board; board health warns when it fails

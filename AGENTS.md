@@ -60,8 +60,9 @@ Paths below are relative to `src/roosta/` unless stated otherwise.
 | `app.py` | FastAPI routes, lifespan and the shared runner, chat router and activity instances |
 | `scheduler.py` | `TaskRunner` loop, writer serialisation, prompts and one AI connection run per task |
 | `task_config.py` | Task model, `tasks.yaml` loading and comment-preserving edits, skill lookup |
-| `chat.py` | `ChatRouter`, markers, approvals, conversation stores |
+| `chat.py` | `ChatRouter` turns, markers, approvals, conversation stores |
 | `board.py` | Board card normalisation, feed merging, reminders, setup card and board health |
+| `board_state.py` | `BoardState`: closed, snoozed, first-seen and merged cards and reminders; works without AI |
 | `chat_items.py` | Open, document, worker 1:1 and new-worker chat items |
 | `ai_backend.py`, `ai_connections.py`, `ai_runtime.py` | AI dispatch, named accounts, credential references and managed runtimes |
 | `ai_settings.py` | Worker runtime checks and options, model lists and validation, Settings setup jobs |
@@ -70,10 +71,10 @@ Paths below are relative to `src/roosta/` unless stated otherwise.
 | `cursor_agent.py`, `cursor_sessions.py` | Cursor invocation, shared permission policy, transcript reading |
 | `claude_code.py`, `claude_guard.py` | Claude invocation, stream parsing, permission settings/hook |
 | `connectors.py` | Generic sign-in probes and external-write denials |
-| `workspace.py` | Document catalogue, vault path validation and bounded attachments |
+| `workspace.py` | Document catalogue, workspace path validation and bounded attachments |
 | `document_editor.py` | Raw Markdown reads and revision-checked atomic saves |
 | `attachments.py` | Chat upload storage, limits and validation |
-| `pulse.py`, `usage.py` | Vault telemetry and privacy-preserving interaction signals |
+| `pulse.py`, `usage.py` | Workspace telemetry and privacy-preserving interaction signals |
 | `pages.py` | Custom pages and workspace overrides of shipped pages |
 | `teletext.py` | Office lounge TV feeds: BBC headlines and the daily quiz |
 | `activity_log.py` | AI activity feed: every spawn, its `activity.jsonl` history and live subscribers |
@@ -122,7 +123,7 @@ and diff checks; no app build is needed.
 `tests/conftest.py` isolates `ROOSTA_WORKSPACE` and activity storage before imports. Keep that
 isolation: importing the runner against the real workspace can seed configs containing MCP
 tokens. Runner tests fake task loading, auth, execution and cache paths; never invoke real
-harnesses, external tools or the live vault. Pulse tests use relative instants, not fixed dates.
+harnesses, external tools or the live workspace. Pulse tests use relative instants, not fixed dates.
 
 Tests are grouped by subsystem: `test_runner.py`, `test_board.py`, `test_claude_code.py`,
 `test_sessions.py`, `test_pulse.py`, `test_office.py`, `test_usage.py`, `test_uploads.py`, `test_changelog.py`.

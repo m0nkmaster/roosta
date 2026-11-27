@@ -235,13 +235,13 @@ def read_document(root: Path, raw: str) -> tuple[Path, str, int]:
     relative = Path(raw)
     if not visible_path(relative):
         raise ValueError("Choose a workspace Markdown document.")
-    vault = root.resolve()
+    workspace = root.resolve()
     try:
-        target = (vault / relative).resolve()
+        target = (workspace / relative).resolve()
     except (RuntimeError, OSError) as exc:
         raise ValueError("Invalid document path.") from exc
     try:
-        canonical = target.relative_to(vault)
+        canonical = target.relative_to(workspace)
     except ValueError as exc:
         raise ValueError("Document is outside the workspace.") from exc
     if not visible_path(canonical):
@@ -312,7 +312,7 @@ def context_documents(root: Path, paths: list) -> list[dict]:
 
 
 def markdown_path(raw) -> str | None:
-    """A safe relative path to a Markdown document in the vault, or None."""
+    """A safe relative path to a Markdown document in the workspace, or None."""
     raw_path = str(raw or "").strip()
     path = Path(raw_path)
     if (
@@ -328,18 +328,18 @@ def markdown_path(raw) -> str | None:
     return path.as_posix()
 
 
-def resolve_vault_markdown(raw_path: str, root: Path | None = None) -> Path:
-    """Resolve an allowlisted Markdown path without permitting vault escape."""
+def resolve_workspace_markdown(raw_path: str, root: Path | None = None) -> Path:
+    """Resolve an allowlisted Markdown path without permitting workspace escape."""
     relative = markdown_path(raw_path)
     if relative is None:
         raise ValueError("invalid document path")
-    vault = (root or paths.WORKSPACE).resolve()
+    workspace = (root or paths.WORKSPACE).resolve()
     # SECURITY-REVIEW: the path comes from a query parameter. It is constrained
     # to a relative Markdown path, resolved, and the resolved path must pass the
     # same rule, so a symlink cannot reach `.roosta/state`, `private/` or a non-Markdown file.
-    target = (vault / relative).resolve()
+    target = (workspace / relative).resolve()
     try:
-        canonical = target.relative_to(vault)
+        canonical = target.relative_to(workspace)
     except ValueError as exc:
         raise ValueError("invalid document path") from exc
     if markdown_path(canonical.as_posix()) is None:
@@ -350,7 +350,7 @@ def resolve_vault_markdown(raw_path: str, root: Path | None = None) -> Path:
 
 
 # Plain-text files a chat reply may link (a Confluence storage body, a CSV); shown as source.
-VAULT_SOURCE_SUFFIXES = {".html", ".txt", ".json", ".yaml", ".yml", ".csv"}
+SOURCE_SUFFIXES = {".html", ".txt", ".json", ".yaml", ".yml", ".csv"}
 
 
 def is_workspace_config(parts: tuple[str, ...]) -> bool:
@@ -370,21 +370,21 @@ def _viewable_parts(parts: tuple[str, ...]) -> bool:
     return is_workspace_config(parts) or not any(part.startswith(".") for part in parts)
 
 
-def resolve_vault_text(raw_path: str, root: Path | None = None) -> Path:
-    """Resolve a vault Markdown document, an allowlisted plain-text file, or `.roosta/` config."""
+def resolve_workspace_text(raw_path: str, root: Path | None = None) -> Path:
+    """Resolve a workspace Markdown document, an allowlisted plain-text file, or `.roosta/` config."""
     path = Path(str(raw_path or "").strip())
-    suffixes = VAULT_SOURCE_SUFFIXES | {".md"}
+    suffixes = SOURCE_SUFFIXES | {".md"}
     if path.suffix.lower() not in suffixes:
         raise ValueError("invalid document path")
     if len(str(path)) > 500 or path.is_absolute() or not _viewable_parts(path.parts):
         raise ValueError("invalid document path")
-    vault = (root or paths.WORKSPACE).resolve()
-    # SECURITY-REVIEW: same containment check as resolve_vault_markdown. Dotfiles stay
+    workspace = (root or paths.WORKSPACE).resolve()
+    # SECURITY-REVIEW: same containment check as resolve_workspace_markdown. Dotfiles stay
     # hidden (.env, .git, .claude) except `.roosta/` config; `.roosta/state/` holds runtime
     # caches and agent configs with tokens, so it is refused, including via a symlink.
-    target = (vault / path).resolve()
+    target = (workspace / path).resolve()
     try:
-        relative = target.relative_to(vault)
+        relative = target.relative_to(workspace)
     except ValueError as exc:
         raise ValueError("invalid document path") from exc
     if not _viewable_parts(relative.parts) or target.suffix.lower() not in suffixes:

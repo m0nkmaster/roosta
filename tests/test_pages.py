@@ -37,19 +37,19 @@ def test_workspace_page_replaces_the_shipped_one(tmp_path):
     assert pages.custom_pages(tmp_path) == []
 
 
-def test_vault_files_returns_frontmatter_without_bodies(tmp_path):
+def test_workspace_files_returns_frontmatter_without_bodies(tmp_path):
     readme = tmp_path / "projects" / "atlas" / "README.md"
     readme.parent.mkdir(parents=True)
     readme.write_text("---\ntitle: Atlas\nstatus: active\n---\n# Atlas\n\nSecret body.\n")
     (tmp_path / ".roosta").mkdir()
     (tmp_path / ".roosta" / "x.md").write_text("hidden")
-    files = pages.vault_files("**/*.md", tmp_path)
+    files = pages.workspace_files("**/*.md", tmp_path)
     assert [f["path"] for f in files] == ["projects/atlas/README.md"]
     assert files[0]["frontmatter"] == {"title": "Atlas", "status": "active"}
     assert "Secret body" not in json.dumps(files)
     for bad in ("", "/etc/*.md", "../*.md"):
         try:
-            pages.vault_files(bad, tmp_path)
+            pages.workspace_files(bad, tmp_path)
         except ValueError:
             continue
         raise AssertionError(bad)

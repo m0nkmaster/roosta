@@ -79,7 +79,7 @@ rg -l "data flow|warehouse|connections" projects/ notes/ .agents/skills/ AGENTS.
 Signs of duplication:
 - Same mental model in a project README and a notes doc
 - AGENTS.md listing three docs that all say "start here"
-- A skill that only links outward to vault files with no bundled content
+- A skill that only links outward to workspace files with no bundled content
 - Narrative prose inside what should be an ops runbook
 - Empty or stub project folders after content moved elsewhere
 
@@ -104,7 +104,7 @@ Preserve user-curated collection and topic overviews, membership, order and pros
 3. **Slim what remains** - runbooks to commands only, READMEs to indexes
 4. **Delete legacy** - remove superseded files; no stubs
 5. **Update AGENTS.md** - single pointer per domain (root and project-level as needed)
-6. **Fix all inbound links** - grep for old paths across the vault
+6. **Fix all inbound links** - grep for old paths across the workspace
 
 For skill-authoring conventions, read `write-a-skill/SKILL.md` if present.
 

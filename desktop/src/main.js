@@ -209,7 +209,7 @@ function createApplicationMenu() {
       label: "Roosta",
       submenu: [
         { label: "Open Assistant", click: () => showPage("/assistant") },
-        { label: "Vault Pulse", click: () => showPage("/pulse") },
+        { label: "Pulse", click: () => showPage("/pulse") },
         { label: "Runner Status", click: () => showPage("/runner") },
         { type: "separator" },
         { label: "Settings…", accelerator: "CommandOrControl+,", click: () => showPage("/settings") },
@@ -255,7 +255,7 @@ function updateTray() {
   tray.setToolTip(`Roosta - ${activeCount} need you - ${statusLabel}`);
   tray.setContextMenu(Menu.buildFromTemplate([
     { label: activeCount ? `Open Assistant (${activeCount})` : "Open Assistant", click: () => showPage("/assistant") },
-    { label: "Vault Pulse", click: () => showPage("/pulse") },
+    { label: "Pulse", click: () => showPage("/pulse") },
     { label: "Runner Status", click: () => showPage("/runner") },
     { label: "Refresh Assistant Now", click: refreshAssistant },
     { type: "separator" },

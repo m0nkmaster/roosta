@@ -26,7 +26,7 @@ const projects = [
 ];
 window.fetch = async path => {
   if (path !== '/api/pulse') throw Error('Unexpected fixture request ' + path);
-  return {json:async () => ({vault:{project_signals:projects, projects:5, markdown_files:12, words:2400, skills:2},
+  return {json:async () => ({workspace:{project_signals:projects, projects:5, markdown_files:12, words:2400, skills:2},
     activity:{today_runs:0, running_now:0}, board:{cleared_today:0, board_active:2}})};
 };
 """

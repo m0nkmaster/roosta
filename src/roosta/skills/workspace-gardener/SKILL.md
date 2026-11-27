@@ -1,6 +1,6 @@
 ---
 name: workspace-gardener
-description: Deep processing pass over the workspace - digest recent signals, synthesise understanding, clarify thinking, verify workspace claims against code, tickets, docs and chat, strengthen connections, and consolidate knowledge architecture. Offsets expected vault growth with active tidying: prune noise, merge duplicates, remove vestigial docs, and refactor structure - not just light synthesis. Preservationist for the user's voice and thinking; ruthless about duplicate entry points and legacy cruft. Use when the user asks to garden, refresh, digest, process, dream, tidy, consolidate, refactor, or maintain the workspace. Trigger phrases include "run the gardener", "digest my day", "process everything", "refresh the workspace", "tidy up", "consolidate docs", "do a maintenance pass", "what have I missed", or any request for periodic housekeeping and synthesis.
+description: Deep processing pass over the workspace - digest recent signals, synthesise understanding, clarify thinking, verify workspace claims against code, tickets, docs and chat, strengthen connections, and consolidate knowledge architecture. Offsets expected workspace growth with active tidying: prune noise, merge duplicates, remove vestigial docs, and refactor structure - not just light synthesis. Preservationist for the user's voice and thinking; ruthless about duplicate entry points and legacy cruft. Use when the user asks to garden, refresh, digest, process, dream, tidy, consolidate, refactor, or maintain the workspace. Trigger phrases include "run the gardener", "digest my day", "process everything", "refresh the workspace", "tidy up", "consolidate docs", "do a maintenance pass", "what have I missed", or any request for periodic housekeeping and synthesis.
 ---
 
 # Workspace Gardener
@@ -9,7 +9,7 @@ You are the dreaming mind of this workspace. Like sleep consolidates memory - st
 
 This workspace is the user's second brain. The better it reflects their current understanding, the better every future AI interaction will be. Your job is to keep it alive, accurate, insightful, and **architecturally clean**.
 
-**Vault growth is expected** - new notes, drafts, captures and project folders accumulate every day. That is normal. Your counterweight is **active tidying**: prune noise, merge duplicates, delete superseded files, slim bloated docs, and reduce entry-point sprawl. Keep user-authored collection and topic overviews intact when pruning.
+**Workspace growth is expected** - new notes, drafts, captures and project folders accumulate every day. That is normal. Your counterweight is **active tidying**: prune noise, merge duplicates, delete superseded files, slim bloated docs, and reduce entry-point sprawl. Keep user-authored collection and topic overviews intact when pruning.
 
 ## Philosophy
 
@@ -151,7 +151,7 @@ Append a dated entry to `notes/garden-log.md`:
 ```markdown
 ## YYYY-MM-DD HH:MM
 - **Digested:** <one line on what shifted in priorities/projects>
-- **Verified:** <vault claims checked against code, tickets, docs or chat - corrections made. Never "nothing checked": if no external signal, this is where the pass earned its keep>
+- **Verified:** <workspace claims checked against code, tickets, docs or chat - corrections made. Never "nothing checked": if no external signal, this is where the pass earned its keep>
 - **Clarified:** <what you sharpened - the specific vague sentence, contradiction, or half-formed idea you improved>
 - **Connected:** <`## Related` sections added or extended, bidirectional pairs closed>
 - **Consolidated:** <domains refactored, files removed, skills created/updated - or "no structural work; energy spent on verify/clarify above">

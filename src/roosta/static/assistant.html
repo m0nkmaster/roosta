@@ -279,7 +279,7 @@ const allowedMarkdownTags=new Set([
   'A','BLOCKQUOTE','BR','CODE','DEL','EM','H1','H2','H3','H4','H5','H6','HR',
   'LI','OL','P','PRE','STRONG','TABLE','TBODY','TD','TH','THEAD','TR','UL'
 ]);
-function vaultMarkdownPath(text){
+function workspaceMarkdownPath(text){
   const path=String(text||'').trim();
   if(!path||path.startsWith('/')||path.toLowerCase().startsWith('dashboard/')||path.includes('\\')) return '';
   if(!/\.md$/i.test(path)||/^[a-z][a-z0-9+.-]*:/i.test(path)) return '';
@@ -318,7 +318,7 @@ function md(source,copyBlocks=true){
     });
     [...template.content.querySelectorAll('code')].forEach(element=>{
       if(element.closest('pre,a')) return;
-      const path=vaultMarkdownPath(element.textContent);
+      const path=workspaceMarkdownPath(element.textContent);
       if(!path) return;
       const link=document.createElement('a');
       link.href=documentHref(path); link.target='_blank'; link.rel='noopener';
@@ -351,9 +351,9 @@ const visibleReply=s=>String(s||'').replace(
 const ctas=(links,documents,itemId)=>{
   const external=(links||[]).map(l=>
     `<a class="cta" href="${escAttr(l.url)}" target="_blank" rel="noopener">${esc(l.label)}&nbsp;↗</a>`);
-  const vault=(documents||[]).map(d=>
-    `<a class="cta vault-document" href="${documentHref(d.path,itemId)}" target="_blank" rel="noopener">${esc(d.label)}&nbsp;▤</a>`);
-  return external.length||vault.length?`<div class="ctas">${external.concat(vault).join('')}</div>`:'';
+  const docLinks=(documents||[]).map(d=>
+    `<a class="cta workspace-document" href="${documentHref(d.path,itemId)}" target="_blank" rel="noopener">${esc(d.label)}&nbsp;▤</a>`);
+  return external.length||docLinks.length?`<div class="ctas">${external.concat(docLinks).join('')}</div>`:'';
 };
 const ACTIONS={
   chat:{label:'Chat',icon:'C'}, ticket:{label:'Ticket',icon:'#'},
@@ -532,7 +532,7 @@ const docTitles={};
 function loadDocTitle(item){
   if(!item||item.path in docTitles) return;
   docTitles[item.path]=null;
-  fetch('/api/vault-document?path='+encodeURIComponent(item.path))
+  fetch('/api/workspace/document?path='+encodeURIComponent(item.path))
     .then(r=>r.ok?r.json():null)
     .then(d=>{ if(d&&d.title){
       docTitles[item.path]=d.title; renderRail();
@@ -683,12 +683,12 @@ let requestedItem=new URLSearchParams(location.search).get('item');
 // ?ask= links carry the question to ask. It is prefilled in the
 // composer, never auto-sent, so the user always sees the request before a turn runs.
 const requestedAsk=new URLSearchParams(location.search).get('ask');
-const requestedFiles=[...new Set(new URLSearchParams(location.search).getAll('file').map(vaultMarkdownPath).filter(Boolean))].slice(0,8);
+const requestedFiles=[...new Set(new URLSearchParams(location.search).getAll('file').map(workspaceMarkdownPath).filter(Boolean))].slice(0,8);
 const requestedContext=new URLSearchParams(location.search).get('from')==='workspace';
 let requestedFilesUsed=false;
 function contextFor(id){
   const paths=readPreference('assistant-context:'+id,[]);
-  return Array.isArray(paths)?paths.map(vaultMarkdownPath).filter(Boolean).slice(0,8):[];
+  return Array.isArray(paths)?paths.map(workspaceMarkdownPath).filter(Boolean).slice(0,8):[];
 }
 function contextLabel(path){
   const title=docTitles[path];
@@ -1181,7 +1181,7 @@ function renderRail(){
   }
   rail.innerHTML=html;
 }
-// Items that link a vault document (and document threads) show it beside the
+// Items that link a workspace document (and document threads) show it beside the
 // chat. ponytail: first linked document only, tabs if an item ever needs more.
 const docEditor=documentEditor(document.getElementById('docpane-editor'),document.querySelector('#docpane .md'),text=>md(text,false),refreshDocPane);
 let docPaneToken=0,docPaneMarkdown='';
@@ -1199,7 +1199,7 @@ function showDocPane(it){
   const token=++docPaneToken;
   el.hidden=true;
   if(!path) return;
-  fetch('/api/vault-document?path='+encodeURIComponent(path))
+  fetch('/api/workspace/document?path='+encodeURIComponent(path))
     .then(r=>r.ok?r.json():Promise.reject())
     .then(d=>{
       if(token!==docPaneToken) return;
@@ -1223,7 +1223,7 @@ function refreshDocPane(){
   const body=el.querySelector('.md');
   if(el.hidden||!path||!body) return;
   const token=docPaneToken;
-  fetch('/api/vault-document?path='+encodeURIComponent(path.textContent))
+  fetch('/api/workspace/document?path='+encodeURIComponent(path.textContent))
     .then(r=>r.ok?r.json():null)
     .then(d=>{
       if(!d||token!==docPaneToken) return;

@@ -266,7 +266,7 @@ class TaskRunner:
         self._loop_tasks: list[asyncio.Task] = []
         self._triggers: dict[str, asyncio.Event] = {}
         self._cancelled: set[str] = set()
-        self._writer_lock = asyncio.Lock()  # serialises vault-writing tasks against each other only
+        self._writer_lock = asyncio.Lock()  # serialises workspace-writing tasks against each other only
         self._writer_holder: str | None = None
         self._writer_waiting: set[str] = set()
         self._running = False
@@ -646,7 +646,7 @@ class TaskRunner:
                 self._save_state(state)
 
             # A cheap pre-check can confirm nothing changed and skip the model run. The
-            # last output carries forward, minus any old error the conductor would re-raise.
+            # last output carries forward, minus any old error the assistant task would re-raise.
             if not triggered and task.precheck:
                 started = time.monotonic()
                 if await self._prechecker(task):
@@ -677,7 +677,7 @@ class TaskRunner:
                 await self._wait_or_trigger(task_id, self._auth_retry_interval)
                 continue
 
-            # Run the task. Writers (tasks that rewrite vault docs / auto-commit) are
+            # Run the task. Writers (tasks that rewrite workspace docs / auto-commit) are
             # serialised against each other via _writer_lock; everything else runs
             # freely in parallel, including alongside a writer.
             lock_cm = self._writer_slot(task_id) if task.writer else nullcontext()

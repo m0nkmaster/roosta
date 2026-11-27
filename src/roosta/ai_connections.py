@@ -1,4 +1,4 @@
-"""Named AI connections: non-secret metadata in the workspace, keys in the OS vault."""
+"""Named AI connections: non-secret metadata in the workspace, keys in the OS credential store."""
 from __future__ import annotations
 
 import asyncio
@@ -123,20 +123,20 @@ def runtime(provider: str, model: str) -> str:
     return "pi"
 
 
-def _vault():
+def _keyring():
     import keyring
-    vault = keyring.get_keyring()
+    store = keyring.get_keyring()
     # Refuse plaintext and null/fail fallbacks, including chained backends.
-    if type(vault).__module__ not in {"keyring.backends.macOS", "keyring.backends.Windows",
-                                     "keyring.backends.SecretService", "keyring.backends.kwallet"}:
+    if type(store).__module__ not in {"keyring.backends.macOS", "keyring.backends.Windows",
+                                 "keyring.backends.SecretService", "keyring.backends.kwallet"}:
         raise ValueError("An OS credential store is required (Keychain, Windows Credential Manager or Secret Service)")
-    return vault
+    return store
 
 
 def credential(connection: dict) -> str:
     if connection["auth"] != "api_key":
         return ""
-    secret = _vault().get_password("Roosta AI", connection["credential_ref"])
+    secret = _keyring().get_password("Roosta AI", connection["credential_ref"])
     if not secret:
         raise ValueError(f"{connection['label']} needs its API key; reconnect it in Settings")
     return secret
@@ -145,7 +145,7 @@ def credential(connection: dict) -> str:
 def forget_credential(connection: dict) -> None:
     """Remove an API-key account's secret from the OS credential store."""
     if connection["auth"] == "api_key":
-        _vault().delete_password("Roosta AI", connection["credential_ref"])
+        _keyring().delete_password("Roosta AI", connection["credential_ref"])
 
 
 def create(body: dict) -> dict:
@@ -176,7 +176,7 @@ def create(body: dict) -> dict:
                   "billing": billing,
                   "connected": True, "tested": False}
     if auth == "api_key":
-        _vault().set_password("Roosta AI", connection["credential_ref"], key.strip())
+        _keyring().set_password("Roosta AI", connection["credential_ref"], key.strip())
     data["connections"].append(connection)
     if body.get("default_if_unset") is True and not data.get("default"):
         data["default"] = connection_id
@@ -184,7 +184,7 @@ def create(body: dict) -> dict:
         save(data)
     except Exception:
         if auth == "api_key":
-            _vault().delete_password("Roosta AI", connection["credential_ref"])
+            _keyring().delete_password("Roosta AI", connection["credential_ref"])
         raise
     return connection
 
@@ -245,5 +245,5 @@ def change(connection_id: str, body: dict) -> dict:
     if key.strip():
         if connection["auth"] != "api_key":
             raise ValueError("This connection uses official account sign-in")
-        _vault().set_password("Roosta AI", connection["credential_ref"], key.strip())
+        _keyring().set_password("Roosta AI", connection["credential_ref"], key.strip())
     return update(connection_id, label=label.strip(), connected=True)

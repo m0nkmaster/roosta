@@ -2,6 +2,14 @@
 
 Record each release newest first. Bump minor for features and visible behaviour, patch for fixes and polish.
 
+## 0.23.0 - 2026-11-27
+
+- Roosta now says "workspace" everywhere it used to say "vault". Custom pages read documents from `/api/workspace/files` and `/api/workspace/document` instead of the `/api/vault/...` routes, the desktop menu's Vault Pulse is now Pulse, and the document page is titled Workspace document.
+- The worker that keeps your Assistant board is called the Assistant (not the conductor) in the starter schedule, skills and docs.
+- Pulse loads project briefs and saves weekly reviews through `/api/projects/<name>` instead of `/api/constellation/<name>`.
+- Closing, reopening and snoozing board items and creating reminders now work even when no AI connection is ready.
+- The Office page's code moved into separate, readable scripts, one per part of the office. The office looks and behaves the same.
+
 ## 0.22.5 - 2026-11-27
 
 - Roosta refuses requests addressed to any host other than an IP address, localhost or your saved host, so a web page can no longer reach your workspace or start a chat through DNS rebinding.

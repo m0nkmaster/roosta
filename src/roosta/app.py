@@ -33,6 +33,7 @@ from roosta.chat import (ChatRouter, clip_body, ConversationHistoryStore, Sessio
 from roosta import ai_backend
 from roosta import ai_connections, ai_runtime, ai_settings, office, pages, pi_agent, teletext
 from roosta.activity_log import ActivityLog
+from roosta.board_state import BoardState
 from roosta.claude_code import (
     read_claude_transcript,
     session_exists as claude_session_exists,
@@ -81,8 +82,8 @@ from roosta.task_config import (
 )
 from roosta.pulse import build_pulse, project_brief, review_project
 from roosta.usage import UsageStore
-from roosta.workspace import (VAULT_SOURCE_SUFFIXES, build_catalogue, context_documents, markdown_title,
-                              read_document, resolve_vault_text, source_as_markdown, split_front_matter)
+from roosta.workspace import (SOURCE_SUFFIXES, build_catalogue, context_documents, markdown_title,
+                              read_document, resolve_workspace_text, source_as_markdown, split_front_matter)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger(__name__)
@@ -95,11 +96,6 @@ SESSIONS_FILE = ASSISTANT_DIR / "sessions.json"
 TOPICS_FILE = ASSISTANT_DIR / "topics.json"
 CHAT_HISTORY_FILE = ASSISTANT_DIR / "chat-history.json"
 UPLOADS_DIR = ASSISTANT_DIR / "uploads"
-HANDLED_FILE = ASSISTANT_DIR / "handled.json"
-SNOOZED_FILE = ASSISTANT_DIR / "snoozed.json"
-RAISED_FILE = ASSISTANT_DIR / "raised.json"
-MERGED_FILE = ASSISTANT_DIR / "merged.json"
-REMINDERS_FILE = ASSISTANT_DIR / "reminders.json"
 product_usage = UsageStore(PRODUCT_USAGE_FILE)
 ARCHIVED_CHATS_FILE = ASSISTANT_DIR / "archived-chats.json"
 CHAT_IDEAS_FILE = ASSISTANT_DIR / "chat-ideas.json"
@@ -111,6 +107,7 @@ chat_router: ChatRouter | None = None  # set in lifespan once the AI backend is 
 activity = ActivityLog()
 activity.hydrate()
 connectors = connectors_mod.Connectors(path=paths.CONNECTORS_FILE)
+board = BoardState(ASSISTANT_DIR, ConversationHistoryStore(CHAT_HISTORY_FILE))
 runner = TaskRunner(activity_log=activity, connector_registry=connectors)
 
 
@@ -140,13 +137,9 @@ async def _start_chat_router() -> None:
         chat_router = ChatRouter(
             SessionMap(SESSIONS_FILE),
             str(paths.WORKSPACE),  # chats run at the workspace root
-            HANDLED_FILE,
-            SNOOZED_FILE,
             TopicStore(TOPICS_FILE),
             ConversationHistoryStore(CHAT_HISTORY_FILE),
-            reminders_path=REMINDERS_FILE,
-            raised_path=RAISED_FILE,
-            merged_path=MERGED_FILE,
+            board=board,
         )
         log.info("%s ready", ai_backend.label())
     except Exception as e:
@@ -408,7 +401,7 @@ async def api_ai_connections(item_id: str = ""):
         engines = {name: await asyncio.to_thread(ai_runtime.describe, name) for name in (*ai_runtime.RUNTIMES, "cursor")}
         runtimes = {name: {"version": engine["version"], "installed": engine["installed"]}
                     for name, engine in engines.items()}
-        onboarding = await asyncio.to_thread(setup_item, chat_router)
+        onboarding = await asyncio.to_thread(setup_item, board)
         data = ai_connections.load()
         selected, selected_model = "", ""
         if item_id and chat_router:
@@ -417,7 +410,7 @@ async def api_ai_connections(item_id: str = ""):
             selected_model = sessions.model(item_id)
         data = {**data, "connections": [{**c, "signed_in": ai_backend.signed_in(c)} for c in data["connections"]]}
         missing = setup_gaps() if (onboarding and onboarding["id"] == SETUP_ITEM_ID
-                                   and SETUP_ITEM_ID not in (chat_router.handled() if chat_router else {})) else []
+                                   and SETUP_ITEM_ID not in board.handled()) else []
         return ai_settings_result({**data, "providers": ai_connections.PROVIDERS, "runtimes": runtimes,
             "engines": engines, "terminal_available": sys.platform == "darwin",
             "workspace_setup_ready": bool(missing), "workspace_setup_missing": missing,
@@ -713,7 +706,7 @@ async def api_task_settings(task_id: str, body: dict, request: Request):
 @app.delete("/api/tasks/{task_id}")
 async def api_task_delete(task_id: str):
     """Fire a worker: remove it from tasks.yaml with its caches, state and 1:1 chat.
-    Its skill and anything it wrote to the vault stay."""
+    Its skill and anything it wrote to the workspace stay."""
     try:
         removed = runner.remove(task_id)
     except RuntimeError as exc:
@@ -840,11 +833,11 @@ async def api_pages():
     return JSONResponse(pages.custom_pages())
 
 
-@app.get("/api/vault/files")
-async def api_vault_files(glob: str = "**/*.md"):
+@app.get("/api/workspace/files")
+async def api_workspace_files(glob: str = "**/*.md"):
     """Read-only: Markdown files matching a glob, with frontmatter, for custom pages."""
     try:
-        files = await asyncio.to_thread(pages.vault_files, glob)
+        files = await asyncio.to_thread(pages.workspace_files, glob)
     except ValueError as exc:
         return JSONResponse({"error": str(exc)}, status_code=400)
     return JSONResponse(files, headers={"Cache-Control": "no-store"})
@@ -900,36 +893,32 @@ async def runner_page():
 
 
 def board_doc() -> dict:
-    """The conductor's last board, normalised."""
+    """The assistant task's last board, normalised."""
     state = runner.get_state("assistant") or {}
     return normalise_board_doc(state.get("last_output", {}).get("details", {}))
 
 
-def live_lanes(states: list[dict], handled: dict) -> tuple[list[dict], list[dict]]:
+def live_lanes(states: list[dict]) -> tuple[list[dict], list[dict]]:
     """Every source's cards in the active and later lanes, minus closed and snoozed ones."""
-    return board_lanes(board_doc()["items"], states, chat_router, handled)
+    return board_lanes(board_doc()["items"], states, board)
 
 
 @app.get("/api/board")
 async def api_board(threads: str = "", thread: Annotated[list[str] | None, Query()] = None):
-    """Cached conductor output for the rail + done-today, plus agent health.
+    """Cached assistant output for the rail + done-today, plus agent health.
 
     Handled items (AI-solved or user-closed) are filtered out of the rail
     immediately and surfaced as done_today, so a resolved item disappears
-    without waiting for the next conductor pass.
+    without waiting for the next assistant pass.
     """
     state = runner.get_state("assistant")
     doc = board_doc()
     states = runner.get_states()
-    handled = chat_router.handled() if chat_router else {}
-    doc["items"], doc["later"] = live_lanes(states, handled)
-    if chat_router:
-        track_ids = [
-            item["id"] for item in doc["items"] + doc["later"] if item.get("id")
-        ]
-        raised = chat_router.record_raised(track_ids)
-        attach_raised_at(doc["items"], raised)
-        attach_raised_at(doc["later"], raised)
+    handled = board.handled()
+    doc["items"], doc["later"] = live_lanes(states)
+    raised = board.record_raised([item["id"] for item in doc["items"] + doc["later"] if item.get("id")])
+    attach_raised_at(doc["items"], raised)
+    attach_raised_at(doc["later"], raised)
     done = [{"text": v.get("result", ""), "at": v.get("at", "")}
             for v in sorted(handled.values(), key=lambda v: v.get("at", ""), reverse=True)]
     doc["done_today"] = done + doc.get("done_today", [])
@@ -968,8 +957,8 @@ async def api_board(threads: str = "", thread: Annotated[list[str] | None, Query
 @app.get("/api/board/count")
 async def api_board_count():
     """Rail item count for the nav badge, with the same lanes as api_board."""
-    handled = chat_router.handled() if chat_router else {}
-    items, later = live_lanes(runner.get_states(), handled)
+    handled = board.handled()
+    items, later = live_lanes(runner.get_states())
     today = datetime.now(timezone.utc).date().isoformat()
     # notes/later/done feed the Office whiteboard kanban
     notes = [{"title": i.get("title", ""), "owner": i.get("action_owner", "assistant"),
@@ -981,7 +970,7 @@ async def api_board_count():
 @app.post("/api/board/refresh")
 async def api_board_refresh():
     if not runner.trigger("assistant"):
-        return JSONResponse({"error": "conductor task not configured"}, status_code=404)
+        return JSONResponse({"error": "assistant task not configured"}, status_code=404)
     return JSONResponse({"triggered": True})
 
 
@@ -1006,9 +995,7 @@ async def api_notify(body: dict):
         due = normalise_defer_until(body.get("due"))
         if due is None:
             return JSONResponse({"error": "invalid due time"}, status_code=400)
-        if chat_router is None:
-            return JSONResponse({"error": "reminders unavailable"}, status_code=503)
-        reminder_id = chat_router.add_reminder(
+        reminder_id = board.add_reminder(
             title, str(body.get("body", "")).strip(), due)
         return JSONResponse({"ok": True, "id": reminder_id, "due": due})
     item_id = str(body.get("id") or f"notify-{uuid.uuid4().hex[:8]}")
@@ -1030,24 +1017,20 @@ async def api_notify(body: dict):
 
 def _current_board_item(item_id: str) -> dict | None:
     """Resolve one board item across all sources, closed and snoozed included, or None."""
-    active, later = collect_board_items(
-        board_doc()["items"], runner.get_states(),
-        chat_router.reminders() if chat_router else [], chat_router)
+    active, later = collect_board_items(board_doc()["items"], runner.get_states(), board)
     return next((i for i in active + later if i["id"] == item_id), None)
 
 
 @app.post("/api/board/close")
 async def api_board_close(body: dict):
     """Explicitly close an item (the user's call). Drops it from the rail now and
-    the conductor suppresses it next pass. A snapshot of the item is stored so
+    the assistant task suppresses it next pass. A snapshot of the item is stored so
     it can be reviewed and revived from the Recently closed list."""
-    if chat_router is None and not await ensure_chat_router():
-        return chat_unavailable()
     if not isinstance(body, dict) or "item_id" not in body:
         return JSONResponse({"error": "need item_id"}, status_code=400)
     item_id = str(body["item_id"])
-    snapshot = _current_board_item(item_id) or chat_router.known_item(item_id)
-    chat_router.mark_handled(item_id, str(body.get("result", "Closed by " + profile.load().user)), snapshot)
+    snapshot = _current_board_item(item_id) or (chat_router.known_item(item_id) if chat_router else None)
+    board.mark_handled(item_id, str(body.get("result", "Closed by " + profile.load().user)), snapshot)
     return JSONResponse({"closed": True})
 
 
@@ -1055,18 +1038,16 @@ async def api_board_close(body: dict):
 async def api_board_reopen(body: dict):
     """Revive a recently closed item. Drops it from the handled store and, using
     its stored snapshot, pushes it back onto the rail under its original id so the
-    conversation thread is preserved. If the conductor still produces it, the
+    conversation thread is preserved. If the assistant task still produces it, the
     un-handle alone suffices and the pushed copy is skipped as a duplicate."""
-    if chat_router is None and not await ensure_chat_router():
-        return chat_unavailable()
     if not isinstance(body, dict):
         return JSONResponse({"error": "invalid request"}, status_code=400)
     item_id = str(body.get("item_id", "")).strip()
     if not item_id or len(item_id) > 200:
         return JSONResponse({"error": "need valid item_id"}, status_code=400)
-    if item_id not in chat_router.handled():
+    if item_id not in board.handled():
         return JSONResponse({"error": "item not closed"}, status_code=404)
-    snapshot = chat_router.unhandle(item_id)
+    snapshot = board.unhandle(item_id)
     if snapshot:
         item = normalise_board_doc({"items": [{**snapshot, "id": item_id}]})["items"][0]
         item["title"] = item["title"] or "Reopened item"
@@ -1079,8 +1060,6 @@ async def api_board_reopen(body: dict):
 @app.post("/api/board/snooze")
 async def api_board_snooze(body: dict):
     """Park a current item until an allowlisted future point."""
-    if chat_router is None and not await ensure_chat_router():
-        return chat_unavailable()
     if not isinstance(body, dict):
         return JSONResponse({"error": "invalid request"}, status_code=400)
     item_id = str(body.get("item_id", "")).strip()
@@ -1091,24 +1070,22 @@ async def api_board_snooze(body: dict):
         until = snooze_deadline(preset)
     except ValueError:
         return JSONResponse({"error": "unknown snooze preset"}, status_code=400)
-    active_items, _ = live_lanes(runner.get_states(), chat_router.handled())
+    active_items, _ = live_lanes(runner.get_states())
     if not any(item["id"] == item_id for item in active_items):
         return JSONResponse({"error": "item not found"}, status_code=404)
-    chat_router.snooze(item_id, until)
+    board.snooze(item_id, until)
     return JSONResponse({"snoozed": True, "until": until})
 
 
 @app.post("/api/board/unsnooze")
 async def api_board_unsnooze(body: dict):
     """Bring a parked item back into the active queue now."""
-    if chat_router is None and not await ensure_chat_router():
-        return chat_unavailable()
     if not isinstance(body, dict):
         return JSONResponse({"error": "invalid request"}, status_code=400)
     item_id = str(body.get("item_id", "")).strip()
     if not item_id or len(item_id) > 200:
         return JSONResponse({"error": "need valid item_id"}, status_code=400)
-    chat_router.unsnooze(item_id)
+    board.unsnooze(item_id)
     return JSONResponse({"unsnoozed": True})
 
 
@@ -1120,7 +1097,7 @@ async def api_board_chat(body: dict):
         return JSONResponse({"error": "need item_id"}, status_code=400)
     item_id = str(body["item_id"])
     if item_id == AI_SETUP_ITEM_ID or (
-        (setup_item(chat_router) or {}).get("id") == AI_SETUP_ITEM_ID
+        (setup_item(board) or {}).get("id") == AI_SETUP_ITEM_ID
         and (item_id == SETUP_ITEM_ID or not chat_router.sessions.has_item(item_id))
     ):
         return JSONResponse({"error": "Choose a default AI account in Settings and finish its software and model setup.",
@@ -1145,7 +1122,7 @@ async def api_board_chat(body: dict):
         if item is None:
             return JSONResponse({"error": "invalid chat id"}, status_code=404)
     else:
-        # The conductor drops items it considers resolved, capped out or aged
+        # The assistant task drops items it considers resolved, capped out or aged
         # off, but the user may still be mid-conversation about one. Continue the
         # existing thread rather than 404ing a live chat off the board.
         item = _current_board_item(item_id) or chat_router.known_item(item_id)
@@ -1166,11 +1143,11 @@ async def api_board_chat(body: dict):
         except (OSError, ValueError) as exc:
             return JSONResponse({"error": str(exc)}, status_code=400)
         if files:
-            vault = paths.WORKSPACE.resolve()
+            workspace = paths.WORKSPACE.resolve()
             item = {**item, "uploaded_files": [
                 {**{key: file[key] for key in ("id", "name", "size", "image")},
-                 "path": Path(file["path"]).relative_to(vault).as_posix()
-                         if Path(file["path"]).is_relative_to(vault) else file["path"]}
+                 "path": Path(file["path"]).relative_to(workspace).as_posix()
+                         if Path(file["path"]).is_relative_to(workspace) else file["path"]}
                 for file in files]}
     handle = chat_router.start_turn(item["id"], item, str(body.get("message", "")))
     if handle.queued:
@@ -1322,16 +1299,16 @@ async def api_document_source(request: Request, path: str = Query(max_length=500
     return JSONResponse(result, headers={"Cache-Control": "no-store"})
 
 
-@app.get("/api/vault-document")
-async def api_vault_document(path: str = "", visible: bool = False):
-    """Return one validated vault document (Markdown, or plain text as source)."""
+@app.get("/api/workspace/document")
+async def api_workspace_document(path: str = "", visible: bool = False):
+    """Return one validated workspace document (Markdown, or plain text as source)."""
     try:
         if visible:
             canonical, text, _ = read_document(paths.WORKSPACE, path)
             body, properties = split_front_matter(text)
             return JSONResponse({"path": canonical.as_posix(), "title": markdown_title(text, canonical.stem),
                                  "content": body, "properties": properties}, headers={"Cache-Control": "no-store"})
-        document = resolve_vault_text(path)
+        document = resolve_workspace_text(path)
     except ValueError:
         return JSONResponse({"error": "invalid document path"}, status_code=400)
     except FileNotFoundError:
@@ -1343,7 +1320,7 @@ async def api_vault_document(path: str = "", visible: bool = False):
     except UnicodeDecodeError:
         return JSONResponse({"error": "document is not UTF-8"}, status_code=415)
     relative = document.relative_to(paths.WORKSPACE.resolve()).as_posix()
-    if document.suffix.lower() in VAULT_SOURCE_SUFFIXES:
+    if document.suffix.lower() in SOURCE_SUFFIXES:
         return JSONResponse({
             "path": relative, "title": document.name,
             "content": source_as_markdown(content, document.suffix), "properties": [],
@@ -1454,11 +1431,11 @@ async def assistant_page():
 
 @app.get("/api/pulse")
 async def api_pulse():
-    """Live vault telemetry, AI activity and board mood for the Pulse page."""
+    """Live workspace telemetry, AI activity and board mood for the Pulse page."""
     states = runner.get_states()
     health = board_health(states)
-    handled = chat_router.handled() if chat_router else {}
-    active_items, later_items = live_lanes(states, handled)
+    handled = board.handled()
+    active_items, later_items = live_lanes(states)
     chat_items = []
     if chat_router:
         for item_id in chat_router.active_items():
@@ -1482,8 +1459,8 @@ async def api_pulse():
     ))
 
 
-@app.get("/api/constellation/{slug}")
-async def api_constellation_project(slug: str):
+@app.get("/api/projects/{slug}")
+async def api_project_brief(slug: str):
     """Briefing for a selected workspace page."""
     try:
         return JSONResponse(await asyncio.to_thread(project_brief, paths.WORKSPACE, slug),
@@ -1494,11 +1471,11 @@ async def api_constellation_project(slug: str):
         return JSONResponse({"error": "page not found"}, status_code=404)
 
 
-@app.post("/api/constellation/{slug}/review")
-async def api_constellation_review(slug: str, body: dict):
+@app.post("/api/projects/{slug}/review")
+async def api_project_review(slug: str, body: dict):
     """Weekly-review decision: change status, or record the user's confirmation.
 
-    A local vault write the user makes by clicking; it touches only the selected page
+    A local workspace write the user makes by clicking; it touches only the selected page
     frontmatter keys `status`, `last_updated`, `verified` and `stale_after`.
     """
     if not isinstance(body, dict):

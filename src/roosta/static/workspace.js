@@ -132,7 +132,7 @@ async function previewFile(path){
   $('preview').innerHTML='<div class="navigator-empty">Loading document…</div>';
   renderResults();
   try{
-    const response=await fetch('/api/vault-document?path='+encodeURIComponent(path)+'&visible=true');
+    const response=await fetch('/api/workspace/document?path='+encodeURIComponent(path)+'&visible=true');
     const data=await response.json();if(request!==state.request) return;
     if(!response.ok) throw new Error(data.error||'Could not open document.');
     editor.setPath(path,data.title);state.preview=data;renderPreview();
@@ -226,7 +226,7 @@ markdownCopy.watch('#preview article');
 $('copy-document').onclick=()=>state.preview&&markdownCopy.copyMarkdown(state.preview.content.trim()+'\n','Document copied as Markdown');
 $('preview').addEventListener('click',event=>{
   const button=event.target.closest('[data-project]');if(button) return openCollection(button.dataset.project);
-  // Vault links preview in place; modifier clicks still open the full document in a new tab.
+  // Workspace links preview in place; modifier clicks still open the full document in a new tab.
   const link=event.target.closest('a[href]'),url=link&&new URL(link.href);
   if(!url||url.origin!==location.origin||url.pathname!=='/document'||event.metaKey||event.ctrlKey||event.shiftKey) return;
   event.preventDefault();previewFile(url.searchParams.get('path'));

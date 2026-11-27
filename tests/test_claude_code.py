@@ -77,8 +77,8 @@ def test_claude_args_mint_then_resume_session(claude, monkeypatch):
     assert explicit[explicit.index("--model") + 1] == "sonnet" and explicit[explicit.index("--effort") + 1] == "high"
     assert first[first.index("--permission-mode") + 1] == "dontAsk"
     assert first[-1] == sid  # prompt goes on stdin, never argv
-    (claude / "projects" / "-vault").mkdir(parents=True)
-    (claude / "projects" / "-vault" / f"{sid}.jsonl").write_text("{}\n")
+    (claude / "projects" / "-workspace").mkdir(parents=True)
+    (claude / "projects" / "-workspace" / f"{sid}.jsonl").write_text("{}\n")
     again = claude_code.claude_args(session_id=sid, model="opus")
     assert again[again.index("--resume") + 1] == sid
     assert again[again.index("--model") + 1] == "opus"

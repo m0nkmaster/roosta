@@ -11,7 +11,8 @@ from pathlib import Path
 from urllib.parse import parse_qsl, unquote, urlencode, urlsplit, urlunsplit
 
 from roosta import ai_backend, ai_connections, paths, profile
-from roosta.chat import clip_body, resolve_alias
+from roosta.board_state import BoardState, resolve_alias
+from roosta.chat import clip_body
 from roosta.claude_code import CLAUDE_SIGNIN_MESSAGE
 from roosta.task_config import load_tasks
 from roosta.workspace import markdown_path
@@ -61,7 +62,7 @@ def _normalise_links(raw) -> list:
 
 
 def _normalise_documents(raw) -> list:
-    """Keep safe relative paths to Markdown documents in the vault."""
+    """Keep safe relative paths to Markdown documents in the workspace."""
     documents = []
     for doc in raw if isinstance(raw, list) else []:
         if not isinstance(doc, dict):
@@ -75,7 +76,7 @@ def _normalise_documents(raw) -> list:
 
 
 def _normalise_project_ref(raw) -> str | None:
-    """Allow only canonical top-level vault project directories."""
+    """Allow only canonical top-level workspace project directories."""
     ref = str(raw or "").strip()
     return ref if re.fullmatch(r"projects/[a-z0-9]+(?:-[a-z0-9]+)*", ref) else None
 
@@ -158,7 +159,7 @@ def _normalise_action_label(raw, action_type: str) -> str:
 
 
 def normalise_board_doc(raw) -> dict:
-    """Coerce conductor `details` into a safe board document. Garbage -> empty."""
+    """Coerce assistant `details` into a safe board document. Garbage -> empty."""
     if not isinstance(raw, dict):
         raw = {}
     items = []
@@ -196,7 +197,7 @@ _CARRIED_FIELDS = _REFINABLE_FIELDS + ("links", "documents")
 
 
 def carry_forward_board_items(details, previous) -> None:
-    """Fill a conductor pass's id-only "keep" stubs from the board it replaced.
+    """Fill an assistant pass's id-only "keep" stubs from the board it replaced.
 
     For matching ids, copy missing or empty fields into `details`. Values
     supplied by the current pass take precedence.
@@ -222,7 +223,7 @@ def carry_forward_board_items(details, previous) -> None:
 def reconcile_board_output(task_id: str, status: str, output: dict, previous) -> dict:
     details = output.get("details") if isinstance(output.get("details"), dict) else {}
     if status == "error" and task_id == "assistant":
-        # Publish conductor edits as a unit. A partial merge can hide a preserved card.
+        # Publish assistant edits as a unit. A partial merge can hide a preserved card.
         details = details.copy()
         for key in ("items", "merges", "done_today"):
             details.pop(key, None)
@@ -241,8 +242,8 @@ def _refine_board_item(target: dict, update: dict, raw: dict,
                        fill_only: bool = False) -> None:
     """Apply a newer source's view of a card: supplied fields win, context merges.
 
-    `fill_only` is for a duplicate folded in by a conductor merge: the kept card
-    is the conductor's synthesis, so the duplicate's narrower view only fills
+    `fill_only` is for a duplicate folded in by an assistant merge: the kept card
+    is the assistant task's synthesis, so the duplicate's narrower view only fills
     blanks and adds context.
     """
     for name in _REFINABLE_FIELDS:
@@ -255,15 +256,15 @@ def _refine_board_item(target: dict, update: dict, raw: dict,
     target["new"] = bool(target.get("new")) or update["new"]
 
 
-def merge_board_feed_items(conductor_items: list[dict], states: list[dict],
+def merge_board_feed_items(assistant_items: list[dict], states: list[dict],
                            aliases: dict | None = None) -> list[dict]:
-    """Merge every scheduled skill's `details.items` into the conductor's board.
+    """Merge every scheduled skill's `details.items` into the assistant task's board.
 
     Any skill may add a card. A skill returning an id already on the board
     refines that card instead of duplicating it: sources apply oldest run
     first, so the freshest view of each field wins. An update for an id not on
     the board needs a title, so a partial refinement never becomes a blank card.
-    `aliases` maps duplicate ids the conductor folded away to the kept card, so
+    `aliases` maps duplicate ids the assistant task folded away to the kept card, so
     a duplicate's later returns add to the kept card instead of reappearing.
     """
     aliases = aliases or {}
@@ -271,7 +272,7 @@ def merge_board_feed_items(conductor_items: list[dict], states: list[dict],
     merged = []
     by_id = {}
     updated = {}
-    for item in conductor_items:
+    for item in assistant_items:
         item_id = resolve_alias(item.get("id") or "", aliases)
         if not item_id:
             continue
@@ -321,7 +322,7 @@ def merge_board_feed_items(conductor_items: list[dict], states: list[dict],
             merged.append(item)
         # Older task outputs put edit descriptions in `items`, but still expose
         # the draft path at details.draft. Attach that draft to the matching
-        # conductor episode so the current rolling-comms card remains useful.
+        # assistant episode so the current rolling-comms card remains useful.
         if feed_documents and not feed_items:
             candidates = [
                 item for item in merged
@@ -494,20 +495,20 @@ def recently_closed(handled: dict, router, limit: int = 15) -> list[dict]:
     return rows[:limit]
 
 
-def board_merges(states: list[dict], router=None) -> dict:
-    """Saved duplicate -> kept merges, plus any the conductor's latest pass made."""
-    conductor = next((s for s in states if s.get("id") == "assistant"), {})
-    output = conductor.get("last_output")
+def board_merges(states: list[dict], board: BoardState) -> dict:
+    """Saved duplicate -> kept merges, plus any the assistant task's latest pass made."""
+    assistant = next((s for s in states if s.get("id") == "assistant"), {})
+    output = assistant.get("last_output")
     details = output.get("details", {}) if isinstance(output, dict) else {}
     merges = details.get("merges") if isinstance(details, dict) else None
-    return router.record_merges(merges) if router else {}
+    return board.record_merges(merges)
 
 
 SETUP_ITEM_ID = "roosta-setup"
 AI_SETUP_ITEM_ID = "roosta-ai-setup"
 
 
-def setup_item(router=None) -> dict | None:
+def setup_item(board: BoardState | None = None) -> dict | None:
     """The AI card while no AI connection can run; otherwise the first-run card, shown until
     PROFILE.md names the user and kept once a setup conversation has started, because setup
     writes the name in its first step. The card goes when setup ends with DONE (or the user
@@ -551,8 +552,7 @@ def setup_item(router=None) -> dict | None:
             "links": [], "documents": [], "new": True,
         }
     if profile.load().name:
-        history = getattr(router, "conversation_history", None)
-        if not (history and history(SETUP_ITEM_ID)):
+        if not (board and board.talked_on(SETUP_ITEM_ID)):
             return None
     return {
         "id": SETUP_ITEM_ID,
@@ -597,20 +597,20 @@ def setup_gaps() -> list[str]:
     return gaps
 
 
-def collect_board_items(items: list[dict], states: list[dict], reminders: list[dict],
-                        router=None) -> tuple[list[dict], list[dict]]:
+def collect_board_items(items: list[dict], states: list[dict],
+                        board: BoardState) -> tuple[list[dict], list[dict]]:
     """Build the active and future item sources shared by the board and chat."""
     active = merge_pushed_notifications(
-        merge_board_feed_items(items, states, board_merges(states, router)))
+        merge_board_feed_items(items, states, board_merges(states, board)))
     engineer_item = roosta_engineer_item(states)
     if engineer_item and engineer_item["id"] not in {item["id"] for item in active}:
         active.insert(0, engineer_item)
     # Prerequisites come from local state, never cached model output.
     active = [item for item in active if item["id"] not in {SETUP_ITEM_ID, AI_SETUP_ITEM_ID}]
-    first_run = setup_item(router)
+    first_run = setup_item(board)
     if first_run:
         active.insert(0, first_run)
-    due_reminders, later_reminders = split_due_reminders(reminders)
+    due_reminders, later_reminders = split_due_reminders(board.reminders())
     have = {item["id"] for item in active}
     active = [item for item in due_reminders if item["id"] not in have] + active
     have.update(item["id"] for item in active)
@@ -618,20 +618,21 @@ def collect_board_items(items: list[dict], states: list[dict], reminders: list[d
     return active, later
 
 
-def board_lanes(items: list[dict], states: list[dict], router, handled: dict):
-    reminders = router.reminders() if router else []
-    items, future = collect_board_items(items, states, reminders, router)
+def board_lanes(items: list[dict], states: list[dict], board: BoardState):
+    """Every source's open cards, split into the active and Later lanes."""
+    handled = board.handled()
+    items, future = collect_board_items(items, states, board)
     active, later = split_snoozed_items([item for item in items if item["id"] not in handled],
-                                        router.snoozed() if router else {})
+                                        board.snoozed())
     parked = {item["id"] for item in later}
     later.extend(item for item in future if item["id"] not in parked and item["id"] not in handled)
     later.sort(key=lambda item: item.get("snoozed_until", ""))
     return active, later
 
 
-# The conductor's picture is only as complete as the sensors feeding its signal
+# The assistant task's picture is only as complete as the sensors feeding its signal
 # world. If a sensor task has errored or gone stale, the board can show a false
-# all-clear - fewer items, no warning. Sensors are the conductor plus every task
+# all-clear - fewer items, no warning. Sensors are the assistant task plus every task
 # marked `sensor: true` in tasks.yaml: the watchers gathering the signal it reasons over.
 BOARD_SENSOR_IDS = ("assistant",)
 BOARD_STALE_FACTOR = 3  # last_run older than N x interval => stale
@@ -739,9 +740,9 @@ def snooze_deadline(preset: str, now: datetime | None = None) -> str:
 
 def split_snoozed_items(items: list[dict], snoozed: dict,
                          now: datetime | None = None) -> tuple[list[dict], list[dict]]:
-    """Partition current conductor items into active and deliberately parked.
+    """Partition current assistant items into active and deliberately parked.
 
-    Only items the conductor still believes need the user appear in Later. Expired or
+    Only items the assistant task still believes need the user appear in Later. Expired or
     malformed records fail open and put the item back in the active queue.
     """
     current = now or datetime.now(timezone.utc)

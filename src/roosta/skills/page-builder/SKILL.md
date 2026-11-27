@@ -13,7 +13,7 @@ A page shows one of three things:
 
 | Data | Source |
 |------|--------|
-| Workspace documents | `GET /api/vault/files?glob=<glob>`: path, title, frontmatter and modified time per Markdown file (no bodies). `GET /api/vault-document?path=<path>` for one document's full text |
+| Workspace documents | `GET /api/workspace/files?glob=<glob>`: path, title, frontmatter and modified time per Markdown file (no bodies). `GET /api/workspace/document?path=<path>` for one document's full text |
 | Scheduled work | `GET /api/tasks`: every task's status and `last_output` |
 | Anything else | JSON a scheduled skill writes to `.roosta/state/pages/<name>/<file>.json`, read with `GET /api/pages/<name>/data/<file>.json` |
 

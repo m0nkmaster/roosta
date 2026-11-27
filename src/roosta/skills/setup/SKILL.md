@@ -34,11 +34,11 @@ Where they keep their task list (Notion, Things, Jira) goes in `AGENTS.md` as a 
 
 ## 4. Starter schedule
 
-Copy the tasks in [references/starter-tasks.yaml](references/starter-tasks.yaml) into `.roosta/tasks.yaml`: the assistant conductor (every 15 minutes), the workspace gardener, chat ideas (weekly, the ideas a new chat offers) and the workspace learner. Explain each in one line. If they connected a chat tool, offer a watcher skill for it (written with `write-a-skill`, returning board cards per the board contract, `sensor: true` and `requires: [<connector>]`). New workers omit `connection` and follow the selected default in Settings → AI connections. Add a connected named connection id only when the user explicitly pins that worker to an account.
+Copy the tasks in [references/starter-tasks.yaml](references/starter-tasks.yaml) into `.roosta/tasks.yaml`: the assistant worker (every 15 minutes), the workspace gardener, chat ideas (weekly, the ideas a new chat offers) and the workspace learner. Explain each in one line. If they connected a chat tool, offer a watcher skill for it (written with `write-a-skill`, returning board cards per the board contract, `sensor: true` and `requires: [<connector>]`). New workers omit `connection` and follow the selected default in Settings → AI connections. Add a connected named connection id only when the user explicitly pins that worker to an account.
 
 ## 5. A first real card
 
-From their priorities, pick the one with the clearest next step and create a board card for it: in a board chat end with `<<<REMIND>>>` (title, one-line body, `due: null`); from the terminal, `curl -s -X POST "127.0.0.1:${ROOSTA_PORT:-7667}/api/notify" -H 'content-type: application/json' -d '{"title":"...","body":"..."}'`. Tell them the conductor will start raising cards on its own within the hour.
+From their priorities, pick the one with the clearest next step and create a board card for it: in a board chat end with `<<<REMIND>>>` (title, one-line body, `due: null`); from the terminal, `curl -s -X POST "127.0.0.1:${ROOSTA_PORT:-7667}/api/notify" -H 'content-type: application/json' -d '{"title":"...","body":"..."}'`. Tell them the assistant worker will start raising cards on its own within the hour.
 
 ## 6. Trim what they don't want
 

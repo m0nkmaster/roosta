@@ -19,7 +19,7 @@ Classify each useful candidate into exactly one primary outcome:
 | Outcome | Meaning | Action |
 |---------|---------|--------|
 | **Correction** | The user corrected the agent, the agent repeated a known error, or a tool/path/query failed because guidance was wrong or missing | Trace and fix the root cause if durable and verified |
-| **Learning** | New durable context was settled in the conversation and is missing from the vault | Run the promotion pipeline |
+| **Learning** | New durable context was settled in the conversation and is missing from the workspace | Run the promotion pipeline |
 | **Open** | Unresolved, ambiguous, unverifiable or a single-person data point | Log and flag; never promote |
 | **Transient** | Operational noise or unlikely to matter in a week | Log one short line or omit if valueless |
 | **Already handled** | The conversation itself made the correct canonical edit | Note only when useful; do not duplicate it |

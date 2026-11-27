@@ -36,7 +36,7 @@ class TaskConfig:
     run_at: str = ""          # HH:MM local time; run once per day at this time
     weekdays_only: bool = False  # skip Saturday and Sunday when True
     days_of_week: list[str] = field(default_factory=list)  # lowercase day names; empty means every day
-    writer: bool = False      # rewrites vault docs / auto-commits; serialised against other writers
+    writer: bool = False      # rewrites workspace docs / auto-commits; serialised against other writers
     sensor: bool = False      # feeds the board; board health warns when it fails or goes stale
     unrestricted: bool = False  # standing approval for any action; nothing is off limits
     requires: list[str] = field(default_factory=list)  # connector ids that must be signed in
