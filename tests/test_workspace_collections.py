@@ -55,7 +55,7 @@ def test_membership_is_ordered_visible_and_shared(tmp_path):
     data = workspace.build_catalogue(tmp_path)
     groups = [c for c in data["collections"] if c["group"] == "collections"]
     assert [(c["title"], c["paths"]) for c in groups] == [("Clients", [CLIENT, OTHER]), ("Projects", [PROJECT, OTHER])]
-    signals = pulse.scan_vault(tmp_path)["project_signals"]
+    signals = pulse.scan_workspace(tmp_path)["project_signals"]
     assert [s["path"] for s in signals] == [CLIENT, OTHER, PROJECT]
     assert len({s["name"] for s in signals}) == 3
     assert signals[1]["collections"] == ["Clients", "Projects"]
@@ -76,12 +76,12 @@ def test_cross_cutting_sections_and_topic_order(tmp_path):
 def test_fallback_and_empty_index(tmp_path):
     put(tmp_path, "notes/incidental.md", "noise")
     put(tmp_path, "CONTEXT.md", "context")
-    assert [s["path"] for s in pulse.scan_vault(tmp_path)["project_signals"]] == ["CONTEXT.md"]
+    assert [s["path"] for s in pulse.scan_workspace(tmp_path)["project_signals"]] == ["CONTEXT.md"]
     put(tmp_path, PROJECT, "# Launch")
     assert pulse.project_brief(tmp_path, "launch")["path"] == PROJECT
     assert not (tmp_path / "WORKSPACE.md").exists()
     put(tmp_path, "WORKSPACE.md", "# Nothing selected")
-    assert pulse.scan_vault(tmp_path)["project_signals"] == []
+    assert pulse.scan_workspace(tmp_path)["project_signals"] == []
     with pytest.raises(FileNotFoundError):
         pulse.review_project(tmp_path, "launch", "confirm")
 
@@ -98,26 +98,26 @@ def test_attention_and_review_use_selected_page_only(tmp_path, monkeypatch):
     monkeypatch.setattr(pulse, "datetime", FixedDatetime)
     monkeypatch.setattr(api.paths, "WORKSPACE", tmp_path)
     monkeypatch.setattr(api.profile, "load", lambda: type("Profile", (), {"reviewer": "human:owner"})())
-    star = pulse.scan_vault(tmp_path)["project_signals"][0]
+    star = pulse.scan_workspace(tmp_path)["project_signals"][0]
     assert star["stale"] and star["expired"] and star["verification_due"] and star["age_days"] >= 60
     for path in ["WORKSPACE.md", "Clients/README.md", CLIENT, "Clients/North Coast/brief.md"]:
         with (tmp_path / path).open("a") as f:
             f.write("\n")
-    assert pulse.scan_vault(tmp_path)["project_signals"][0]["last_activity"] == star["last_activity"]
+    assert pulse.scan_workspace(tmp_path)["project_signals"][0]["last_activity"] == star["last_activity"]
     page = tmp_path / CLIENT
     body = page.read_bytes().partition(b"\n---\n")[2]
-    response = asyncio.run(api.api_constellation_review(star["name"], {"action": "confirm"}))
+    response = asyncio.run(api.api_project_review(star["name"], {"action": "confirm"}))
     assert response.status_code == 200
     detail = json.loads(response.body)
     assert detail["path"] == CLIENT and detail["provenance"]["verified"][0]["by"] == "human:owner"
     assert page.read_bytes().endswith(body)
-    fresh = pulse.scan_vault(tmp_path)["project_signals"][0]
+    fresh = pulse.scan_workspace(tmp_path)["project_signals"][0]
     assert fresh["attention_basis"] == "verified" and fresh["age_days"] == 0.5
     assert not (fresh["stale"] or fresh["expired"] or fresh["verification_due"])
     assert pulse.review_project(tmp_path, star["name"], "status", "paused")["status"] == "paused"
     page.unlink()
     page.symlink_to(tmp_path / OTHER)
-    assert asyncio.run(api.api_constellation_review(star["name"], {"action": "confirm"})).status_code == 404
+    assert asyncio.run(api.api_project_review(star["name"], {"action": "confirm"})).status_code == 404
     assert (tmp_path / OTHER).read_text() == "# Partner account"
 
 
@@ -126,7 +126,7 @@ def test_scaffold_and_adoption(tmp_path):
     tmp_path.mkdir()
     skeleton = Path(workspace.__file__).parent / "skeleton"
     copy_skeleton(skeleton, tmp_path)
-    assert [s["path"] for s in pulse.scan_vault(tmp_path)["project_signals"]] == ["PRIORITIES.md", "CONTEXT.md"]
+    assert [s["path"] for s in pulse.scan_workspace(tmp_path)["project_signals"]] == ["PRIORITIES.md", "CONTEXT.md"]
     (tmp_path / "WORKSPACE.md").unlink()
     copy_skeleton(skeleton, tmp_path)
     assert not (tmp_path / "WORKSPACE.md").exists()
@@ -148,10 +148,10 @@ def test_review_preserves_flow_verification_and_exact_body(tmp_path):
 def test_workspace_preview_revalidates_target(tmp_path, monkeypatch):
     monkeypatch.setattr(api.paths, "WORKSPACE", tmp_path)
     page = put(tmp_path, CLIENT, "# Client")
-    assert asyncio.run(api.api_vault_document(CLIENT, visible=True)).status_code == 200
+    assert asyncio.run(api.api_workspace_document(CLIENT, visible=True)).status_code == 200
     page.unlink()
     page.symlink_to(put(tmp_path, "private/source.md", "Secret"))
-    assert asyncio.run(api.api_vault_document(CLIENT, visible=True)).status_code == 400
+    assert asyncio.run(api.api_workspace_document(CLIENT, visible=True)).status_code == 400
 
 
 def test_nested_relationships_and_fenced_examples(tmp_path):
@@ -162,7 +162,7 @@ def test_nested_relationships_and_fenced_examples(tmp_path):
             "python -m pytest -q\n```\nShip on Tuesday.")
     with (tmp_path / PROJECT).open("a") as f:
         f.write("\n" + plan + "\n\n## Background\nUnrelated history.\n")
-    data = pulse.scan_vault(tmp_path)
+    data = pulse.scan_workspace(tmp_path)
     signals = {s["path"]: s for s in data["project_signals"]}
     assert signals[CLIENT]["related"] == [signals[OTHER]["name"]]
     assert signals[OTHER]["related"] == [signals[CLIENT]["name"]]
@@ -175,7 +175,7 @@ def test_symlinked_index_does_not_restore_unselected_projects(tmp_path):
     seed(tmp_path)
     (tmp_path / "WORKSPACE.md").unlink()
     (tmp_path / "WORKSPACE.md").symlink_to(tmp_path / "Clients/README.md")
-    assert not pulse.scan_vault(tmp_path)["project_signals"]
+    assert not pulse.scan_workspace(tmp_path)["project_signals"]
     with pytest.raises(FileNotFoundError):
         pulse.project_brief(tmp_path, "launch")
 
@@ -185,7 +185,7 @@ def test_board_attention_follows_explicit_source_documents(tmp_path):
     item = {"id": "review", "title": "Check pilot", "project_ref": "projects/launch",
             "documents": [{"path": CLIENT}, {"path": PROJECT}, {"path": CLIENT}]}
     data = pulse.build_pulse(tmp_path, [], {}, 1, 0, {}, active_project_items=[item])
-    signals = {s["path"]: s for s in data["vault"]["project_signals"]}
+    signals = {s["path"]: s for s in data["workspace"]["project_signals"]}
     for path in [PROJECT, CLIENT]:
         assert signals[path]["board_items"] == [{"id": "review", "title": "Check pilot"}]
         assert signals[path]["active_board_items"] == 1

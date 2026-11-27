@@ -10,6 +10,7 @@ from types import SimpleNamespace
 import pytest
 
 from roosta import app, chat
+from roosta.board_state import BoardState
 
 
 @pytest.fixture(autouse=True)
@@ -24,10 +25,10 @@ def use_sessions(monkeypatch, create):
 
 
 def router_at(directory):
+    history = chat.ConversationHistoryStore(directory / "history.json")
     return chat.ChatRouter(chat.SessionMap(directory / "sessions.json"), str(directory),
-                           handled_path=directory / "handled.json",
                            topic_store=chat.TopicStore(directory / "topics.json"),
-                           persistent_history=chat.ConversationHistoryStore(directory / "history.json"))
+                           persistent_history=history, board=BoardState(directory, history))
 
 
 def context(router, item, mode="preview", revision=None, handoff=""):
@@ -66,7 +67,7 @@ def test_reset_restarts_only_selected_context(tmp_path, monkeypatch, item, mode)
     router._sessions.set("other", old)
     router._topics.begin(item, {"title": "Subject"}, old)
     router._topics.finish(item, "old rolling summary")
-    router.mark_handled(item, "Resolved")
+    router.board.mark_handled(item, "Resolved")
     # Pre-dates message timestamps and segment metadata.
     messages = [{"role": "user", "text": "private old text"}]
     (tmp_path / "history.json").write_text(json.dumps({item: messages, "other": messages}))
@@ -89,7 +90,7 @@ def test_reset_restarts_only_selected_context(tmp_path, monkeypatch, item, mode)
     assert router._sessions.model(item) == "chosen-model"
     assert router._sessions.connection(item) == "c" * 32
     assert router._sessions.get("other") == old
-    assert router.handled()[item]["result"] == "Resolved"
+    assert router.board.handled()[item]["result"] == "Resolved"
     assert router.conversation_history("other") == messages
     calls = capture_turns(monkeypatch)
 

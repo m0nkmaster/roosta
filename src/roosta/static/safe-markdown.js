@@ -25,7 +25,7 @@ function safeMarkdown(source){
   });
   return template.innerHTML;
 }
-// Obsidian [[target#heading|label]]: a bare project slug, a vault path or a file stem anywhere.
+// Obsidian [[target#heading|label]]: a bare project slug, a workspace path or a file stem anywhere.
 function resolveWikilink(target,paths){
   const t=target.trim().replace(/\.md$/,'');
   return paths.find(p=>p===t+'.md')||paths.find(p=>p==='projects/'+t+'/README.md')||paths.find(p=>p.endsWith('/'+t+'.md'))||paths.find(p=>p.endsWith('/'+t+'/README.md'));

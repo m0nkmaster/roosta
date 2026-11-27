@@ -46,7 +46,7 @@ def test_raw_round_trip_and_permissions(doc, client):
 @pytest.mark.parametrize('name', ['../notes.md', '/tmp/notes.md', 'private/notes.md', '.roosta/doc.md',
                                   'code/notes.md', 'note.txt', 'link.md', 'folder/notes.md', 'hard.md'])
 def test_path_policy_for_read_and_save(tmp_path, name, client, monkeypatch):
-    root = tmp_path / 'vault'
+    root = tmp_path / 'workspace'
     root.mkdir()
     (tmp_path / 'notes.md').write_bytes(RAW)
     (root / 'link.md').symlink_to(tmp_path / 'notes.md')

@@ -9,7 +9,7 @@
 <script src="/static/document-editor.js"></script>
 <script src="/static/nav-count.js" defer></script>
 <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
-<script src="/static/vault-markdown.js"></script>
+<script src="/static/safe-markdown.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/turndown@7.2.0/dist/turndown.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/turndown-plugin-gfm@1.0.2/dist/turndown-plugin-gfm.js"></script>
 <script src="/static/markdown-copy.js"></script>
@@ -48,7 +48,7 @@
 <body>
 <header class="workspace-header navbar" aria-label="Workspace"></header>
 <main class="document-shell">
-<div class="page-header dashboard-page-header"><div><div class="page-pretitle">Knowledge</div><h1 class="page-title">Vault document</h1></div></div>
+<div class="page-header dashboard-page-header"><div><div class="page-pretitle">Knowledge</div><h1 class="page-title">Workspace document</h1></div></div>
   <div class="document-toolbar">
     <a class="back" href="/assistant">← Back to Assistant</a>
     <span class="path" id="path"></span>
@@ -128,7 +128,7 @@ async function loadDocument(){
   const article=document.getElementById('document');
   try{
     const visible=from && ['/workspace','/pulse','/constellation'].includes(new URL(from,location.origin).pathname);
-    const response=await fetch('/api/vault-document?path='+encodeURIComponent(path)+(visible?'&visible=true':''));
+    const response=await fetch('/api/workspace/document?path='+encodeURIComponent(path)+(visible?'&visible=true':''));
     const data=await response.json();
     if(token!==loadToken || editor.active()) return;
     if(!response.ok) throw new Error(data.error||'Document could not be loaded');
@@ -145,7 +145,7 @@ async function loadDocument(){
     const chat=document.getElementById('chat');
     chat.href='/assistant?item='+encodeURIComponent('doc:'+data.path);
     chat.hidden=!/\.md$/i.test(data.path);
-    article.innerHTML=safeMarkdown(wikiLinks(data.content,await vaultPaths(data.content),data.path));
+    article.innerHTML=safeMarkdown(wikiLinks(data.content,await workspacePaths(data.content),data.path));
     keepLinksInPage(article,params);
     renderProperties(article,data.properties);
     const heading=firstLoad && linkedHeading(article,location.hash);
@@ -168,14 +168,14 @@ function linkedHeading(article,hash){
     return '#'+encodeURIComponent(slug)===hash;
   });
 }
-// The vault file list is only needed (and fetched once) when a document holds vault links.
+// The workspace file list is only needed (and fetched once) when a document holds workspace links.
 let pathsPromise=null;
-function vaultPaths(content){
+function workspacePaths(content){
   if(!/\[\[|\.md[)>#]/i.test(content)) return [];
   pathsPromise=pathsPromise||fetch('/api/workspace').then(r=>r.json()).then(d=>d.files.map(f=>f.path)).catch(()=>{pathsPromise=null;return [];});
   return pathsPromise;
 }
-// Vault links open in this tab and keep the original Back destination.
+// Workspace links open in this tab and keep the original Back destination.
 function keepLinksInPage(article,params){
   article.querySelectorAll('a[href]').forEach(link=>{
     const url=new URL(link.href);

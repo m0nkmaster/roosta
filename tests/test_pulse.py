@@ -18,7 +18,7 @@ from roosta.pulse import (
     related_projects,
     review_project,
     running_workloads,
-    scan_vault,
+    scan_workspace,
 )
 from roosta.workspace import markdown_title
 
@@ -59,7 +59,7 @@ def test_related_projects_only_resolves_known_projects():
     assert related_projects("# No related section", known) == []
 
 
-def test_scan_vault_project_graph_and_staleness(tmp_path):
+def test_scan_workspace_project_graph_and_staleness(tmp_path):
     projects = tmp_path / "projects"
     for name in ("platform-roadmap", "team-structure", "old-thing"):
         (projects / name).mkdir(parents=True)
@@ -75,7 +75,7 @@ def test_scan_vault_project_graph_and_staleness(tmp_path):
     old = datetime.now(timezone.utc) - timedelta(days=45)
     os.utime(stale, (old.timestamp(), old.timestamp()))
 
-    result = scan_vault(tmp_path)
+    result = scan_workspace(tmp_path)
     signals = {signal["name"]: signal for signal in result["project_signals"]}
     assert signals["platform-roadmap"]["status"] == "active"
     assert signals["platform-roadmap"]["owner"] == "Sam Example"
@@ -88,29 +88,29 @@ def test_scan_vault_project_graph_and_staleness(tmp_path):
     assert result["stale_projects"] == 1
 
 
-def test_scan_vault_does_not_flag_parked_projects_as_stale(tmp_path):
+def test_scan_workspace_does_not_flag_parked_projects_as_stale(tmp_path):
     readme = tmp_path / "projects" / "shipped" / "README.md"
     readme.parent.mkdir(parents=True)
     readme.write_text("---\ntitle: Shipped\nstatus: completed\n---\n")
     old = datetime.now(timezone.utc) - timedelta(days=200)
     os.utime(readme, (old.timestamp(), old.timestamp()))
 
-    result = scan_vault(tmp_path)
+    result = scan_workspace(tmp_path)
     assert result["project_signals"][0]["stale"] is False
     assert result["stale_projects"] == 0
 
 
-def test_scan_vault_hot_files_include_title(tmp_path):
+def test_scan_workspace_hot_files_include_title(tmp_path):
     (tmp_path / "projects" / "demo").mkdir(parents=True)
     readme = tmp_path / "projects" / "demo" / "README.md"
     readme.write_text("---\ntitle: Demo project\n---\n\n# Demo\n")
-    result = scan_vault(tmp_path)
+    result = scan_workspace(tmp_path)
     assert len(result["hot_files"]) == 1
     assert result["hot_files"][0]["title"] == "Demo project"
     assert result["hot_files"][0]["path"] == "projects/demo/README.md"
 
 
-def test_scan_vault_counts_projects_and_skips_roosta_config(tmp_path, monkeypatch):
+def test_scan_workspace_counts_projects_and_skips_roosta_config(tmp_path, monkeypatch):
     from roosta import paths
 
     core = tmp_path / ".installed"
@@ -129,7 +129,7 @@ def test_scan_vault_counts_projects_and_skips_roosta_config(tmp_path, monkeypatc
     (tmp_path / ".claude" / "skills" / "actor").mkdir(parents=True)
     (tmp_path / ".claude" / "skills" / "actor" / "SKILL.md").write_text("skill")
 
-    result = scan_vault(tmp_path)
+    result = scan_workspace(tmp_path)
     assert result["projects"] == 1
     assert result["project_names"] == ["team-okrs"]
     assert result["project_signals"][0]["name"] == "team-okrs"
@@ -172,19 +172,19 @@ def test_board_stats_cleared_today():
 
 
 @pytest.mark.parametrize(
-    "health,activity,board,vault,code",
+    "health,activity,board,workspace,code",
     [
         ({"ok": False, "degraded": [{}]}, {}, {}, {}, "sensor_fog"),
         ({"ok": True}, {"running_now": 1}, {}, {}, "agents_active"),
         ({"ok": True}, {}, {"board_active": 0, "board_later": 0}, {}, "all_clear"),
         ({"ok": True}, {}, {"cleared_today": 4}, {}, "productive_orbit"),
         ({"ok": True}, {"today_errors": 2}, {}, {}, "turbulence"),
-        ({"ok": True}, {}, {}, {"recent_files_7d": 20}, "vault_alive"),
+        ({"ok": True}, {}, {}, {"recent_files_7d": 20}, "workspace_alive"),
     ],
 )
-def test_command_mood_priority(health, activity, board, vault, code):
+def test_command_mood_priority(health, activity, board, workspace, code):
     mood = command_mood(
-        {"recent_files_7d": 0, "projects": 1, "words": 1000, **vault},
+        {"recent_files_7d": 0, "projects": 1, "words": 1000, **workspace},
         {"running_now": 0, "today_errors": 0, **activity},
         {
             "sensors_ok": health.get("ok", True),
@@ -212,8 +212,8 @@ def test_build_pulse_shape(tmp_path):
         active_project_refs=["projects/demo", "projects/demo"],
     )
     assert payload["mood"]["code"] == "all_clear"
-    assert payload["vault"]["projects"] == 1
-    assert payload["vault"]["project_signals"][0]["active_board_items"] == 2
+    assert payload["workspace"]["projects"] == 1
+    assert payload["workspace"]["project_signals"][0]["active_board_items"] == 2
     assert payload["running"] == []
     assert "generated_at" in payload
 
@@ -271,11 +271,11 @@ def test_frontmatter_text_flattens_values_for_search():
     assert frontmatter_text("# No frontmatter") == ""
 
 
-def test_scan_vault_exposes_project_keywords(tmp_path):
+def test_scan_workspace_exposes_project_keywords(tmp_path):
     readme = tmp_path / "projects" / "team-okrs" / "README.md"
     readme.parent.mkdir(parents=True)
     readme.write_text("---\ntitle: Team OKRs\ntags: [airtable]\n---\n")
-    signal = scan_vault(tmp_path)["project_signals"][0]
+    signal = scan_workspace(tmp_path)["project_signals"][0]
     assert "airtable" in signal["keywords"]
 
 
@@ -294,7 +294,7 @@ def test_provenance_states_and_due():
     past = (NOW - timedelta(days=1)).date().isoformat()
     future = (NOW + timedelta(days=10)).date().isoformat()
     human = f"---\nstatus: active\nverified:\n  - {{ by: human:sam-example, at: {past} }}\nstale_after: {future}\n---\n"
-    agent = f"---\nstatus: active\nverified:\n  - {{ by: vault-gardener/claude-opus-5-5, at: {past} }}\nstale_after: {past}\n---\n"
+    agent = f"---\nstatus: active\nverified:\n  - {{ by: workspace-gardener/claude-opus-5-5, at: {past} }}\nstale_after: {past}\n---\n"
     assert provenance(human, TODAY) | {"verified": None} == {
         "verified": None, "stale_after": future, "state": "human", "due": False, "expired": False}
     assert provenance(agent, TODAY)["state"] == "machine"
@@ -349,11 +349,11 @@ def test_review_status_change_only_touches_frontmatter(tmp_path):
 
 def test_review_confirm_adds_newest_human_entry_once(tmp_path):
     readme = _readme(tmp_path, "demo", "---\ntitle: Demo\nstatus: paused\nverified:\n"
-                     "  - { by: vault-gardener/claude-opus-5-5, at: 2026-01-01 }\nowner: Sam\n---\n\n# Demo\n")
+                     "  - { by: workspace-gardener/claude-opus-5-5, at: 2026-01-01 }\nowner: Sam\n---\n\n# Demo\n")
     review_project(tmp_path, "demo", "confirm", now=NOW, reviewer="human:sam-example")
     brief = review_project(tmp_path, "demo", "confirm", now=NOW, reviewer="human:sam-example")
     prov = brief["provenance"]
-    assert [entry["by"] for entry in prov["verified"]] == ["human:sam-example", "vault-gardener/claude-opus-5-5"]
+    assert [entry["by"] for entry in prov["verified"]] == ["human:sam-example", "workspace-gardener/claude-opus-5-5"]
     assert prov["stale_after"] == (NOW + timedelta(days=90)).date().isoformat()
     assert prov["state"] == "human" and prov["due"] is False
     assert "owner: Sam" in readme.read_text()
@@ -378,7 +378,7 @@ def test_build_pulse_lists_board_items_per_project(tmp_path):
         health={"ok": True, "degraded": []},
         active_project_items=[{"id": "item-1", "title": "Reply to Phil", "project_ref": "projects/demo"}],
     )
-    signal = payload["vault"]["project_signals"][0]
+    signal = payload["workspace"]["project_signals"][0]
     assert signal["active_board_items"] == 1
     assert signal["board_items"] == [{"id": "item-1", "title": "Reply to Phil"}]
     assert signal["verification_due"] is True and signal["provenance"] == "unverified"
@@ -435,14 +435,14 @@ def test_drawer_resolves_relative_links_against_selected_source(tmp_path):
     assert project_brief(tmp_path, "demo")["linked_paths"] == ["projects/demo/notes.md"]
 
 
-def test_scan_vault_lists_project_pages_only(tmp_path):
+def test_scan_workspace_lists_project_pages_only(tmp_path):
     _readme(tmp_path, "agentx", "---\ntitle: AgentX\n---\n")
     (tmp_path / "projects" / "agentx" / "notes.md").write_text("# AgentX notes\n")
     (tmp_path / "notes").mkdir()
     (tmp_path / "notes" / "standalone.md").write_text("[[agentx]]\n")
-    vault = scan_vault(tmp_path)
-    assert "entities" not in vault
-    signals = {s["name"]: s for s in vault["project_signals"]}
+    workspace = scan_workspace(tmp_path)
+    assert "entities" not in workspace
+    signals = {s["name"]: s for s in workspace["project_signals"]}
     assert [page["path"] for page in signals["agentx"]["pages"]] == ["projects/agentx/notes.md"]
     assert signals["agentx"]["pages"][0]["title"] == "AgentX notes"
 

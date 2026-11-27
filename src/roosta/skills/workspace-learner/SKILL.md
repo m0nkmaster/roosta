@@ -1,6 +1,6 @@
 ---
 name: workspace-learner
-description: The workspace's continuous learning loop. Mines the user's AI conversations and any connected chat for agent mistakes, corrections, newly surfaced context and recurring problems; fixes verified root causes in skills or canonical vault docs, promotes settled facts, and logs unresolved points without turning them into claims. Use when the user asks to "learn from my conversations", "review recent chats", "capture what we learned", "fix what agents keep getting wrong", "update the brain from chat", or on the scheduled workspace-learner cadence. Distinct from workspace-gardener (deep synthesis and consolidation) and skill-auditor (structural review of the skill set).
+description: The workspace's continuous learning loop. Mines the user's AI conversations and any connected chat for agent mistakes, corrections, newly surfaced context and recurring problems; fixes verified root causes in skills or canonical workspace docs, promotes settled facts, and logs unresolved points without turning them into claims. Use when the user asks to "learn from my conversations", "review recent chats", "capture what we learned", "fix what agents keep getting wrong", "update the brain from chat", or on the scheduled workspace-learner cadence. Distinct from workspace-gardener (deep synthesis and consolidation) and skill-auditor (structural review of the skill set).
 ---
 
 # Workspace Learner
@@ -14,7 +14,7 @@ This is one pass with two equally important outcomes:
 1. **Correction** - an agent got something wrong, used a tool badly, followed the
    wrong path or repeatedly needed clarification. Verify why, then fix the root
    cause.
-2. **Learning** - a conversation surfaced durable context that the vault does not
+2. **Learning** - a conversation surfaced durable context that the workspace does not
    yet carry. Verify it, then add it to its canonical home.
 
 Do not run separate transcript passes for these outcomes. Every conversation is
@@ -137,5 +137,5 @@ End with `<task-output>` JSON:
 ```
 
 If one source is unavailable, continue with the others and note the gap. Report
-`status: "error"` only when no source can be read or the local vault cannot be
+`status: "error"` only when no source can be read or the local workspace cannot be
 updated safely.

@@ -11,8 +11,7 @@ from pathlib import Path
 
 from roosta import connectors, paths
 
-VAULT = str(paths.WORKSPACE)
-CURSOR_ENV_FILE = Path(VAULT) / ".env"
+CURSOR_ENV_FILE = paths.WORKSPACE / ".env"
 CURSOR_AGENT = shutil.which("agent") or str(Path.home() / ".local" / "bin" / "agent")
 SAFE_CONFIG_TEMPLATE = Path(__file__).resolve().parent / "cursor-permissions.json"
 

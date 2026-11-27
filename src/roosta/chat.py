@@ -4,10 +4,14 @@ from __future__ import annotations
 import asyncio, hashlib, json, re, uuid
 from collections import deque
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from roosta import attachments, paths, profile, skills
 from roosta import ai_backend, ai_connections
+
+if TYPE_CHECKING:
+    from roosta.board_state import BoardState
 
 _MARKER = re.compile(
     r"<<<(STATE|PAUSE|DEFER|REMIND|DONE|ERROR)>>>(\{.*\})\s*(?:>>>)?\s*$",
@@ -42,32 +46,6 @@ def clip_body(text, limit: int = BODY_LIMIT) -> str:
 
 def is_general_chat_id(item_id) -> bool:
     return bool(_CHAT_ID.fullmatch(str(item_id or "")))
-
-
-_SNAPSHOT_FIELDS = (
-    "title", "why", "situation", "opening_move",
-    "action_type", "action_owner", "action_label",
-)
-
-
-def _closed_snapshot(item: dict | None) -> dict | None:
-    """Compact copy of a board item kept so a closed item can be revived with
-    its original context. Trusts already-normalised board fields."""
-    if not isinstance(item, dict):
-        return None
-    snapshot: dict = {}
-    for field in _SNAPSHOT_FIELDS:
-        value = item.get(field)
-        if isinstance(value, str) and value.strip():
-            snapshot[field] = value
-    for field in ("links", "documents"):
-        value = item.get(field)
-        if isinstance(value, list) and value:
-            snapshot[field] = value
-    project_ref = item.get("project_ref")
-    if isinstance(project_ref, str) and project_ref.strip():
-        snapshot["project_ref"] = project_ref
-    return snapshot or None
 
 
 def progress_label(event: dict) -> str | None:
@@ -795,38 +773,18 @@ class TurnHandle:
     position: int = 0
 
 
-def resolve_alias(item_id: str, merged: dict) -> str:
-    """Follow duplicate -> kept links to the surviving card id (cycle-safe)."""
-    seen = set()
-    while item_id in merged and item_id not in seen:
-        seen.add(item_id)
-        target = merged[item_id]
-        nxt = str(target.get("into", "") if isinstance(target, dict) else target or "")
-        if not nxt:
-            break
-        item_id = nxt
-    return item_id
-
-
 class ChatRouter:
     """Isolated per-item conversations, each resumed through its own AI session."""
 
-    def __init__(self, session_map: SessionMap, vault: str,
-                 handled_path: Path | None = None,
-                 snoozed_path: Path | None = None,
+    def __init__(self, session_map: SessionMap, workspace: str,
                  topic_store: TopicStore | None = None,
                  persistent_history: ConversationHistoryStore | None = None,
-                 reminders_path: Path | None = None,
-                 raised_path: Path | None = None,
-                 merged_path: Path | None = None) -> None:
+                 board: BoardState | None = None) -> None:
+        from roosta.board_state import BoardState  # board_state imports this module
         self._sessions = session_map
-        self._vault = vault
+        self._workspace = workspace
         self._paused: dict[str, dict] = {}   # run_id -> action payload
-        self._handled = JsonFile(handled_path, dict)
-        self._snoozed = JsonFile(snoozed_path, dict)
-        self._reminders = JsonFile(reminders_path, list)
-        self._raised = JsonFile(raised_path, dict)
-        self._merged = JsonFile(merged_path, dict)
+        self.board = board or BoardState(history=persistent_history)
         self._topics = topic_store
         self._persistent_history = persistent_history
         self._topic_locks: dict[str, asyncio.Lock] = {}
@@ -834,164 +792,6 @@ class ChatRouter:
         self.active_progress: dict[str, dict] = {}
         self._active_runs: dict[str, asyncio.Task] = {}
         self._message_queues: dict[str, deque[tuple[dict, str]]] = {}
-
-    # --- handled store: items the AI solved or the user closed; the rail hides them
-    #     immediately and the conductor suppresses them on its next pass. ---
-
-    def handled(self) -> dict:
-        """Read the handled map {item_id: {result, at}}; tolerant of corruption."""
-        data = self._handled.read()
-        wrapped_items = data.get("items")
-        if isinstance(wrapped_items, list):  # a model sometimes writes the board's list shape
-            return {
-                str(item["id"]): {
-                    "result": str(item.get("result") or "Handled"),
-                    "at": str(item.get("at") or ""),
-                }
-                for item in wrapped_items
-                if isinstance(item, dict) and item.get("id")
-            }
-        return {str(item_id): value for item_id, value in data.items() if isinstance(value, dict)}
-
-    def mark_handled(self, item_id: str, result: str, item: dict | None = None) -> None:
-        """Record an item as solved/closed with a one-line outcome.
-
-        Deliberately leaves the session, topic summary and transcript intact:
-        item ids are stable per open reason, so if the user keeps chatting after the
-        item is resolved the reply must keep its context.
-
-        A compact `item` snapshot is stored so a closed item can be reviewed and
-        revived with its original context (`unhandle`)."""
-        if not item_id:
-            return
-        data = self.handled()
-        record = {"result": result or "Done",
-                  "at": datetime.now(timezone.utc).isoformat()}
-        snapshot = _closed_snapshot(item)
-        if snapshot:
-            record["item"] = snapshot
-        data[item_id] = record
-        self._handled.write(data)
-        self.unsnooze(item_id)
-        self.remove_reminder(item_id)
-        self.clear_raised(item_id)
-
-    def unhandle(self, item_id: str) -> dict | None:
-        """Reopen a closed item: drop it from the handled store and return its
-        stored snapshot (or None). The caller decides how to resurface it."""
-        data = self.handled()
-        record = data.pop(item_id, None)
-        if record is None:
-            return None
-        self._handled.write(data)
-        snapshot = record.get("item") if isinstance(record, dict) else None
-        return snapshot if isinstance(snapshot, dict) else None
-
-    # --- raised store: first time an item id appeared on the board ---
-
-    def raised(self) -> dict:
-        """Read {item_id: {at}}; tolerant of missing/corrupt state."""
-        return self._raised.read()
-
-    def record_raised(self, item_ids: list[str]) -> dict:
-        """Persist first-seen timestamps for new ids; return the full map."""
-        data = self.raised()
-        now = datetime.now(timezone.utc).isoformat()
-        new = {item_id: {"at": now} for item_id in item_ids if item_id and item_id not in data}
-        if new:
-            data.update(new)
-            self._raised.write(data)
-        return data
-
-    def clear_raised(self, item_id: str) -> None:
-        """Drop a raised timestamp when the item is closed."""
-        data = self.raised()
-        if data.pop(item_id, None) is not None:
-            self._raised.write(data)
-
-    # --- merged store: duplicate card ids the conductor folded into another
-    #     card. Persisted because the skill that minted the duplicate keeps
-    #     returning its id; the alias makes those returns refine the kept card. ---
-
-    def merged(self) -> dict:
-        """Read {duplicate_id: {into, at}}; tolerant of missing/corrupt state."""
-        return self._merged.read()
-
-    def record_merges(self, merges) -> dict:
-        """Persist conductor merges {duplicate_id: kept_id}; return the full map.
-
-        The card the user has talked on keeps its id so their conversation stays on the
-        surviving card. A merge that would loop back on itself is ignored."""
-        data = self.merged()
-        if not isinstance(merges, dict):
-            return data
-        now = datetime.now(timezone.utc).isoformat()
-        changed = False
-        for dup, kept in list(merges.items())[:20]:
-            dup, kept = str(dup or "").strip(), str(kept or "").strip()
-            if not dup or not kept or dup == kept:
-                continue
-            if self.conversation_history(dup) and not self.conversation_history(kept):
-                dup, kept = kept, dup
-            if resolve_alias(kept, data) == dup or data.get(dup, {}).get("into") == kept:
-                continue
-            data[dup] = {"into": kept, "at": now}
-            changed = True
-        if changed:
-            self._merged.write(data)
-        return data
-
-    # --- snooze store: deliberate "not now" choices, distinct from done ---
-
-    def snoozed(self) -> dict:
-        """Read {item_id: {until, at}}; tolerant of missing/corrupt state."""
-        return self._snoozed.read()
-
-    def snooze(self, item_id: str, until: str) -> None:
-        """Park an item until an ISO-8601 instant."""
-        if not (item_id and until):
-            return
-        data = self.snoozed()
-        data[item_id] = {"until": until, "at": datetime.now(timezone.utc).isoformat()}
-        self._snoozed.write(data)
-
-    def unsnooze(self, item_id: str) -> None:
-        """Bring an item back now, if it was parked."""
-        data = self.snoozed()
-        if data.pop(item_id, None) is not None:
-            self._snoozed.write(data)
-
-    # --- reminders store: file-backed board cards the chat authored ("remind
-    #     me", "put this on my board"). Unlike snooze (which reschedules a
-    #     conductor item), these have no live source, so they must persist here
-    #     to survive a restart and be surfaced by /api/board until closed. ---
-
-    def reminders(self) -> list[dict]:
-        """Read the reminder list [{id,title,body,due,created}]; tolerant of corruption."""
-        return self._reminders.read()
-
-    def add_reminder(self, title: str, body: str = "", due: str | None = None) -> str | None:
-        """Persist a new board card. `due` is a validated ISO instant or None (now)."""
-        if not (self._reminders.path and title):
-            return None
-        data = self.reminders()
-        reminder_id = f"remind-{uuid.uuid4().hex[:8]}"
-        data.append({
-            "id": reminder_id,
-            "title": str(title)[:120],
-            "body": clip_body(body),
-            "due": due,
-            "created": datetime.now(timezone.utc).isoformat(),
-        })
-        self._reminders.write(data)
-        return reminder_id
-
-    def remove_reminder(self, reminder_id: str) -> None:
-        """Drop a reminder from the store (e.g. when the user closes its card)."""
-        data = self.reminders()
-        kept = [r for r in data if not isinstance(r, dict) or r.get("id") != reminder_id]
-        if len(kept) != len(data):
-            self._reminders.write(kept)
 
     def forget(self, item_id: str) -> None:
         """Drop a chat's session, topic and history, e.g. a fired worker's 1:1."""
@@ -1029,7 +829,7 @@ class ChatRouter:
         """Minimal item for an id that has left the live board but still has a
         conversation the user is continuing.
 
-        The conductor drops items it considers resolved, capped out or aged off,
+        The assistant task drops items it considers resolved, capped out or aged off,
         yet the browser keeps the transcript open. As long as we hold any trace
         of the thread (topic record, transcript, handled note or live session)
         we reconstruct just enough to resume it; a bogus id with no trace still
@@ -1038,7 +838,7 @@ class ChatRouter:
             return None
         record = self._topics.get(item_id) if self._topics else {}
         seen = (bool(record) or bool(self.conversation_history(item_id))
-                or item_id in self.handled()
+                or item_id in self.board.handled()
                 or bool(self._sessions and self._sessions.get(item_id)))
         if not seen:
             return None
@@ -1173,7 +973,7 @@ class ChatRouter:
                               connection: str = "") -> str:
         connection = connection or self._sessions.connection(item_id)
         async def create():
-            return await ai_backend.new_session(connection, self._vault)
+            return await ai_backend.new_session(connection, self._workspace)
         sid = self._sessions.get(item_id)
         if record is None:
             record = self._topics.get(item_id, strict=True) if self._topics else {}
@@ -1214,7 +1014,7 @@ class ChatRouter:
                 return
             now = datetime.now(timezone.utc)
             me = profile.load()
-            prompt = skills.instructions("actor", self._vault, Path(self._vault)) + CHAT_PROMPT.format(
+            prompt = skills.instructions("actor", self._workspace, Path(self._workspace)) + CHAT_PROMPT.format(
                 user=me.user,
                 style=me.style(),
                 item=json.dumps(item),
@@ -1226,7 +1026,7 @@ class ChatRouter:
             try:
                 provider = ai_connections.get(connection_id, connected=False)["provider"]
                 connection_run = ai_backend.prepare(
-                    connection_id, self._vault, session_id=sid,
+                    connection_id, self._workspace, session_id=sid,
                     model=ai_connections.selected_model(provider) or self._sessions.model(item_id) or ai_connections.default_model(provider, general=general))
             except ValueError as exc:
                 yield {"kind": "error", "payload": {"reason": str(exc)}, "run_id": run_id}
@@ -1276,19 +1076,19 @@ class ChatRouter:
                     "persistent": bool(item.get("persistent")),
                 }
             elif term["kind"] == "defer":
-                self.snooze(item_id, term["payload"]["until"])
+                self.board.snooze(item_id, term["payload"]["until"])
             elif term["kind"] == "remind":
                 # Persist the new board card, then end the reply normally: creating
                 # a reminder does not resolve the item the chat is currently about.
                 p = term["payload"]
-                self.add_reminder(p["title"], p.get("body", ""), p.get("due"))
+                self.board.add_reminder(p["title"], p.get("body", ""), p.get("due"))
                 term = {"kind": "reply_end", "run_id": run_id}
             elif (term["kind"] == "done" and term["payload"].get("acted")
                   and not item.get("persistent")):
                 # Resolve only when the actor actually DID something (acted:true), not
                 # on a plain answer. Persistent surfaces such as chats remain
                 # available after acting.
-                self.mark_handled(item_id, term["payload"].get("result", "Done"), item)
+                self.board.mark_handled(item_id, term["payload"].get("result", "Done"), item)
             yield term
 
     async def approve(self, run_id: str, approved: bool, edit: str | None):
@@ -1310,14 +1110,14 @@ class ChatRouter:
     async def _send_approved(self, run_id: str, paused: dict, sender_action: dict):
         action, item_id = paused["action"], paused["item_id"]
         connection = paused.get("connection", "")
-        prompt = sender_prompt(sender_action, self._vault)
+        prompt = sender_prompt(sender_action, self._workspace)
         try:
             model = self._sessions.model(item_id)
             try:
                 ai_connections.runtime(ai_connections.get(connection, connected=False)["provider"], model)
             except ValueError:
                 model = ""
-            run = ai_backend.prepare(connection, self._vault, profile="unrestricted", model=model)
+            run = ai_backend.prepare(connection, self._workspace, profile="unrestricted", model=model)
         except (ValueError, OSError) as exc:
             self._paused[run_id] = paused
             return {"ok": False, "sent": False, "reason": str(exc)}
@@ -1329,5 +1129,5 @@ class ChatRouter:
         sent = outcome.get("status") == "success"
         summary = str(outcome.get("summary", ""))
         if sent and not paused.get("persistent"):
-            self.mark_handled(item_id, summary or action.get("summary", "Sent"))
+            self.board.mark_handled(item_id, summary or action.get("summary", "Sent"))
         return {"ok": True, "sent": sent, "kind": sender_action["kind"], "summary": summary}

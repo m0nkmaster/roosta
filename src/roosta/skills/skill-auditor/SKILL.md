@@ -1,6 +1,6 @@
 ---
 name: skill-auditor
-description: Opinionated, far-reaching quality-and-roadmap pass over the workspace's own skills (`.agents/skills/`). Beyond mechanical hygiene (bloat, weak descriptions/triggers, overlap, dead references, staleness, portability) it takes a point of view - rethinking a skill's whole approach, challenging timid skills, hunting the highest-value missing skill, and reaching further each pass; it creates, merges, splits and deletes directly. Use whenever the user asks to "audit the skills", "review my skills", "improve the skills", "make the skills more opinionated/ambitious", "tidy the skill set", "what skills am I missing", "make the second brain smarter", or on a scheduled maintenance cadence. Distinct from workspace-learner (conversation-driven corrections and knowledge capture) and workspace-gardener (deep vault synthesis) - this one's subject IS the skills themselves.
+description: Opinionated, far-reaching quality-and-roadmap pass over the workspace's own skills (`.agents/skills/`). Beyond mechanical hygiene (bloat, weak descriptions/triggers, overlap, dead references, staleness, portability) it takes a point of view - rethinking a skill's whole approach, challenging timid skills, hunting the highest-value missing skill, and reaching further each pass; it creates, merges, splits and deletes directly. Use whenever the user asks to "audit the skills", "review my skills", "improve the skills", "make the skills more opinionated/ambitious", "tidy the skill set", "what skills am I missing", "make the second brain smarter", or on a scheduled maintenance cadence. Distinct from workspace-learner (conversation-driven corrections and knowledge capture) and workspace-gardener (deep workspace synthesis) - this one's subject IS the skills themselves.
 ---
 
 # Skill Auditor
@@ -26,7 +26,7 @@ Use that freedom - a curator who never changes anything isn't curating.
 - **workspace-learner** - conversation-driven: captures facts and fixes the root
   causes of agent mistakes. You are not that.
 - **workspace-gardener** - synthesis-driven: digests accumulated learning and
-  consolidates vault knowledge. You are not that either.
+  consolidates workspace knowledge. You are not that either.
 - **you** - the *set of skills* is your subject. Are they lean, do they fire
   when they should, do any overlap, what's missing?
 
@@ -37,16 +37,16 @@ it there, not by bolting narrative onto a skill.
 ## Hard rules
 
 - **Write in the language `PROFILE.md` names.**
-- **Local-vault edits only.** Never touch external systems. Read connected
+- **Local-workspace edits only.** Never touch external systems. Read connected
   tools only to spot gaps.
 - **Never modify checked-out code** (the paths `TOOLS.md` lists) - read for
   verification only.
 - **Preserve the user's voice and thinking.** Fix mechanics, examples, wording,
   structure. Never rewrite their opinions, decisions or half-formed ideas.
 - **Portability.** Every skill you create or edit must stay portable: relative
-  paths, bundled `references/`, no vault-only path as a prerequisite (including
-  in `## Related`). A skill may link to other skills, never to vault project
-  files as a dependency. **Vault-management carve-out:** skills that manage this
+  paths, bundled `references/`, no workspace-only path as a prerequisite (including
+  in `## Related`). A skill may link to other skills, never to workspace project
+  files as a dependency. **Workspace-management carve-out:** skills that manage this
   workspace's own structure legitimately depend on its canonical convention docs
   (the installed operating model, `PROFILE.md`). Treat these as
   compliant - do **not** re-flag them each pass. The strict rule applies only to
@@ -68,7 +68,7 @@ it there, not by bolting narrative onto a skill.
    do the merge and delete; "yes, exemption", rewrite the house rule. Then
    **prune the actioned item from the ideas doc** and record what you did in the
    audit log. Only leave a replied item in place if their answer genuinely can't be
-   executed within vault-write scope (say why); if it's merely ambiguous, take
+   executed within workspace-write scope (say why); if it's merely ambiguous, take
    the smallest faithful interpretation, do it, and note the assumption - never
    sit on a clear instruction or re-log it as a fresh "idea for the user".
 3. **Sweep every skill.** Read each `SKILL.md` in `.agents/skills/`. Judge against
@@ -115,7 +115,7 @@ End with `<task-output>` JSON for the board:
 ## Boundaries
 
 - Reading skills, the learning log and code is always free; writing is
-  local-vault only.
+  local-workspace only.
 - Never send messages, change tickets or edit wiki pages.
 - If the learning log or a live tool is unavailable, skip that signal and note
   it - the static skill sweep still runs. Only emit `status: "error"` if the

@@ -752,7 +752,7 @@ def test_skill_description_reads_and_compacts_local_frontmatter(tmp_path):
 def test_worker_skill_preview_uses_runner_lookup_order(monkeypatch, tmp_path):
     task = task_config.TaskConfig(id="brief-worker", skill="daily-brief", dir=str(tmp_path / "work"))
     monkeypatch.setattr(appmod, "load_tasks_map", lambda: {task.id: task})
-    monkeypatch.setattr(appmod.paths, "WORKSPACE", tmp_path / "vault")
+    monkeypatch.setattr(appmod.paths, "WORKSPACE", tmp_path / "workspace")
     monkeypatch.setattr(Path, "home", lambda: tmp_path / "home")
     monkeypatch.setattr(appmod.paths, "CORE_SKILLS_DIR", tmp_path / "core")
     roots = [Path(task.dir) / ".agents/skills", tmp_path / "home/.agents/skills", tmp_path / "core"]
@@ -773,7 +773,7 @@ def test_worker_skill_preview_uses_runner_lookup_order(monkeypatch, tmp_path):
 
 
 def test_unscheduled_skills_lists_workspace_skills_no_worker_runs(monkeypatch, tmp_path):
-    workspace = tmp_path / "vault"
+    workspace = tmp_path / "workspace"
     monkeypatch.setattr(appmod.paths, "WORKSPACE", workspace)
     monkeypatch.setattr(Path, "home", lambda: tmp_path / "home")
     monkeypatch.setattr(appmod.paths, "CORE_SKILLS_DIR", tmp_path / "core")
@@ -801,7 +801,7 @@ def test_unscheduled_skills_lists_workspace_skills_no_worker_runs(monkeypatch, t
     preview = asyncio.run(appmod.api_workspace_skill("write-a-skill"))
     assert preview.status_code == 200
     assert json.loads(preview.body)["content"].startswith("---\nname: write-a-skill")
-    for refused in ("global-only", "no-skill-file", "../vault", ".hidden"):
+    for refused in ("global-only", "no-skill-file", "../workspace", ".hidden"):
         assert asyncio.run(appmod.api_workspace_skill(refused)).status_code == 404
 
 

@@ -1,4 +1,4 @@
-"""Workspace navigation and explicit file context, using a temporary vault only."""
+"""Workspace navigation and explicit file context, using a temporary workspace only."""
 
 import asyncio
 import json
@@ -195,12 +195,12 @@ def test_metadata_errors_do_not_break_navigation(tmp_path):
     assert wmod.document_summary('# Heading\n\n' + 'A word ' * 100, {}).endswith('…')
 
 
-def test_vault_links_resolve_wikilinks_and_relative_markdown_links():
+def test_workspace_links_resolve_wikilinks_and_relative_markdown_links():
     node = shutil.which("node")
     if not node:
         pytest.skip("node not available")
     static = Path(__file__).resolve().parent.parent / "src" / "roosta" / "static"
-    helper = (static / "vault-markdown.js").read_text()
+    helper = (static / "safe-markdown.js").read_text()
     paths = ["PRIORITIES.md", "projects/app-name/README.md", "projects/app-name/notes/plan.md",
              "projects/other/README.md"]
     source = ("[[app-name]] [[plan|the plan]] [[missing]] [p](notes/plan.md) "
@@ -218,5 +218,5 @@ def test_vault_links_resolve_wikilinks_and_relative_markdown_links():
     assert "[w](https://e.com/a.md)" in out
     assert "[n](gone.md)" in out
     page = (static / "document.html").read_text()
-    assert "wikiLinks(data.content,await vaultPaths(data.content),data.path)" in page
+    assert "wikiLinks(data.content,await workspacePaths(data.content),data.path)" in page
     assert "keepLinksInPage(article,params)" in page

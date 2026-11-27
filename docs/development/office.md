@@ -1,10 +1,21 @@
 # Office simulation and artwork
 
-[Agent guide](../../AGENTS.md). Read before changing `src/roosta/static/office.html` or its assets.
+[Agent guide](../../AGENTS.md). Read before changing `src/roosta/static/office.html`, its `office-*.js` scripts or its assets.
 The page chrome follows the [shared UI rules](ui.md); simulation and art details follow.
 
 ## Scene and interactions
 
+- **Code layout.** `office.html` is the page chrome and styles. The scene is plain classic scripts that
+  share one global scope, loaded in this order (each file opens with its job; `// ===` headers mark sections):
+  `office-world.js` (canvas setup, art, cast, roles, seasons, rooms, A* grid, clock and weather),
+  `office-people.js` (workers, off-shift activities, emotes and quips, simulation, overtime errands),
+  `office-games.js` (table tennis, foosball, darts, console TV), `office-ambient.js` (Ceefax, the cat,
+  the robot vacuum), `office-render.js` (static background and frame drawing), `office-ui.js` (HUD,
+  roster, dossier, ticker, employee of the week, input), `office-data.js` (polling and saved scene) and
+  `office.js` (main loop and boot, always last). Top-level code may only use names from its own file or
+  an earlier one; functions are free to call anything at run time. Format with Prettier
+  (`--print-width 120 --tab-width 4`). Tests lift top-level `function`s and `const`s from the scripts
+  in load order (`_lift`, `_const` in `tests/test_office.py`).
 - **`static/office.html`** - Office page: a top-down pixel-art office (2D canvas, LPC Revised
   sprites) where each scheduled task is a worker placed by its live `/api/tasks` status - at a desk
   with a lit laptop and a progress bar (elapsed against `last_duration`; the start time is only
@@ -87,7 +98,7 @@ The page chrome follows the [shared UI rules](ui.md); simulation and art details
   scene renders at a fixed 1280x720 logical resolution (roughly one art pixel per CSS pixel at
   full width), every sprite at 1x, then is upscaled nearest-neighbour to fill the cabinet width on
   a device-pixel canvas; text is drawn after the upscale so it stays crisp.
-  Sprite crops (`C` in the page) were measured from the sheets' alpha bounding boxes - re-measure
+  Sprite crops (`C` in `office-world.js`) were measured from the sheets' alpha bounding boxes - re-measure
   rather than guess when adding art. Headless visual check: `Google Chrome --headless=new
   --force-device-scale-factor=2 --virtual-time-budget=6000 --screenshot` against a
   `python3 -m http.server` root holding a `static` symlink and a mock `api/tasks` file, with

@@ -185,10 +185,10 @@ class RecordingRouter:
 
 @pytest.fixture
 def chat_env(tmp_path, monkeypatch):
-    vault = tmp_path / "vault"
-    vault.mkdir()
-    monkeypatch.setattr(appmod.paths, "WORKSPACE", vault)
-    monkeypatch.setattr(appmod, "UPLOADS_DIR", vault / "uploads")
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    monkeypatch.setattr(appmod.paths, "WORKSPACE", workspace)
+    monkeypatch.setattr(appmod, "UPLOADS_DIR", workspace / "uploads")
     router = RecordingRouter()
     monkeypatch.setattr(appmod, "chat_router", router)
     monkeypatch.setattr(appmod, "setup_item", lambda *_: None)  # AI is connected
@@ -311,7 +311,7 @@ def test_run_turn_records_attachments_and_prompts_with_the_path(monkeypatch, tmp
 
     monkeypatch.setattr(cmod.asyncio, "create_subprocess_exec", fake_exec)
     history = cmod.ConversationHistoryStore(tmp_path / "chat-history.json")
-    router = cmod.ChatRouter(cmod.SessionMap(tmp_path / "sessions.json"), "/vault",
+    router = cmod.ChatRouter(cmod.SessionMap(tmp_path / "sessions.json"), "/workspace",
                              persistent_history=history)
     item = {"id": "item-1", "uploaded_files": [
         {"id": "0123456789ab", "name": "shot.png", "size": 12, "image": True,

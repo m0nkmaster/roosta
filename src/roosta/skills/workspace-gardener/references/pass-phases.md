@@ -53,22 +53,22 @@ code, tickets or docs before treating them as current. Prioritise:
 
 ## Phase 4: Connect - strengthen the web
 
-This is where the vault's "web of mind" gets built, not just implied. See
+This is where the workspace's "web of mind" gets built, not just implied. See
 Linking in the installed operating model for the
 full convention - the summary for gardener purposes:
 
 - For every project, note, or analysis doc you touched this pass, ask: does this
-  genuinely relate to something else in the vault (shared owner, same initiative,
+  genuinely relate to something else in the workspace (shared owner, same initiative,
   blocks/depends on, supersedes, same underlying system, related thought space)? If
   yes, it needs a `## Related` entry - a stray mid-prose mention isn't enough.
 - **Add or extend `## Related`** as a table: `| [[target]] | relationship |`. Use
-  `[[wikilinks]]` for in-vault targets.
+  `[[wikilinks]]` for in-workspace targets.
 - **Always make it bidirectional.** Adding A → B means adding B → A in the same
   pass, worded from B's perspective (the relationship label doesn't have to be
   identical wording, just consistent in meaning). If B has no `## Related` section
   yet, create one; if it exists, append a row rather than rewriting it.
 - **Skills stay portable.** A skill's own `## Related` section (if any) only links
-  to other skills - never to vault-only project files as a prerequisite. Vault docs
+  to other skills - never to workspace-only project files as a prerequisite. Workspace docs
   linking *to* a skill (the existing AGENTS.md pattern) is fine and unaffected.
 - **Quality over coverage.** Don't manufacture a relationship to fill the section.
   A project with nothing genuinely connected simply has no `## Related` section

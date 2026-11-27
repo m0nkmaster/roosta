@@ -1,6 +1,6 @@
 # Assistant board contract
 
-The shape every scheduled skill uses to put cards on the Assistant board. The `assistant` conductor owns judgement; this file owns the **shape**, so sensors do not drift.
+The shape every scheduled skill uses to put cards on the Assistant board. The `assistant` worker owns judgement; this file owns the **shape**, so sensors do not drift.
 
 ## Envelope
 
@@ -65,18 +65,18 @@ roosta snapshot board
 
 It prints the board JSON; the cards are in `.document.items`.
 
-A successful snapshot with empty `document.items` and `document.later` confirms an empty board, including before any worker has written a cache. If the snapshot fails, read `last_output.details.items` from the conductor and sensor caches in `.roosta/state/cache/`. If the prior cards cannot be recovered, report the read failure with `status: "error"` and omit `details.items` so the runner preserves the previous cards.
+A successful snapshot with empty `document.items` and `document.later` confirms an empty board, including before any worker has written a cache. If the snapshot fails, read `last_output.details.items` from the assistant and sensor caches in `.roosta/state/cache/`. If the prior cards cannot be recovered, report the read failure with `status: "error"` and omit `details.items` so the runner preserves the previous cards.
 
 - **Same subject already on the board:** return an item with that card's `id` and only the fields you improve, each rewritten in full. Links and documents you add are combined with the card's.
 - **The newest run wins per field.** Fields you omit stay as they are. `new: true` only for a material update.
 - **A refinement needs a live card.** An item without a `title` whose id is not on the board is dropped.
 - **Different reason, different card:** a win on a thread that also carries an action is its own episode.
 
-Different ids for the same topic are caught by the conductor, which folds them and returns `details.merges`. Keep returning your id; it refines the kept card from then on.
+Different ids for the same topic are caught by the assistant worker, which folds them and returns `details.merges`. Keep returning your id; it refines the kept card from then on.
 
 ## Extra `details` keys
 
-A skill may add top-level `details` keys next to `items`, for example `draft` (a workspace path the board offers as "Open draft"). The conductor adds `done_today` and `merges`.
+A skill may add top-level `details` keys next to `items`, for example `draft` (a workspace path the board offers as "Open draft"). The assistant worker adds `done_today` and `merges`.
 
 ## Tool parity
 

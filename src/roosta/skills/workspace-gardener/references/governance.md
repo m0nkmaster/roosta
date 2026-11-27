@@ -1,9 +1,9 @@
 # Governance - preservation, ground truth and canonical architecture
 
 Depth for the gardener's judgement calls. The SKILL routes here when deciding what
-to edit, what to verify, and how to structure the vault.
+to edit, what to verify, and how to structure the workspace.
 
-## Ground truth: the vault is understanding, not gospel
+## Ground truth: the workspace is understanding, not gospel
 
 The user's notes capture *how they think things work* - priorities, rationale, mental
 models, half-formed hypotheses. That is valuable and mostly sacred. It is **not
@@ -11,7 +11,7 @@ always accurate**. Architecture drifts, services get renamed, decisions get
 superseded in tickets, and code does what code does regardless of what a README says.
 
 Spot-check claims against reality when you touch a topic - not every sentence every
-pass, but do not treat vault prose as verified fact either.
+pass, but do not treat workspace prose as verified fact either.
 
 | Source | Use for |
 |--------|---------|
@@ -21,9 +21,9 @@ pass, but do not treat vault prose as verified fact either.
 | **Chat** | Recent decisions, corrections, "actually we changed that" moments |
 | **Product tools** | Live product state |
 
-When vault prose and ground truth disagree:
+When workspace prose and ground truth disagree:
 
-- **Verifiable fact** (wrong service name, stale status, incorrect SQL, code moved) - correct the vault directly and note what you checked
+- **Verifiable fact** (wrong service name, stale status, incorrect SQL, code moved) - correct the workspace directly and note what you checked
 - **Strategic opinion or decision** the user recorded - leave their words; add a dated correction beneath (`Verified YYYY-MM-DD: code shows X`)
 - **Ambiguous or unresolved** - flag in garden-log; don't guess
 
@@ -84,12 +84,12 @@ Multiple entry points saying the same thing guarantees drift. Typical offenders:
 
 **Fix:** Pick one canonical home. Route everything else there. Delete or gut the rest.
 
-### Skills vs vault docs vs notes
+### Skills vs workspace docs vs notes
 
 | Artifact | When to use | Contents |
 |----------|-------------|----------|
 | **Skill** (`.agents/skills/`) | Agents need domain routing, mental models, "which tool when" | ~150-250 lines: decision tree, key concepts, links to bundled `references/` and `scripts/` |
-| **Vault reference** (`projects/`, long docs) | Living catalogues, deep dives, worked examples that change often | Full inventories, E2E traces, mapping tables - too big for SKILL.md |
+| **Workspace reference** (`projects/`, long docs) | Living catalogues, deep dives, worked examples that change often | Full inventories, E2E traces, mapping tables - too big for SKILL.md |
 | **Notes** (`notes/`) | Personal ops, dated one-offs, secrets-adjacent runbooks | CLI commands, `.env` patterns, troubleshooting - not architecture narrative |
 | **AGENTS.md** | Agent bootstrap only | One-line pointers to skills and key docs - not duplicate prose |
 
@@ -100,7 +100,7 @@ Multiple entry points saying the same thing guarantees drift. Typical offenders:
 - The content is domain expertise, not a transient task
 - It would benefit teammates if made portable (bundled references, relative paths, no workspace-only wikilinks)
 
-**Do not** create a skill that only points at personal vault files - that's an index,
+**Do not** create a skill that only points at personal workspace files - that's an index,
 not a transferable skill. Bundle references inside the skill folder.
 
 **Do not** put 500-line catalogues into SKILL.md - that's a context bomb. The skill
@@ -122,7 +122,7 @@ skill-name/
 
 Paths in SKILL.md are relative to the skill folder. No "read `projects/foo/bar.md`"
 as a prerequisite - this includes `## Related` sections: a skill may link to other
-skills, never to vault-only project files. Personal secrets stay in `notes/` or
+skills, never to workspace-only project files. Personal secrets stay in `notes/` or
 `.env`, never in the skill.
 
 ### Remove, don't stub

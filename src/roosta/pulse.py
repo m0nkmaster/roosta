@@ -1,4 +1,4 @@
-"""Vault Pulse - live workspace telemetry for the dashboard."""
+"""Pulse - live workspace telemetry for the dashboard."""
 
 from __future__ import annotations
 
@@ -350,8 +350,8 @@ def link_projects(signals: dict[str, dict], readmes: dict[str, str]) -> None:
         signal["related"].sort()
 
 
-def scan_vault(root: Path) -> dict:
-    """Count vault artefacts without touching secrets or dashboard internals."""
+def scan_workspace(root: Path) -> dict:
+    """Count workspace artefacts without touching secrets or dashboard internals."""
     root = root.resolve()
     known, entities = constellation_pages(root)
     now = datetime.now(timezone.utc)
@@ -444,7 +444,7 @@ def board_stats(
     }
 
 
-def command_mood(vault: dict, activity: dict, board: dict) -> dict:
+def command_mood(workspace: dict, activity: dict, board: dict) -> dict:
     """Pick a playful operational headline from live telemetry."""
     if not board["sensors_ok"]:
         return {
@@ -496,13 +496,13 @@ def command_mood(vault: dict, activity: dict, board: dict) -> dict:
             ),
             "accent": "#f85149",
         }
-    if vault["recent_files_7d"] >= 15:
+    if workspace["recent_files_7d"] >= 15:
         return {
-            "code": "vault_alive",
-            "headline": "Vault alive",
+            "code": "workspace_alive",
+            "headline": "Workspace alive",
             "detail": (
-                f"{vault['recent_files_7d']} files touched this week across "
-                f"{vault['projects']} projects."
+                f"{workspace['recent_files_7d']} files touched this week across "
+                f"{workspace['projects']} projects."
             ),
             "accent": "#d2a8ff",
         }
@@ -511,7 +511,7 @@ def command_mood(vault: dict, activity: dict, board: dict) -> dict:
         "headline": "Steady state",
         "detail": (
             f"{board['board_active']} on the board, "
-            f"{vault['words']:,} words in the vault. Systems nominal."
+            f"{workspace['words']:,} words in the workspace. Systems nominal."
         ),
         "accent": "#8b949e",
     }
@@ -601,7 +601,7 @@ def build_pulse(
     list each board item by name; bare refs still count when titles are unknown.
     """
     now = now or datetime.now(timezone.utc)
-    vault = scan_vault(root)
+    workspace = scan_workspace(root)
     items = list(active_project_items or []) + [
         {"project_ref": ref} for ref in active_project_refs or []
     ]
@@ -614,7 +614,7 @@ def build_pulse(
             refs.add(ref + "/README.md" if re.fullmatch(r"projects/[a-z0-9-]+", ref) else ref)
         for ref in refs:
             project_items.setdefault(ref, []).append(item)
-    for project in vault["project_signals"]:
+    for project in workspace["project_signals"]:
         linked = project_items.get(project["path"], [])
         project["active_board_items"] = len(linked)
         project["board_items"] = [
@@ -628,11 +628,11 @@ def build_pulse(
         running_activity or [],
         chat_items or [],
     )
-    mood = command_mood(vault, activity, board)
+    mood = command_mood(workspace, activity, board)
     return {
         "generated_at": now.isoformat(),
         "local_hour": now.astimezone().hour,
-        "vault": vault,
+        "workspace": workspace,
         "activity": activity,
         "board": board,
         "running": running,

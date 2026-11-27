@@ -13,12 +13,12 @@ from roosta import pulse, workspace
 
 
 def fixture_page(directory, name):
-    root = directory / "vault"
+    root = directory / "workspace"
     seed(root)
     catalogue = workspace.build_catalogue(root)
     client = pulse.entity_id(CLIENT)
     snapshot = pulse.build_pulse(root, [], {}, 0, 0, {})
-    briefs = {s["name"]: pulse.project_brief(root, s["name"]) for s in snapshot["vault"]["project_signals"]}
+    briefs = {s["name"]: pulse.project_brief(root, s["name"]) for s in snapshot["workspace"]["project_signals"]}
     verified = pulse.review_project(root, client, "confirm", reviewer="human:owner")
     data = {"catalogue": catalogue, "pulse": snapshot, "briefs": briefs, "verified": verified,
             "after": pulse.build_pulse(root, [], {}, 0, 0, {}), "client": client,
@@ -30,14 +30,14 @@ let confirmed = false;
 window.fetch = async (url, options) => {
   let value;
   if (url === '/api/workspace') value = sample.catalogue;
-  else if (url.startsWith('/api/vault-document?')) {
+  else if (url.startsWith('/api/workspace/document?')) {
     const path = new URL(url,'https://fixture.invalid').searchParams.get('path');
     value = {path,content:sample.catalogue.files.find(f=>f.path===path).text};
   } else if (url === '/api/pulse') value = confirmed ? sample.after : sample.pulse;
-  else if (url.startsWith('/api/constellation/') && !options) {
+  else if (url.startsWith('/api/projects/') && !options) {
     const id=url.split('/').pop(); value=confirmed && id===sample.client ? sample.verified : sample.briefs[id];
   }
-  else if (url === '/api/constellation/'+sample.client+'/review' && options.method==='POST'
+  else if (url === '/api/projects/'+sample.client+'/review' && options.method==='POST'
            && JSON.parse(options.body).action==='confirm') { confirmed=true;value=sample.verified; }
   else throw Error('Unexpected fixture request '+url);
   return {ok:true,json:async()=>value};

@@ -2,13 +2,28 @@ import json, os, re, shutil, subprocess
 from pathlib import Path
 import pytest
 
-PAGE = Path(__file__).resolve().parent.parent / "src" / "roosta" / "static" / "office.html"
+STATIC = Path(__file__).resolve().parent.parent / "src" / "roosta" / "static"
+PAGE = STATIC / "office.html"
+
+
+def _source():
+    """The Office scripts, joined in the order office.html loads them."""
+    names = re.findall(r'<script src="/static/(office[\w-]*\.js)">', PAGE.read_text())
+    assert names, "office.html loads no office-*.js scripts"
+    return "\n".join((STATIC / name).read_text() for name in names)
 
 
 def _lift(name):
-    html = PAGE.read_text()
-    m = re.search(rf"function {name}\(.*?\n        \}}", html, re.S)
-    assert m, f"{name} not found in office.html"
+    """A top-level function declaration, to run under Node."""
+    m = re.search(rf"^function {name}\(.*?\n\}}", _source(), re.S | re.M)
+    assert m, f"{name} not found in the office scripts"
+    return m.group(0)
+
+
+def _const(name):
+    """A top-level const, one line or a block that closes at the margin."""
+    m = re.search(rf"^const {name} = (?:[^\n]*;\n|.*?\n[\]}})][^\n]*;\n)", _source(), re.S | re.M)
+    assert m, f"const {name} not found in the office scripts"
     return m.group(0)
 
 
@@ -298,8 +313,7 @@ def test_cheerer_is_nearest_still_awake_colleague_in_earshot():
 
 def test_every_nickname_is_cast_and_every_layer_is_vendored():
     import yaml
-    html = PAGE.read_text()
-    consts = re.search(r"(        const TONES.*?)\n        const A = ", html, re.S).group(1)
+    consts = re.search(r"^(const TONES.*?)\n(?=const A = )", _source(), re.S | re.M).group(1)
     js = (f"{consts}{_lift('layersOf')}const p=new Set();"
           "for(const shirt of SHIRTS){for(const c of Object.values(CAST))layersOf({shirt,...c}).forEach(x=>p.add(x));"
           "for(const tone of TONES)for(const hair of HAIRS)for(const body of ['m','f'])layersOf({body,tone,shirt,hair}).forEach(x=>p.add(x));}"
@@ -326,7 +340,7 @@ def test_motion_sensor_rooms_and_hours():
 
 def test_dark_room_tubes_strike_then_settle():
     ages = [0, .05, .1, .22, .3, .5, .7, .9, 9]
-    js = (f"{re.search(r'const STRIKE = .*?;', PAGE.read_text()).group(0)}{_lift('tubeStrike')}"
+    js = (f"{_const('STRIKE')}{_lift('tubeStrike')}"
           f"process.stdout.write(JSON.stringify({json.dumps(ages)}.map(tubeStrike)))")
     out = _node(js)
     assert out[0] == 1 and out[2] == 0 and out[4] == 0  # blink, die, blink, die
@@ -369,9 +383,8 @@ def test_hurt_workers_hurry_on_long_trips_and_limp_near_the_bay():
 
 
 def test_weather_is_seeded_by_date_and_wetter_in_winter():
-    html = PAGE.read_text()
-    hash_js = re.search(r"const hash = .*?;\n", html).group(0)
-    odds = re.search(r"const RAIN_ODDS = .*?;\n", html).group(0)
+    hash_js = _const("hash")
+    odds = _const("RAIN_ODDS")
     js = (f"{hash_js}{odds}{_lift('weatherFor')}const n = (mo) => {{ let r = 0, k = 0;"
           "for (let y = 2024; y < 2030; y++) for (let d = 1; d <= 28; d++) for (let h = 0; h < 24; h += 3) { k++; if (weatherFor(y, mo, d, h) === 'rain') r++; } return r / k; };"
           "process.stdout.write(JSON.stringify([weatherFor(2026, 10, 9, 9), weatherFor(2026, 10, 9, 10), weatherFor(2026, 10, 9, 11),"
@@ -1066,7 +1079,7 @@ def test_friday_cake_arrives_gets_cut_and_leaves_a_last_slice():
 
 
 def test_post_lands_mid_morning_monday_to_saturday_and_never_lingers():
-    hash_js = re.search(r"const hash = .*?;\n", PAGE.read_text()).group(0)
+    hash_js = _const("hash")
     js = (f"const OWN_SLOT = 4;{hash_js}{_lift('postFor')}{_lift('postWaiting')}" + """
 const days = [0,1,2,3,4,5,6].map((d) => postFor('2026-11-24', d));
 const tue = days[2], none = new Set();
@@ -1110,7 +1123,7 @@ process.stdout.write(JSON.stringify({taken: [...postTaken], a: [a.item, a.emote]
 
 
 def test_own_pigeonhole_waits_for_the_user_and_says_what_is_there():
-    hash_js = re.search(r"const hash = .*?;\n", PAGE.read_text()).group(0)
+    hash_js = _const("hash")
     js = (f"const OWN_SLOT = 4;{hash_js}{_lift('postFor')}{_lift('ownPost')}{_lift('actionFor')}{_lift('hintFor')}" + """
 const plan = {at: 600, slots: [{i: 1, kind: 'flyer', by: 700}, {i: 4, kind: 'postcard', by: 1050}]};
 const none = new Set(), mine = new Set([4]);

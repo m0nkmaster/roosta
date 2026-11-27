@@ -9,12 +9,16 @@ starting `assistant/` are under the workspace's `.roosta/state/`. Also see
 
 ## Board and document contracts
 
-`/assistant` is a chat-app **board**. Left rail = the things that genuinely need the user now; right pane = a live conversation about the selected one. The spirit: **awareness in, judgement-ranked attention out, chat to resolve, vault for memory.** Per-item compact conversation continuity persists locally; durable business outcomes still belong in the vault (`projects/`, `PRIORITIES.md`, `notes/`).
+`/assistant` is a chat-app **board**. Left rail = the things that genuinely need the user now; right pane = a live conversation about the selected one. The spirit: **awareness in, judgement-ranked attention out, chat to resolve, workspace for memory.** Per-item compact conversation continuity persists locally; durable business outcomes still belong in the workspace (`projects/`, `PRIORITIES.md`, `notes/`).
 
 
-- **Conductor** (`assistant` skill, run as the `assistant` task in `tasks.yaml`): periodically reads the vault + connected tools, judges what needs the user, and emits a minimal ranked `items` doc (`{id,project_ref,title,why,situation,opening_move,action_owner,action_label,action_type,links,documents,new}` + `done_today`). `id` identifies one distinct attention item and stays stable while that reason remains open. `project_ref` optionally names the single canonical vault project directory, after the conductor verifies its README, but is context only: several items from the same project always retain separate conversations. Lifecycle state is unified under the gitignored `.roosta/state/assistant/` directory (`seen.json`, `handled.json`, `snoozed.json`). `action_type` is an optional visual category (`chat`, `ticket`, `email`, `standup`, `meeting`, `document`, `review`, `decision`, `task`); `normalise_board_doc` infers it from the proposed opening move when absent, so old cached items also get a clear badge. `action_owner` says whether the Assistant can handle the next move or the user must act; `action_label` supplies the specific button wording, with safe category-based fallbacks for older cached items. `links` is a short list of `{label,url}` direct CTAs (Teams permalink, Jira/PR URL, calendar/doc) - `_normalise_links` drops any non-http(s) link and caps at 4, so a fabricated or unsafe URL cannot render as a CTA. It also repairs group-chat links whose conversation id ends in `@thread.v2` by replacing channel-only query fields with `context={"contextType":"chat"}`; channel `@thread.tacv2` links remain unchanged. `documents` is a separate list of `{label,path}` CTAs for relative Markdown files inside the vault and outside `dashboard/`. `/document?path=...` renders them inside the app through the path-validated, read-only `/api/vault-document` endpoint. A scheduled feed's top-level `details.draft` is attached as `Open draft` to its matching item, including legacy rolling-comms output. The board **re-verifies live state each pass** and drops items resolved out-of-band rather than nagging from memory; it caps at ~5-7 items.
+- **Assistant task** (`assistant` skill, run as the `assistant` task in `tasks.yaml`): periodically reads the workspace + connected tools, judges what needs the user, and emits a minimal ranked `items` doc (`{id,project_ref,title,why,situation,opening_move,action_owner,action_label,action_type,links,documents,new}` + `done_today`). `id` identifies one distinct attention item and stays stable while that reason remains open. `project_ref` optionally names the single canonical workspace project directory, after the assistant task verifies its README, but is context only: several items from the same project always retain separate conversations. Lifecycle state is unified under the gitignored `.roosta/state/assistant/` directory (`seen.json`, `handled.json`, `snoozed.json`). `action_type` is an optional visual category (`chat`, `ticket`, `email`, `standup`, `meeting`, `document`, `review`, `decision`, `task`); `normalise_board_doc` infers it from the proposed opening move when absent, so old cached items also get a clear badge. `action_owner` says whether the Assistant can handle the next move or the user must act; `action_label` supplies the specific button wording, with safe category-based fallbacks for older cached items. `links` is a short list of `{label,url}` direct CTAs (Teams permalink, Jira/PR URL, calendar/doc) - `_normalise_links` drops any non-http(s) link and caps at 4, so a fabricated or unsafe URL cannot render as a CTA. It also repairs group-chat links whose conversation id ends in `@thread.v2` by replacing channel-only query fields with `context={"contextType":"chat"}`; channel `@thread.tacv2` links remain unchanged. `documents` is a separate list of `{label,path}` CTAs for relative Markdown files inside the workspace and outside `dashboard/`. `/document?path=...` renders them inside the app through the path-validated, read-only `/api/workspace/document` endpoint. A scheduled feed's top-level `details.draft` is attached as `Open draft` to its matching item, including legacy rolling-comms output. The board **re-verifies live state each pass** and drops items resolved out-of-band rather than nagging from memory; it caps at ~5-7 items.
 
-- **Vault documents stay one click away.** The chat prompt tells the actor to return created or
+- **Board state is not chat state.** `board_state.BoardState` owns the closed, snoozed, first-seen
+  and merged card stores and reminders in `.roosta/state/assistant/`. `app.py` builds it at import,
+  so closing, snoozing and reminders work even when no AI connection can run. `ChatRouter` gets the
+  same instance and only records outcomes (DONE, DEFER, REMIND) through it.
+- **Workspace documents stay one click away.** The chat prompt tells the actor to return created or
   referenced Markdown documents as relative Markdown links. As a backstop, the sanitised reply
   renderer turns an inline-code relative `.md` path into an in-app document link. Absolute paths,
   traversal, URLs and dashboard internals are never linked; the document endpoint still performs
@@ -23,13 +27,13 @@ starting `assistant/` are under the workspace's `.roosta/state/`. Also see
   load. An unmatched fragment opens the full document at the top.
 
 - **Documents can open their own chat.** The viewer's *Chat about this* opens
-  `/assistant?item=doc:<vault path>`, a persistent standing thread like `person:` (no Close or
-  Not now). `document_chat_item` resolves it through `resolve_vault_markdown`, so an invented or
+  `/assistant?item=doc:<workspace path>`, a persistent standing thread like `person:` (no Close or
+  Not now). `document_chat_item` resolves it through `resolve_workspace_markdown`, so an invented or
   escaping path 404s, and sets `project_ref` when the document sits under `projects/<slug>/`.
 
 - **The chat shows its document alongside.** `showDocPane` in `static/assistant.html` renders the
-  first linked vault document (a `doc:` thread's own path, or an item's first `documents` entry) in a
-  right-hand pane via `/api/vault-document`; hidden under 1100px, ✕ hides it until the next item opens. The pane shares the [manual Markdown editor](ui.md#workspace-and-documents). Editing works independently of the chat and its history.
+  first linked workspace document (a `doc:` thread's own path, or an item's first `documents` entry) in a
+  right-hand pane via `/api/workspace/document`; hidden under 1100px, ✕ hides it until the next item opens. The pane shares the [manual Markdown editor](ui.md#workspace-and-documents). Editing works independently of the chat and its history.
 
 - **The rail has two tabs: Inbox and Chats.** Inbox is what the assistant raises; Chats is what the user
   starts. `/api/board` returns `chats` (`chat_list`): every `chat:`, `worker:`, `hire:` and `doc:` thread with
@@ -45,21 +49,21 @@ starting `assistant/` are under the workspace's `.roosta/state/`. Also see
   open the original thread. Its restore time ranks it among recent chats even if its last message
   predates the 100-row rail. Closing and restoring leave transcripts and running turns intact.
 
-- **First conductor pass.** A successful `roosta snapshot board` with empty active and deferred
-  card lists allows the conductor to start from an empty board before a cache exists. If the
-  snapshot fails and the prior cards cannot be recovered from cache, the conductor reports an
+- **First assistant pass.** A successful `roosta snapshot board` with empty active and deferred
+  card lists allows the assistant task to start from an empty board before a cache exists. If the
+  snapshot fails and the prior cards cannot be recovered from cache, the assistant task reports an
   error without items so the runner carries its previous cards forward.
 - **Scheduled sensor feeds.** Every scheduled task may return board-shaped items in
   `details.items`; there is no allowlist. `/api/board` merges each task's latest findings into the
-  conductor snapshot by stable id (`merge_board_feed_items`). A repeated id **refines** the
+  assistant snapshot by stable id (`merge_board_feed_items`). A repeated id **refines** the
   existing card: tasks apply oldest `last_run` first, supplied fields replace older wording (the
-  conductor's included), omitted fields stay, links and documents combine, and an untitled update
+  assistant task's included), omitted fields stay, links and documents combine, and an untitled update
   for an unknown id is dropped. Skills avoid duplicates by reading the board and reusing an
   existing card's id - see [board contract](../../src/roosta/skills/assistant/references/board-contract.md). Duplicates
-  under different ids are resolved by the conductor's `details.merges` map, persisted by
-  `ChatRouter.record_merges` in `assistant/merged.json` and applied via `resolve_alias` before
+  under different ids are resolved by the assistant task's `details.merges` map, persisted by
+  `BoardState.record_merges` in `assistant/merged.json` and applied via `resolve_alias` before
   merging; the card the user has a conversation on always keeps its id. A folded duplicate only fills
-  blank fields and adds links and documents: the kept card is the conductor's synthesis, so it
+  blank fields and adds links and documents: the kept card is the assistant task's synthesis, so it
   never takes the duplicate's title or wording.
 
 - **Executive brief, not wall of text.** Each item answers what changed, why it matters now, and
@@ -70,7 +74,7 @@ starting `assistant/` are under the workspace's `.roosta/state/`. Also see
   inline links display in both streamed and restored replies. Rendered Markdown is reduced to an
   allowlist of structural tags and safe HTTP(S) links; `title` and labels stay plain escaped text.
 
-- **Personal ordering stays local.** The rail can retain the conductor's recommended order or sort
+- **Personal ordering stays local.** The rail can retain the assistant task's recommended order or sort
   by newest, action type, or a visible 1-5 importance score calculated from urgency language,
   ownership, newness and decision work. Pinned items always stay above the selected order. Sort and
   pin preferences live in browser storage because they are presentation choices, not shared work
@@ -144,20 +148,20 @@ or invoking a harness. Existing conversations keep their history.
   writes durable outcomes into that project unless a more specific linked note is the proper home.
   Live turns use the restrictive dashboard permission profile, so local outcome writes work while
   external actions remain blocked until the separate approved sender invocation.
-  A live conversation must outlive the item leaving the board: the conductor drops items it
+  A live conversation must outlive the item leaving the board: the assistant task drops items it
   considers resolved, capped out or aged off, so `api_board_chat` falls back to
   `ChatRouter.known_item` (topic record / transcript / handled note / live session) to keep
   answering instead of 404ing a thread the user is mid-conversation on; only a truly unseen id 404s.
   For the same reason `mark_handled` records the outcome but never wipes the session, topic
   summary or transcript - resolving an item still hides it from the rail, but a follow-up keeps its
-  context. `ChatRouter.handled()` normalises an accidental `{"items": [...]}` wrapper (written by
+  context. `BoardState.handled()` normalises an accidental `{"items": [...]}` wrapper (written by
   a misbehaving local-model pass) before board code reads it. Malformed values must never take
   down `/api/board`.
   `CHAT_PROMPT` tells the model to keep skill loading and tool use invisible before asking it to
   load `actor`; this ordering is deliberate because otherwise the model narrates the load before
   it has read the skill's output-discipline rules. Board replies must begin with the answer and
   default to 1-3 short sentences, under 80 words unless asked for detail. Factual synthesis from
-  the vault or enterprise systems includes its strongest direct source links in the first reply
+  the workspace or enterprise systems includes its strongest direct source links in the first reply
   and labels inference rather than making the user ask where it came from. `VisibleReplyFilter` is the
   hard backstop: it strips first-person preambles and opening progress narration such as
   "Investigating..." or "Updating the project README", including across streamed chunks. On
@@ -184,9 +188,9 @@ or invoking a harness. Existing conversations keep their history.
 ## Endpoints
 
 `GET /api/board` (rail + done-today + current chat histories + active chat ids +
-`agent_up` + `health`), `POST /api/board/refresh` (trigger a conductor pass),
-`GET /document?path=<relative-md>` + `GET /api/vault-document?path=<relative-md>` (read-only,
-in-app vault Markdown; a chat-reply link to a vault `.html/.txt/.json/.yaml/.csv` file outside
+`agent_up` + `health`), `POST /api/board/refresh` (trigger an assistant pass),
+`GET /document?path=<relative-md>` + `GET /api/workspace/document?path=<relative-md>` (read-only,
+in-app workspace Markdown; a chat-reply link to a workspace `.html/.txt/.json/.yaml/.csv` file outside
 dot-folders opens there too, shown as fenced read-only source with no doc chat; `.roosta/` config
 is the one dot-folder exception (`is_workspace_config`), never `.roosta/state/`, even via a symlink;
 a Markdown path must still be a visible Markdown path, outside `private/`, after symlinks resolve),
@@ -202,20 +206,20 @@ onto the board with one `curl "127.0.0.1:${ROOSTA_PORT:-7667}/api/notify"`; it b
 With a future timezone-aware `due`, `/api/notify` instead persists a **file-backed reminder**
 (see below) rather than an in-memory ping, so it survives a restart and surfaces only when due.
 Endpoints acting on visible cards must resolve them through `collect_board_items`, which includes
-conductor, sensor, pushed-notification and reminder sources.
+assistant task, sensor, pushed-notification and reminder sources.
 
 ## Recently closed + revive
 
 `mark_handled` stores a compact `item` snapshot (title, why,
-situation, action fields, links, documents, project_ref via `_closed_snapshot`) alongside the
+situation, action fields, links, documents, project_ref via `closed_snapshot`) alongside the
 `{result, at}` outcome so a closed item can be reviewed and revived with its original context;
 `api_board_close` resolves the full visible item before closing. `/api/board` returns
 `document.closed` (newest-first, capped 15) via `recently_closed`, each `{id, title, result, at,
 action_type}` with title falling back to `known_item` for pre-snapshot records. `POST
-/api/board/reopen {item_id}` calls `ChatRouter.unhandle` (drops it from `handled.json`, returns the
+/api/board/reopen {item_id}` calls `BoardState.unhandle` (drops it from `handled.json`, returns the
 snapshot) and re-pushes it to `_pushed_notifications` under its **original id**, so the conversation
-thread is preserved and no duplicate appears if the conductor still produces it. Revival is
-in-memory: an item the conductor no longer knows about is lost on restart if not actioned. The rail
+thread is preserved and no duplicate appears if the assistant task still produces it. Revival is
+in-memory: an item the assistant task no longer knows about is lost on restart if not actioned. The rail
 shows a collapsible "Recently closed" section with a Reopen button; a header search box (top right)
 filters the rail client-side.
 
@@ -224,9 +228,9 @@ filters the rail client-side.
 A board chat can create a *new* standalone card - not
 reschedule the current item - when the user says "remind me about X" / "put X on my board". The actor
 emits `<<<REMIND>>>{title,body,due}` (validated in `chat.py`, `due` null = now, else a bounded
-future tz-aware instant); `ChatRouter.add_reminder` persists it to the gitignored
+future tz-aware instant); `BoardState.add_reminder` persists it to the gitignored
 `assistant/reminders.json` (`[{id,title,body,due,created}]`). This is deliberately distinct from
-snooze: a reminder has no live conductor source, so it can't rely on conductor re-validation to
+snooze: a reminder has no live assistant source, so it can't rely on assistant re-validation to
 resurface - it must persist. Assistant, the Office count and Pulse share the active and later lanes: due reminders become
 `new` rail items (notified, deduped by id); future ones join the `later` lane by `snoozed_until`
 and auto-promote when due. Closing a reminder card runs `mark_handled`, which calls
@@ -245,7 +249,7 @@ upgrade under a running runner), and the strip then says "Restart Roosta to load
 
 ## Turn protocol
 
-the actor streams plain assistant prose (rendered as markdown via `marked`) and ends with one trailing marker carrying a compact `thread_summary`: `<<<STATE>>>{json}` (discussion), `<<<DEFER>>>{json}` (schedule a revisit of THIS item), `<<<REMIND>>>{json}` (create a NEW durable board card/reminder, optionally scheduled), `<<<PAUSE>>>{json}` (external send drafted - the chat stops, the UI shows inline Send/Cancel, and only on Send does the privileged `sender` skill perform it), `<<<DONE>>>{json}` (acted - UI auto-advances), or `<<<ERROR>>>{json}`. Markers are parsed in `chat.py` and never shown to the user. Optional `learned: [{path,fact}]` on `STATE`/`DONE` surfaces inline vault captures in the chat UI; the actor writes the canonical doc and appends `notes/assistant-captures.jsonl` in the same turn (see the actor skill). Deferral timestamps must include a timezone, be in the future and be no more than 366 days away.
+the actor streams plain assistant prose (rendered as markdown via `marked`) and ends with one trailing marker carrying a compact `thread_summary`: `<<<STATE>>>{json}` (discussion), `<<<DEFER>>>{json}` (schedule a revisit of THIS item), `<<<REMIND>>>{json}` (create a NEW durable board card/reminder, optionally scheduled), `<<<PAUSE>>>{json}` (external send drafted - the chat stops, the UI shows inline Send/Cancel, and only on Send does the privileged `sender` skill perform it), `<<<DONE>>>{json}` (acted - UI auto-advances), or `<<<ERROR>>>{json}`. Markers are parsed in `chat.py` and never shown to the user. Optional `learned: [{path,fact}]` on `STATE`/`DONE` surfaces inline workspace captures in the chat UI; the actor writes the canonical doc and appends `notes/assistant-captures.jsonl` in the same turn (see the actor skill). Deferral timestamps must include a timezone, be in the future and be no more than 366 days away.
 The parser and UI also strip an accidental trailing `>>>` after marker JSON because models sometimes close the delimiter.
 Before invoking `sender`, `normalise_sender_action` validates the actor's untrusted pause payload and maps its generic `{draft,target}` fields to the sender contract: `{text,target}` for messages, `{status,ticket}` for Jira changes, or `{project,ticket}` for new Jira tickets (target must be a bare project key such as `PROJ`). Unknown or incomplete action shapes are rejected.
 Chat drafts and sends end with `[AI]`; the actor includes it in the
@@ -253,13 +257,13 @@ approval text and the sender adds it if absent as a final backstop. Email is unc
 
 **Attention scheduling:** "Not now" is a first-class outcome, separate from resolving an item. The
 board offers allowlisted presets (one hour, tomorrow morning, next Monday) and stores the choice in
-`assistant/snoozed.json` through `ChatRouter`. `GET /api/board` partitions the conductor's current
+`assistant/snoozed.json` through `BoardState`. `GET /api/board` partitions the assistant task's current
 items into active `items` and a visible `later` lane. An expired item only resurfaces if the latest
-conductor pass still says it needs the user, so the board never revives stale work from its own memory.
+assistant pass still says it needs the user, so the board never revives stale work from its own memory.
 The user can use "Bring back" at any point. Marking an item handled clears any snooze for the same id.
 The API accepts preset names rather than arbitrary timestamps, keeping the scheduling surface small
 and validated. Conversational requests such as "bring this back in a few days" use the actor's
-validated `DEFER` marker; the conductor reads the same snooze store and preserves a live episode
+validated `DEFER` marker; the assistant task reads the same snooze store and preserves a live episode
 while it is parked.
 
 ## Approval lifetime

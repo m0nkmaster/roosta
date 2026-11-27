@@ -7,6 +7,7 @@ from roosta import scheduler
 from roosta import workspace
 from roosta import chat_items
 from roosta import board
+from roosta.board_state import BoardState, closed_snapshot, resolve_alias
 from roosta import task_config
 from roosta import cursor_agent as camod
 from roosta.activity_log import ActivityLog
@@ -19,6 +20,17 @@ def ai_connected(request, monkeypatch):
         monkeypatch.setattr(board, "setup_item", lambda *_: None)
         monkeypatch.setattr(appmod, "setup_item", lambda *_: None)
 
+
+@pytest.fixture
+def app_board(monkeypatch, tmp_path):
+    """The app's board state, kept in this test's folder."""
+    state = BoardState(tmp_path)
+    monkeypatch.setattr(appmod, "board", state)
+    return state
+
+
+def seed_reminders(state, reminders):
+    state._reminders.path.write_text(json.dumps(reminders))
 
 def test_cursor_result_text_prefers_completed_stream_over_stale_result():
     final = '<task-output>{"summary":"blocked","status":"error","details":{}}</task-output>'
@@ -73,15 +85,15 @@ def test_connector_write_commands_join_every_policy(tmp_path, monkeypatch):
 
 
 def test_cursor_args_use_headless_streaming_and_resume():
-    args = camod.cursor_args(binary="/x/agent", workspace="/vault", session_id="chat-id", model="gpt-6")
+    args = camod.cursor_args(binary="/x/agent", workspace="/workspace", session_id="chat-id", model="gpt-6")
     assert args[0] == "/x/agent"
     assert "--print" in args and "--trust" in args and "--force" in args
     assert args[args.index("--output-format") + 1] == "stream-json"
     assert "--stream-partial-output" in args
-    assert args[args.index("--workspace") + 1] == "/vault"
+    assert args[args.index("--workspace") + 1] == "/workspace"
     assert args[args.index("--resume") + 1] == "chat-id"
     assert args[args.index("--model") + 1] == "gpt-6"
-    fresh = camod.cursor_args(workspace="/vault")
+    fresh = camod.cursor_args(workspace="/workspace")
     assert "--resume" not in fresh and "--model" not in fresh
 
 
@@ -436,29 +448,23 @@ def test_terminal_event_remind_rejects_unsafe_due(due):
         "kind": "error", "payload": {"reason": "invalid reminder time"}}
 
 
-def test_chatrouter_reminders_roundtrip_and_removal(tmp_path):
-    path = tmp_path / "reminders.json"
-    cr = cmod.ChatRouter(session_map=cmod.SessionMap(tmp_path / "s.json"),
-                         vault="/v", reminders_path=path)
-    assert cr.reminders() == []
-    rid = cr.add_reminder("Call the vendor", "before 5", "2026-07-28T16:00:00+00:00")
+def test_board_state_reminders_roundtrip_and_removal(tmp_path):
+    state = BoardState(tmp_path)
+    assert state.reminders() == []
+    rid = state.add_reminder("Call the vendor", "before 5", "2026-07-28T16:00:00+00:00")
     assert rid.startswith("remind-")
-    stored = cmod.ChatRouter(cmod.SessionMap(tmp_path / "s2.json"), "/v",
-                             reminders_path=path).reminders()
+    stored = BoardState(tmp_path).reminders()
     assert stored[0]["title"] == "Call the vendor"
     assert stored[0]["due"] == "2026-07-28T16:00:00+00:00"
-    cr.remove_reminder(rid)
-    assert cr.reminders() == []
+    state.remove_reminder(rid)
+    assert state.reminders() == []
 
 
-def test_chatrouter_mark_handled_clears_matching_reminder(tmp_path):
-    reminders = tmp_path / "reminders.json"
-    cr = cmod.ChatRouter(session_map=cmod.SessionMap(tmp_path / "s.json"),
-                         vault="/v", handled_path=tmp_path / "handled.json",
-                         reminders_path=reminders)
-    rid = cr.add_reminder("Draft the update")
-    cr.mark_handled(rid, "Done")
-    assert cr.reminders() == []
+def test_board_state_mark_handled_clears_matching_reminder(tmp_path):
+    state = BoardState(tmp_path)
+    rid = state.add_reminder("Draft the update")
+    state.mark_handled(rid, "Done")
+    assert state.reminders() == []
 
 
 def test_run_turn_remind_marker_persists_card_and_ends_reply(monkeypatch, tmp_path, fake_chat_connection):
@@ -489,9 +495,7 @@ def test_run_turn_remind_marker_persists_card_and_ends_reply(monkeypatch, tmp_pa
 
     monkeypatch.setattr(cmod.asyncio, "create_subprocess_exec", fake_exec)
     router = cmod.ChatRouter(
-        cmod.SessionMap(tmp_path / "sessions.json"), "/vault",
-        reminders_path=tmp_path / "reminders.json",
-    )
+        cmod.SessionMap(tmp_path / "sessions.json"), "/workspace", board=BoardState(tmp_path))
 
     async def run():
         return [event async for event in router.run_turn(
@@ -501,7 +505,7 @@ def test_run_turn_remind_marker_persists_card_and_ends_reply(monkeypatch, tmp_pa
     assert events[-1]["kind"] == "reply_end"
     assert [e["label"] for e in events if e["kind"] == "progress"] == ["Tool started · read", "Tool finished · read"]
     assert "private" not in json.dumps(events)
-    reminders = router.reminders()
+    reminders = router.board.reminders()
     assert len(reminders) == 1 and reminders[0]["title"] == "Chase sign-off"
 
 
@@ -523,47 +527,17 @@ def test_split_due_reminders_partitions_now_and_future():
     assert later[0]["new"] is False
 
 
-def test_board_surfaces_due_reminders_and_parks_future(monkeypatch, fake_chat_connection):
-    class FakeRouter:
-        def record_merges(self, merges):
-            return {}
-
-        def handled(self):
-            return {}
-
-        def snoozed(self):
-            return {}
-
-        def reminders(self):
-            return [
-                {"id": "remind-due", "title": "Due now", "due": None},
-                {"id": "remind-later", "title": "Later",
-                 "due": "2099-01-01T09:00:00+00:00"},
-            ]
-
-        def conversation_histories(self):
-            return {}
-
-        def conversation_history(self, item_id):
-            return []
-
-        active_progress = {}
-
-        def active_items(self):
-            return []
-
-        def pending_approvals(self):
-            return {}
-
-        def record_raised(self, item_ids):
-            return {}
-
-    monkeypatch.setattr(appmod, "chat_router", FakeRouter())
+def test_board_surfaces_due_reminders_and_parks_future(monkeypatch, app_board, fake_chat_connection):
+    seed_reminders(app_board, [
+        {"id": "remind-due", "title": "Due now", "due": None},
+        {"id": "remind-later", "title": "Later", "due": "2099-01-01T09:00:00+00:00"},
+    ])
+    monkeypatch.setattr(appmod, "chat_router", None)
     monkeypatch.setattr(appmod.runner, "get_state", lambda _task_id: {
         "last_output": {"details": {"items": []}}})
     monkeypatch.setattr(appmod.runner, "get_states", lambda: [])
 
-    monkeypatch.setattr(board, "setup_item", lambda router: {"id": board.SETUP_ITEM_ID, "title": "Setup"})
+    monkeypatch.setattr(board, "setup_item", lambda _board: {"id": board.SETUP_ITEM_ID, "title": "Setup"})
     body = json.loads(asyncio.run(appmod.api_board()).body)
     count = json.loads(asyncio.run(appmod.api_board_count()).body)
     pulse = json.loads(asyncio.run(appmod.api_pulse()).body)["board"]
@@ -573,26 +547,14 @@ def test_board_surfaces_due_reminders_and_parks_future(monkeypatch, fake_chat_co
     assert [i["id"] for i in body["document"]["later"]] == ["remind-later"]
 
 
-def test_notify_with_due_persists_reminder(monkeypatch):
-    class FakeRouter:
-        def record_merges(self, merges):
-            return {}
-
-        def __init__(self):
-            self.added = None
-
-        def add_reminder(self, title, body="", due=None):
-            self.added = (title, body, due)
-            return "remind-abc"
-
-    router = FakeRouter()
-    monkeypatch.setattr(appmod, "chat_router", router)
+def test_notify_with_due_persists_reminder(app_board):
     due = (datetime.now(timezone.utc) + timedelta(days=10)).replace(microsecond=0).isoformat()
     ok = asyncio.run(appmod.api_notify(
         {"title": "Ping the team", "body": "at 5", "due": due}))
     assert ok.status_code == 200
-    assert json.loads(ok.body)["id"] == "remind-abc"
-    assert router.added == ("Ping the team", "at 5", due)
+    [saved] = app_board.reminders()
+    assert json.loads(ok.body)["id"] == saved["id"]
+    assert (saved["title"], saved["body"], saved["due"]) == ("Ping the team", "at 5", due)
     bad = asyncio.run(appmod.api_notify({"title": "X", "due": "not-a-date"}))
     assert bad.status_code == 400
 
@@ -719,7 +681,7 @@ def test_approve_sends_normalised_edited_action(monkeypatch, tmp_path, fake_chat
 
     monkeypatch.setattr(cmod.asyncio, "create_subprocess_exec", fake_exec)
     router = cmod.ChatRouter(
-        cmod.SessionMap(tmp_path / "sessions.json"), "/vault"
+        cmod.SessionMap(tmp_path / "sessions.json"), "/workspace"
     )
     router._paused["run-1"] = {
         "item_id": "item-1",
@@ -756,9 +718,7 @@ def test_approved_general_chat_action_does_not_close_chat(monkeypatch, tmp_path,
     monkeypatch.setattr(cmod.asyncio, "create_subprocess_exec", fake_exec)
     router = cmod.ChatRouter(
         cmod.SessionMap(tmp_path / "sessions.json"),
-        "/vault",
-        handled_path=tmp_path / "handled.json",
-    )
+        "/workspace", board=BoardState(tmp_path))
     router._paused["run-general"] = {
         "item_id": "chat:0123456789ab",
         "persistent": True,
@@ -773,7 +733,7 @@ def test_approved_general_chat_action_does_not_close_chat(monkeypatch, tmp_path,
     result = asyncio.run(router.approve("run-general", True, None))
 
     assert result == {"ok": True, "sent": True, "kind": "message", "summary": ""}
-    assert router.handled() == {}
+    assert router.board.handled() == {}
 
 
 def _approve_with_sender_output(monkeypatch, tmp_path, output):
@@ -790,9 +750,7 @@ def _approve_with_sender_output(monkeypatch, tmp_path, output):
 
     monkeypatch.setattr(cmod.asyncio, "create_subprocess_exec", fake_exec)
     router = cmod.ChatRouter(
-        cmod.SessionMap(tmp_path / "sessions.json"), "/vault",
-        handled_path=tmp_path / "handled.json",
-    )
+        cmod.SessionMap(tmp_path / "sessions.json"), "/workspace", board=BoardState(tmp_path))
     router._paused["run-ticket"] = {
         "item_id": "chat:0123456789ab",
         "persistent": True,
@@ -884,7 +842,7 @@ def test_visible_reply_filter_removes_chunked_process_preamble():
     "Capturing the correction and finishing the triage assessment. ",
     "Investigating the blank AI Activity section on the skill runner page. ",
     "Updating the project README to record PROJ-9925. ",
-    "I'll draft the consolidated one-pager from those four sources and save it to the vault. ",
+    "I'll draft the consolidated one-pager from those four sources and save it to the workspace. ",
     "Checking how the gardener is scheduled and whether its mandate needs sharpening. ",
     "Recording that this isn't Sam's action and updating the project note. ",
     "Gathering context on the flags and Sam's requirements. ",
@@ -977,10 +935,8 @@ def test_persistent_chat_is_not_marked_handled_after_acting(monkeypatch, tmp_pat
     history = cmod.ConversationHistoryStore(tmp_path / "general-history.json")
     router = cmod.ChatRouter(
         cmod.SessionMap(tmp_path / "sessions.json"),
-        "/vault",
-        handled_path=tmp_path / "handled.json",
-        persistent_history=history,
-    )
+        "/workspace",
+        persistent_history=history, board=BoardState(tmp_path, history))
 
     async def run():
         return [event async for event in router.run_turn(
@@ -991,7 +947,7 @@ def test_persistent_chat_is_not_marked_handled_after_acting(monkeypatch, tmp_pat
     assert events[-1]["payload"]["acted"] is True
     model_index = captured["args"].index("--model")
     assert captured["args"][model_index + 1] == "claude-opus-5-thinking-high"
-    assert router.handled() == {}
+    assert router.board.handled() == {}
     assert _texts(history.read("chat:0123456789ab")) == [
         {"role": "user", "text": "Update it"},
         {"role": "assistant", "text": "Updated."},
@@ -1028,7 +984,7 @@ def test_item_chat_persists_visible_history(monkeypatch, tmp_path, fake_chat_con
     history = cmod.ConversationHistoryStore(tmp_path / "chat-history.json")
     router = cmod.ChatRouter(
         cmod.SessionMap(tmp_path / "sessions.json"),
-        "/vault",
+        "/workspace",
         persistent_history=history,
     )
 
@@ -1047,7 +1003,7 @@ def test_item_chat_persists_visible_history(monkeypatch, tmp_path, fake_chat_con
 
 
 def test_progress_isolated_across_chats_and_queued_turns_after_stop(tmp_path):
-    router = cmod.ChatRouter(cmod.SessionMap(tmp_path / "sessions.json"), "/vault")
+    router = cmod.ChatRouter(cmod.SessionMap(tmp_path / "sessions.json"), "/workspace")
 
     async def exercise():
         release = asyncio.Event()
@@ -1090,7 +1046,7 @@ def test_progress_isolated_across_chats_and_queued_turns_after_stop(tmp_path):
 def test_detached_turn_continues_without_stream_consumer(tmp_path):
     router = cmod.ChatRouter(
         session_map=cmod.SessionMap(tmp_path / "sessions.json"),
-        vault="/vault",
+        workspace="/workspace",
     )
 
     async def exercise():
@@ -1129,7 +1085,7 @@ def test_detached_turn_continues_without_stream_consumer(tmp_path):
 def test_queued_messages_run_after_current_turn(tmp_path):
     router = cmod.ChatRouter(
         session_map=cmod.SessionMap(tmp_path / "sessions.json"),
-        vault="/vault",
+        workspace="/workspace",
     )
     seen = []
 
@@ -1281,7 +1237,7 @@ def test_normalise_board_doc_carries_links():
     assert doc["items"][0]["links"] == [{"label": "PROJ-1", "url": "https://jira/PROJ-1"}]
 
 
-def test_normalise_documents_allows_only_relative_vault_markdown():
+def test_normalise_documents_allows_only_relative_workspace_markdown():
     documents = board._normalise_documents([
         {"label": "Open draft", "path": "drafts/2026-07-28-team-rolling-comms.md"},
         {"label": "Escape", "path": "../outside.md"},
@@ -1296,20 +1252,20 @@ def test_normalise_documents_allows_only_relative_vault_markdown():
     }]
 
 
-def test_resolve_vault_markdown_rejects_escape_and_reads_existing_doc(tmp_path):
+def test_resolve_workspace_markdown_rejects_escape_and_reads_existing_doc(tmp_path):
     drafts = tmp_path / "drafts"
     drafts.mkdir()
     document = drafts / "weekly.md"
     document.write_text("# Weekly\n")
 
-    assert workspace.resolve_vault_markdown("drafts/weekly.md", tmp_path) == document
+    assert workspace.resolve_workspace_markdown("drafts/weekly.md", tmp_path) == document
     with pytest.raises(ValueError):
-        workspace.resolve_vault_markdown("../outside.md", tmp_path)
+        workspace.resolve_workspace_markdown("../outside.md", tmp_path)
     with pytest.raises(FileNotFoundError):
-        workspace.resolve_vault_markdown("drafts/missing.md", tmp_path)
+        workspace.resolve_workspace_markdown("drafts/missing.md", tmp_path)
 
 
-def test_resolve_vault_markdown_checks_where_a_symlink_lands(tmp_path):
+def test_resolve_workspace_markdown_checks_where_a_symlink_lands(tmp_path):
     state = tmp_path / ".roosta" / "state"
     state.mkdir(parents=True)
     (state / "creds.txt").write_text("token")
@@ -1326,15 +1282,15 @@ def test_resolve_vault_markdown_checks_where_a_symlink_lands(tmp_path):
 
     for bad in ("notes/leak.md", "notes/state.md", "notes/pay.md", "private/pay.md"):
         with pytest.raises(ValueError):
-            workspace.resolve_vault_markdown(bad, tmp_path)
+            workspace.resolve_workspace_markdown(bad, tmp_path)
         with pytest.raises(ValueError):
-            workspace.resolve_vault_text(bad, tmp_path)
+            workspace.resolve_workspace_text(bad, tmp_path)
     for bad in ("notes/pay.txt", "private/pay.txt"):
         with pytest.raises(ValueError):
-            workspace.resolve_vault_text(bad, tmp_path)
+            workspace.resolve_workspace_text(bad, tmp_path)
 
 
-def test_resolve_vault_text_opens_roosta_config_but_not_state_or_dotfiles(tmp_path):
+def test_resolve_workspace_text_opens_roosta_config_but_not_state_or_dotfiles(tmp_path):
     config = tmp_path / ".roosta"
     (config / "state" / "cache").mkdir(parents=True)
     (config / "connectors.yaml").write_text("connectors: []\n")
@@ -1345,22 +1301,22 @@ def test_resolve_vault_text_opens_roosta_config_but_not_state_or_dotfiles(tmp_pa
     (tmp_path / ".git").mkdir()
     (tmp_path / ".git" / "config.yaml").write_text("x")
 
-    assert workspace.resolve_vault_text(".roosta/connectors.yaml", tmp_path) == (config / "connectors.yaml").resolve()
-    assert workspace.resolve_vault_text(".roosta/operating-model.md", tmp_path).name == "operating-model.md"
+    assert workspace.resolve_workspace_text(".roosta/connectors.yaml", tmp_path) == (config / "connectors.yaml").resolve()
+    assert workspace.resolve_workspace_text(".roosta/operating-model.md", tmp_path).name == "operating-model.md"
     for bad in (".roosta/state/cache/secret.json", ".roosta/STATE/cache/secret.json",
                 ".roosta/tasks.json", ".env.json", ".git/config.yaml",
                 ".roosta/../.env.json", ".roosta/.hidden.yaml"):
         with pytest.raises(ValueError):
-            workspace.resolve_vault_text(bad, tmp_path)
+            workspace.resolve_workspace_text(bad, tmp_path)
 
 
-def test_vault_document_endpoint_returns_markdown(monkeypatch, tmp_path):
+def test_workspace_document_endpoint_returns_markdown(monkeypatch, tmp_path):
     drafts = tmp_path / "drafts"
     drafts.mkdir()
     (drafts / "weekly.md").write_text("# Weekly update\n\n* Ready")
     monkeypatch.setattr(appmod.paths, "WORKSPACE", tmp_path)
 
-    response = asyncio.run(appmod.api_vault_document("drafts/weekly.md"))
+    response = asyncio.run(appmod.api_workspace_document("drafts/weekly.md"))
     body = json.loads(response.body)
 
     assert response.status_code == 200
@@ -1370,11 +1326,11 @@ def test_vault_document_endpoint_returns_markdown(monkeypatch, tmp_path):
         "content": "# Weekly update\n\n* Ready",
         "properties": [],
     }
-    rejected = asyncio.run(appmod.api_vault_document("../outside.md"))
+    rejected = asyncio.run(appmod.api_workspace_document("../outside.md"))
     assert rejected.status_code == 400
 
 
-def test_vault_document_endpoint_shows_linked_text_files_as_source(monkeypatch, tmp_path):
+def test_workspace_document_endpoint_shows_linked_text_files_as_source(monkeypatch, tmp_path):
     project = tmp_path / "projects" / "ai-office-hours"
     project.mkdir(parents=True)
     (project / "confluence-page.storage.html").write_text("<p>Fortnightly ```x```</p>\n")
@@ -1385,15 +1341,15 @@ def test_vault_document_endpoint_shows_linked_text_files_as_source(monkeypatch, 
     (project / "run.sh").write_text("echo")
     monkeypatch.setattr(appmod.paths, "WORKSPACE", tmp_path)
 
-    body = json.loads(asyncio.run(appmod.api_vault_document(
+    body = json.loads(asyncio.run(appmod.api_workspace_document(
         "projects/ai-office-hours/confluence-page.storage.html")).body)
 
     assert body["title"] == "confluence-page.storage.html"
     assert body["content"] == "````html\n<p>Fortnightly ```x```</p>\n````"
     for path in (".claude/settings.json", ".roosta/state/x.json", "../outside.html",
                  "projects/ai-office-hours/run.sh"):
-        assert asyncio.run(appmod.api_vault_document(path)).status_code == 400, path
-    assert asyncio.run(appmod.api_vault_document("projects/missing.csv")).status_code == 404
+        assert asyncio.run(appmod.api_workspace_document(path)).status_code == 400, path
+    assert asyncio.run(appmod.api_workspace_document("projects/missing.csv")).status_code == 404
 
 
 def test_assistant_skill_section_link_opens_validated_document():
@@ -1431,32 +1387,32 @@ console.log(JSON.stringify([link.pathname, link.searchParams.get('path'), link.s
     assert (heading, missing, external) == ("Workspace scope", None, "https://example.com/other.md#section")
 
 
-def test_vault_document_skill_fork_containment(monkeypatch, tmp_path):
+def test_workspace_document_skill_fork_containment(monkeypatch, tmp_path):
     path = ".roosta/skill-forks/roosta-engineer/SKILL.md"
-    vault = tmp_path / "workspace"
-    skill = vault / path
+    workspace = tmp_path / "workspace"
+    skill = workspace / path
     skill.parent.mkdir(parents=True)
     skill.write_text("# Engineer\n\n## Workspace scope")
-    monkeypatch.setattr(appmod.paths, "WORKSPACE", vault)
-    response = asyncio.run(appmod.api_vault_document(path))
+    monkeypatch.setattr(appmod.paths, "WORKSPACE", workspace)
+    response = asyncio.run(appmod.api_workspace_document(path))
     assert response.status_code == 200
     assert "## Workspace scope" in json.loads(response.body)["content"]
-    alias = vault / "public.md"
-    for target in (tmp_path / "outside.md", vault / ".roosta/state/secret.md",
-                   skill.parent / ".private.md", vault / ".hidden.md", vault / "private.key"):
+    alias = workspace / "public.md"
+    for target in (tmp_path / "outside.md", workspace / ".roosta/state/secret.md",
+                   skill.parent / ".private.md", workspace / ".hidden.md", workspace / "private.key"):
         target.parent.mkdir(exist_ok=True)
         target.write_text("private")
-        if target.is_relative_to(vault):
-            assert asyncio.run(appmod.api_vault_document(str(target.relative_to(vault)))).status_code == 400
+        if target.is_relative_to(workspace):
+            assert asyncio.run(appmod.api_workspace_document(str(target.relative_to(workspace)))).status_code == 400
         skill.unlink()
         skill.symlink_to(target)
         alias.unlink(missing_ok=True)
         alias.symlink_to(target)
-        assert asyncio.run(appmod.api_vault_document(alias.name)).status_code == 400
-        assert asyncio.run(appmod.api_vault_document(path)).status_code == 400
+        assert asyncio.run(appmod.api_workspace_document(alias.name)).status_code == 400
+        assert asyncio.run(appmod.api_workspace_document(path)).status_code == 400
 
 
-def test_vault_document_endpoint_splits_front_matter_into_properties(monkeypatch, tmp_path):
+def test_workspace_document_endpoint_splits_front_matter_into_properties(monkeypatch, tmp_path):
     project = tmp_path / "projects" / "okrs"
     project.mkdir(parents=True)
     (project / "README.md").write_text(
@@ -1464,7 +1420,7 @@ def test_vault_document_endpoint_splits_front_matter_into_properties(monkeypatch
     )
     monkeypatch.setattr(appmod.paths, "WORKSPACE", tmp_path)
 
-    body = json.loads(asyncio.run(appmod.api_vault_document("projects/okrs/README.md")).body)
+    body = json.loads(asyncio.run(appmod.api_workspace_document("projects/okrs/README.md")).body)
 
     assert body["title"] == "Team OKRs"
     assert body["content"] == "# Heading\n\nBody"
@@ -1472,8 +1428,8 @@ def test_vault_document_endpoint_splits_front_matter_into_properties(monkeypatch
     assert workspace.split_front_matter("---\n: [bad\n---\nBody") == ("---\n: [bad\n---\nBody", [])
 
 
-def test_board_feed_attaches_draft_document_to_matching_conductor_item():
-    conductor = board.normalise_board_doc({"items": [{
+def test_board_feed_attaches_draft_document_to_matching_assistant_item():
+    assistant_doc = board.normalise_board_doc({"items": [{
         "id": "rolling-comms-2026-07-28",
         "title": "Review Platform rolling comms",
     }]})["items"]
@@ -1485,7 +1441,7 @@ def test_board_feed_attaches_draft_document_to_matching_conductor_item():
         }},
     }]
 
-    merged = board.merge_board_feed_items(conductor, states)
+    merged = board.merge_board_feed_items(assistant_doc, states)
 
     assert merged[0]["documents"] == [{
         "label": "Open draft",
@@ -1513,7 +1469,7 @@ def test_board_feed_accepts_cards_from_any_skill():
 
 
 def test_board_feed_newer_skill_refines_existing_card():
-    conductor = board.normalise_board_doc({"items": [{
+    assistant_doc = board.normalise_board_doc({"items": [{
         "id": "teams-root1", "title": "Reply to Robin", "why": "Robin asked",
         "situation": "Old picture", "new": False,
         "links": [{"label": "Open thread", "url": "https://teams.example/root1"}],
@@ -1532,7 +1488,7 @@ def test_board_feed_newer_skill_refines_existing_card():
          ]}}},
     ]
 
-    merged = board.merge_board_feed_items(conductor, states)
+    merged = board.merge_board_feed_items(assistant_doc, states)
 
     assert len(merged) == 1
     card = merged[0]
@@ -1552,7 +1508,7 @@ def test_board_feed_drops_untitled_update_for_unknown_card():
 
 
 def test_board_feed_folds_merged_duplicate_into_kept_card():
-    conductor = board.normalise_board_doc({"items": [
+    assistant_doc = board.normalise_board_doc({"items": [
         {"id": "teams-root1", "title": "Reply to Robin on 626 cutover"},
     ]})["items"]
     states = [{"id": "workspace-learner", "last_run": "2026-11-03T11:00:00",
@@ -1563,15 +1519,15 @@ def test_board_feed_folds_merged_duplicate_into_kept_card():
                }]}}}]
     merged = {"learner-626-cutover": {"into": "teams-root1"}}
 
-    cards = board.merge_board_feed_items(conductor, states, merged)
+    cards = board.merge_board_feed_items(assistant_doc, states, merged)
 
     assert [card["id"] for card in cards] == ["teams-root1"]
     assert cards[0]["situation"] == "Robin needs a date by Friday"
     assert cards[0]["links"][0]["label"] == "PROJ-1"
 
 
-def test_folded_duplicate_never_rewrites_the_conductor_synthesis():
-    conductor = board.normalise_board_doc({"items": [{
+def test_folded_duplicate_never_rewrites_the_assistant_synthesis():
+    assistant_doc = board.normalise_board_doc({"items": [{
         "id": "team-wins-2026-11-04", "title": "Squad shipped data-accuracy and search fixes",
         "situation": "Quinn, James and Ari all landed work",
         "links": [{"label": "PROJ-10691", "url": "https://example.atlassian.net/browse/PROJ-10691"}],
@@ -1584,7 +1540,7 @@ def test_folded_duplicate_never_rewrites_the_conductor_synthesis():
                }]}}}]
     merged = {"celebrate-proj-10631": {"into": "team-wins-2026-11-04"}}
 
-    card = board.merge_board_feed_items(conductor, states, merged)[0]
+    card = board.merge_board_feed_items(assistant_doc, states, merged)[0]
 
     assert card["title"] == "Squad shipped data-accuracy and search fixes"
     assert card["situation"] == "Quinn, James and Ari all landed work"
@@ -1595,17 +1551,15 @@ def test_folded_duplicate_never_rewrites_the_conductor_synthesis():
 def test_record_merges_keeps_the_card_with_user_history(tmp_path):
     history = cmod.ConversationHistoryStore(tmp_path / "h.json")
     history.append("teams-root1", "user", "What did Robin ask?")
-    cr = cmod.ChatRouter(session_map=cmod.SessionMap(tmp_path / "s.json"),
-                         vault="/v", persistent_history=history,
-                         merged_path=tmp_path / "merged.json")
+    state = BoardState(tmp_path, history)
 
-    data = cr.record_merges({"teams-root1": "learner-626", "a": "b", "b": "a", "x": "x"})
+    data = state.record_merges({"teams-root1": "learner-626", "a": "b", "b": "a", "x": "x"})
 
     assert data["learner-626"]["into"] == "teams-root1"
     assert "teams-root1" not in data
     assert data["a"]["into"] == "b"
     assert "b" not in data and "x" not in data  # loops and self-merges ignored
-    assert cmod.resolve_alias("learner-626", cr.merged()) == "teams-root1"
+    assert resolve_alias("learner-626", state.merged()) == "teams-root1"
 
 
 def test_roosta_engineer_failure_becomes_an_actionable_board_item():
@@ -1691,28 +1645,7 @@ def test_split_snoozed_items_parks_future_and_resurfaces_expired():
     assert later[0]["snoozed_until"] == "2026-07-17T09:00:00+00:00"
 
 
-def test_snooze_endpoint_accepts_only_current_item_and_known_preset(monkeypatch):
-    class FakeRouter:
-        def record_merges(self, merges):
-            return {}
-
-        def __init__(self):
-            self.saved = None
-
-        def reminders(self):
-            return []
-
-        def handled(self):
-            return {}
-
-        def snoozed(self):
-            return {}
-
-        def snooze(self, item_id, until):
-            self.saved = (item_id, until)
-
-    router = FakeRouter()
-    monkeypatch.setattr(appmod, "chat_router", router)
+def test_snooze_endpoint_accepts_only_current_item_and_known_preset(monkeypatch, app_board):
     monkeypatch.setattr(appmod.runner, "get_state", lambda _task_id: {
         "last_output": {"details": {"items": [{"id": "item-1"}]}}
     })
@@ -1720,7 +1653,7 @@ def test_snooze_endpoint_accepts_only_current_item_and_known_preset(monkeypatch)
     ok = asyncio.run(appmod.api_board_snooze(
         {"item_id": "item-1", "preset": "one_hour"}))
     assert ok.status_code == 200
-    assert router.saved[0] == "item-1"
+    assert "item-1" in app_board.snoozed()
     rejected = asyncio.run(appmod.api_board_snooze(
         {"item_id": "item-1", "preset": "whenever"}))
     assert rejected.status_code == 400
@@ -1729,33 +1662,13 @@ def test_snooze_endpoint_accepts_only_current_item_and_known_preset(monkeypatch)
     assert missing.status_code == 404
 
 
-def test_snooze_endpoint_accepts_visible_reminder(monkeypatch):
-    class FakeRouter:
-        def record_merges(self, merges):
-            return {}
-
-        def __init__(self):
-            self.saved = None
-
-        def reminders(self):
-            return [{
-                "id": "remind-1",
-                "title": "Move stand-up",
-                "body": "Pick a later time.",
-                "due": None,
-            }]
-
-        def snoozed(self):
-            return {}
-
-        def handled(self):
-            return {}
-
-        def snooze(self, item_id, until):
-            self.saved = (item_id, until)
-
-    router = FakeRouter()
-    monkeypatch.setattr(appmod, "chat_router", router)
+def test_snooze_endpoint_accepts_visible_reminder(monkeypatch, app_board):
+    seed_reminders(app_board, [{
+        "id": "remind-1",
+        "title": "Move stand-up",
+        "body": "Pick a later time.",
+        "due": None,
+    }])
     monkeypatch.setattr(appmod.runner, "get_state", lambda _task_id: {
         "last_output": {"details": {"items": []}}
     })
@@ -1765,32 +1678,26 @@ def test_snooze_endpoint_accepts_visible_reminder(monkeypatch):
         {"item_id": "remind-1", "preset": "one_hour"}))
 
     assert response.status_code == 200
-    assert router.saved[0] == "remind-1"
+    assert "remind-1" in app_board.snoozed()
 
 
-def test_chatrouter_mark_and_read_handled(tmp_path):
-    p = tmp_path / "handled.json"
-    raised = tmp_path / "raised.json"
-    cr = cmod.ChatRouter(session_map=cmod.SessionMap(tmp_path / "s.json"),
-                         vault="/v", handled_path=p, raised_path=raised)
-    cr.record_raised(["item-1"])
-    assert "item-1" in cr.raised()
-    cr.mark_handled("item-1", "Booked the review")
-    h = cr.handled()
+def test_board_state_mark_and_read_handled(tmp_path):
+    state = BoardState(tmp_path)
+    state.record_raised(["item-1"])
+    assert "item-1" in state.raised()
+    state.mark_handled("item-1", "Booked the review")
+    h = state.handled()
     assert h["item-1"]["result"] == "Booked the review" and "at" in h["item-1"]
-    assert "item-1" not in cr.raised()
+    assert "item-1" not in state.raised()
     # persisted + reloadable by a fresh router
-    cr2 = cmod.ChatRouter(session_map=cmod.SessionMap(tmp_path / "s.json"),
-                          vault="/v", handled_path=p)
-    assert cr2.handled()["item-1"]["result"] == "Booked the review"
+    reloaded = BoardState(tmp_path)
+    assert reloaded.handled()["item-1"]["result"] == "Booked the review"
 
 
-def test_chatrouter_record_raised_preserves_first_seen(tmp_path):
-    raised = tmp_path / "raised.json"
-    cr = cmod.ChatRouter(session_map=cmod.SessionMap(tmp_path / "s.json"),
-                         vault="/v", raised_path=raised)
-    first = cr.record_raised(["item-1"])["item-1"]["at"]
-    second = cr.record_raised(["item-1", "item-2"])
+def test_board_state_record_raised_preserves_first_seen(tmp_path):
+    state = BoardState(tmp_path)
+    first = state.record_raised(["item-1"])["item-1"]["at"]
+    second = state.record_raised(["item-1", "item-2"])
     assert second["item-1"]["at"] == first
     assert "item-2" in second
 
@@ -1810,15 +1717,14 @@ def test_reminder_to_item_carries_created_as_raised_at():
     assert item["raised_at"] == "2026-07-01T09:00:00+00:00"
 
 
-def test_chatrouter_handled_tolerates_corrupt(tmp_path):
+def test_board_state_handled_tolerates_corrupt(tmp_path):
     p = tmp_path / "handled.json"
     p.write_text("garbage{")
-    cr = cmod.ChatRouter(session_map=cmod.SessionMap(tmp_path / "s.json"),
-                         vault="/v", handled_path=p)
-    assert cr.handled() == {}
+    state = BoardState(tmp_path)
+    assert state.handled() == {}
 
 
-def test_chatrouter_handled_normalises_accidental_items_wrapper(tmp_path):
+def test_board_state_handled_normalises_accidental_items_wrapper(tmp_path):
     p = tmp_path / "handled.json"
     p.write_text(json.dumps({
         "items": [
@@ -1827,43 +1733,29 @@ def test_chatrouter_handled_normalises_accidental_items_wrapper(tmp_path):
             "junk",
         ],
     }))
-    cr = cmod.ChatRouter(
-        session_map=cmod.SessionMap(tmp_path / "s.json"),
-        vault="/v",
-        handled_path=p,
-    )
+    state = BoardState(tmp_path)
 
-    assert cr.handled() == {
+    assert state.handled() == {
         "old-item": {"result": "Handled", "at": ""},
         "with-result": {"result": "Sent the reply", "at": "2026-08-14T12:00:00Z"},
     }
 
 
-def test_chatrouter_mark_handled_noop_without_path():
-    cr = cmod.ChatRouter(session_map=None, vault="/v")
-    cr.mark_handled("x", "y")  # must not raise
-    assert cr.handled() == {}
+def test_board_state_mark_handled_noop_without_path():
+    state = BoardState()
+    state.mark_handled("x", "y")  # must not raise
+    assert state.handled() == {}
 
 
-def test_chatrouter_snooze_roundtrip_unsnooze_and_handled_cleanup(tmp_path):
-    handled = tmp_path / "handled.json"
-    snoozed = tmp_path / "snoozed.json"
-    cr = cmod.ChatRouter(
-        session_map=cmod.SessionMap(tmp_path / "sessions.json"),
-        vault="/v",
-        handled_path=handled,
-        snoozed_path=snoozed,
-    )
-    cr.snooze("item-1", "2026-07-17T09:00:00+00:00")
-    assert cmod.ChatRouter(
-        cmod.SessionMap(tmp_path / "sessions-2.json"), "/v",
-        handled, snoozed,
-    ).snoozed()["item-1"]["until"] == "2026-07-17T09:00:00+00:00"
-    cr.unsnooze("item-1")
-    assert cr.snoozed() == {}
-    cr.snooze("item-1", "2026-07-18T09:00:00+00:00")
-    cr.mark_handled("item-1", "Done")
-    assert cr.snoozed() == {}
+def test_board_state_snooze_roundtrip_unsnooze_and_handled_cleanup(tmp_path):
+    state = BoardState(tmp_path)
+    state.snooze("item-1", "2026-07-17T09:00:00+00:00")
+    assert BoardState(tmp_path).snoozed()["item-1"]["until"] == "2026-07-17T09:00:00+00:00"
+    state.unsnooze("item-1")
+    assert state.snoozed() == {}
+    state.snooze("item-1", "2026-07-18T09:00:00+00:00")
+    state.mark_handled("item-1", "Done")
+    assert state.snoozed() == {}
 
 
 def test_assistant_frontend_exposes_attention_scheduler():
@@ -1890,17 +1782,17 @@ def test_assistant_history_and_streams_render_sanitised_markdown():
     assert "b.innerHTML=md(visibleReply(ai._raw))" in html
     assert "element.removeAttribute(attribute.name)" in html
     assert "['http:','https:'].includes(url.protocol)" in html
-    assert "vaultMarkdownPath(element.textContent)" in html
+    assert "workspaceMarkdownPath(element.textContent)" in html
     assert "link.href=documentHref(path)" in html
 
 
-def test_assistant_links_only_safe_inline_vault_markdown_paths():
+def test_assistant_links_only_safe_inline_workspace_markdown_paths():
     node = shutil.which("node")
     if not node:
         pytest.skip("node not available")
     html = (Path(__file__).resolve().parent.parent / "src" / "roosta" / "static" / "assistant.html").read_text()
-    helper = re.search(r"function vaultMarkdownPath\(text\)\{.*?\n\}", html, re.S)
-    assert helper, "vault Markdown path helper not found"
+    helper = re.search(r"function workspaceMarkdownPath\(text\)\{.*?\n\}", html, re.S)
+    assert helper, "workspace Markdown path helper not found"
     paths = [
         "drafts/2026-09-10-jamie-1-1-topics.md",
         "../outside.md",
@@ -1913,7 +1805,7 @@ def test_assistant_links_only_safe_inline_vault_markdown_paths():
     js = (
         f"{helper.group(0)}"
         f"process.stdout.write(JSON.stringify({json.dumps(paths)}"
-        ".map(vaultMarkdownPath)));"
+        ".map(workspaceMarkdownPath)));"
     )
     output = subprocess.run(
         [node, "-e", js], capture_output=True, text=True, check=True
@@ -2153,22 +2045,22 @@ def test_assistant_uses_tabler_inbox_and_conversation_workspace():
     assert 'data-pin-id="${escAttr(it.id)}"' in html
 
 
-def test_assistant_frontend_links_to_rendered_vault_documents():
+def test_assistant_frontend_links_to_rendered_workspace_documents():
     static = Path(__file__).resolve().parent.parent / "src" / "roosta" / "static"
     assistant = (static / "assistant.html").read_text()
     document = (static / "document.html").read_text()
 
-    assert 'class="cta vault-document"' in assistant
+    assert 'class="cta workspace-document"' in assistant
     assert "documentHref(d.path,itemId)" in assistant
     assert "ctas(it.links,it.documents,it.id)" in assistant
     assert "syncItemUrl" in assistant
-    assert "fetch('/api/vault-document?path='" in document
+    assert "fetch('/api/workspace/document?path='" in document
     assert "safeReturnUrl" in document
     assert "resolveReturnUrl" in document
     assert "backLabel" in document
     assert "safeMarkdown(wikiLinks(data.content," in document
-    assert '/static/vault-markdown.js' in document
-    assert "allowedTags" in (static / "vault-markdown.js").read_text()
+    assert '/static/safe-markdown.js' in document
+    assert "allowedTags" in (static / "safe-markdown.js").read_text()
 
 
 def test_assistant_frontend_separates_context_from_recommended_action():
@@ -2496,12 +2388,16 @@ STATIC_DIR = Path(__file__).resolve().parent.parent / "src" / "roosta" / "static
 
 
 @pytest.mark.parametrize("page", sorted(p.name for p in STATIC_DIR.glob("*.html")))
-def test_page_inline_scripts_parse(page):
+def test_page_scripts_parse(page):
+    """Every inline script and every local script a page loads is valid JavaScript."""
     node = shutil.which("node")
     if not node:
         pytest.skip("node not available")
-    scripts = re.findall(r"<script>(.*?)</script>", (STATIC_DIR / page).read_text(), re.S)
-    assert scripts, f"{page} has no inline script"
+    html = (STATIC_DIR / page).read_text()
+    scripts = re.findall(r"<script>(.*?)</script>", html, re.S)
+    scripts += [(STATIC_DIR / name).read_text()
+                for name in re.findall(r'<script src="/static/([\w.-]+\.js)"', html)]
+    assert scripts, f"{page} has no script"
     for script in scripts:
         result = subprocess.run([node, "--check"], input=script, capture_output=True, text=True)
         assert result.returncode == 0, result.stderr
@@ -2839,8 +2735,8 @@ def test_board_chat_returns_202_when_turn_is_queued(monkeypatch, fake_chat_conne
     assert body == {"queued": True, "position": 2}
 
 
-def test_board_chat_continues_after_conductor_drops_item(monkeypatch, fake_chat_connection):
-    """A live conversation must survive the conductor dropping its item."""
+def test_board_chat_continues_after_assistant_drops_item(monkeypatch, fake_chat_connection):
+    """A live conversation must survive the assistant task dropping its item."""
     class FakeRouter:
         def record_merges(self, merges):
             return {}
@@ -2880,21 +2776,17 @@ def test_board_chat_continues_after_conductor_drops_item(monkeypatch, fake_chat_
     assert router.turn[1]["title"] == "Holdout outcome"
 
 
-def test_board_chat_starts_for_file_backed_reminder(monkeypatch, fake_chat_connection):
-    class FakeRouter:
-        def record_merges(self, merges):
-            return {}
+def test_board_chat_starts_for_file_backed_reminder(monkeypatch, app_board, fake_chat_connection):
+    seed_reminders(app_board, [{
+        "id": "remind-123",
+        "title": "Move Platform stand-ups",
+        "body": "Mention this at tomorrow's stand-up.",
+        "due": None,
+    }])
 
+    class FakeRouter:
         def __init__(self):
             self.turn = None
-
-        def reminders(self):
-            return [{
-                "id": "remind-123",
-                "title": "Move Platform stand-ups",
-                "body": "Mention this at tomorrow's stand-up.",
-                "due": None,
-            }]
 
         def known_item(self, _item_id):
             return None
@@ -2931,9 +2823,6 @@ class _StandingChatRouter:
     def __init__(self):
         self.turn = None
 
-    def reminders(self):
-        return []
-
     def known_item(self, _item_id):
         return None
 
@@ -2945,7 +2834,7 @@ class _StandingChatRouter:
         return cmod.TurnHandle(events=events)
 
 
-def test_document_chat_item_resolves_a_vault_document_as_persistent(tmp_path):
+def test_document_chat_item_resolves_a_workspace_document_as_persistent(tmp_path):
     readme = tmp_path / "projects" / "team-okrs" / "README.md"
     readme.parent.mkdir(parents=True)
     readme.write_text("---\ntitle: Team OKRs\n---\n\n# Team OKRs\n", encoding="utf-8")
@@ -2990,7 +2879,7 @@ def test_board_chat_starts_a_document_thread_off_the_rail(monkeypatch, tmp_path,
     assert missing.status_code == 404
 
 
-def _worker_vault(tmp_path):
+def _worker_workspace(tmp_path):
     skill = tmp_path / ".claude" / "skills" / "team-wins-watch" / "SKILL.md"
     skill.parent.mkdir(parents=True, exist_ok=True)
     skill.write_text("---\nname: team-wins-watch\ndescription: Spot wins.\n---\n", encoding="utf-8")
@@ -3000,7 +2889,7 @@ def _worker_vault(tmp_path):
 
 
 def test_worker_chat_item_speaks_as_the_worker_and_points_at_its_skill(tmp_path):
-    tasks = _worker_vault(tmp_path)
+    tasks = _worker_workspace(tmp_path)
     state = {"run_count": 12, "status": "error", "last_run": "2026-11-08T09:00:00+00:00",
              "last_output": {"summary": "Two wins found."}, "last_error": "Teams timed out"}
     runs = [
@@ -3021,7 +2910,7 @@ def test_worker_chat_item_speaks_as_the_worker_and_points_at_its_skill(tmp_path)
 
 
 def test_worker_chat_item_rejects_unknown_and_foreign_ids(tmp_path):
-    tasks = _worker_vault(tmp_path)
+    tasks = _worker_workspace(tmp_path)
     assert chat_items.worker_chat_item("worker:invented", tasks, root=tmp_path) is None
     assert chat_items.worker_chat_item("team-wins-watch", tasks, root=tmp_path) is None
     assert chat_items.is_chat_id("worker:team-wins-watch")
@@ -3031,7 +2920,7 @@ def test_board_chat_starts_a_worker_one_to_one(monkeypatch, tmp_path, fake_chat_
     router = _StandingChatRouter()
     monkeypatch.setattr(appmod, "chat_router", router)
     monkeypatch.setattr(appmod.paths, "WORKSPACE", tmp_path)
-    monkeypatch.setattr(appmod, "load_tasks_map", lambda: _worker_vault(tmp_path))
+    monkeypatch.setattr(appmod, "load_tasks_map", lambda: _worker_workspace(tmp_path))
     monkeypatch.setattr(appmod.runner, "get_state", lambda _task_id: None)
 
     async def call():
@@ -3130,7 +3019,7 @@ def test_known_item_reconstructs_from_topic_and_rejects_unseen(tmp_path):
     topics = cmod.TopicStore(tmp_path / "topics.json")
     cr = cmod.ChatRouter(
         session_map=cmod.SessionMap(tmp_path / "s.json"),
-        vault="/v", handled_path=tmp_path / "handled.json", topic_store=topics)
+        workspace="/v", topic_store=topics, board=BoardState(tmp_path))
     topics.begin("item-1", {"title": "Holdout outcome",
                             "project_ref": "projects/platform-roadmap"}, "ses_1")
     rebuilt = cr.known_item("item-1")
@@ -3144,17 +3033,16 @@ def test_mark_handled_preserves_conversation_for_continuation(tmp_path):
     topics = cmod.TopicStore(tmp_path / "topics.json")
     sessions = cmod.SessionMap(tmp_path / "s.json")
     cr = cmod.ChatRouter(
-        session_map=sessions, vault="/v",
-        handled_path=tmp_path / "handled.json", topic_store=topics)
+        session_map=sessions, workspace="/v", topic_store=topics, board=BoardState(tmp_path))
     sessions.set("item-1", "ses_1")
     topics.begin("item-1", {"title": "Holdout outcome"}, "ses_1")
-    cr.mark_handled("item-1", "Backfilled the historic holdouts")
+    cr.board.mark_handled("item-1", "Backfilled the historic holdouts")
     assert sessions.get("item-1") == "ses_1"
     assert topics.get("item-1")["title"] == "Holdout outcome"
     assert cr.known_item("item-1")["id"] == "item-1"
 
 
-def test_board_returns_visible_history_for_open_chats_and_current_items(monkeypatch, tmp_path, fake_chat_connection):
+def test_board_returns_visible_history_for_open_chats_and_current_items(monkeypatch, tmp_path, app_board, fake_chat_connection):
     topics = tmp_path / "topics.json"
     boundary = {"end": 1, "at": "2026-11-19T12:00:00Z"}
     topics.write_text(json.dumps({"item-1": {"boundaries": [boundary], "summary": "private"},
@@ -3166,18 +3054,6 @@ def test_board_returns_visible_history_for_open_chats_and_current_items(monkeypa
     }
 
     class FakeRouter:
-        def record_merges(self, merges):
-            return {}
-
-        def handled(self):
-            return {}
-
-        def snoozed(self):
-            return {}
-
-        def reminders(self):
-            return []
-
         def conversation_histories(self):
             return histories
 
@@ -3188,9 +3064,6 @@ def test_board_returns_visible_history_for_open_chats_and_current_items(monkeypa
 
         def pending_approvals(self):
             return {"item-1": [{"run_id": "run-1", "kind": "action", "summary": "Book room"}]}
-
-        def record_raised(self, item_ids):
-            return {}
 
     monkeypatch.setattr(appmod, "chat_router", FakeRouter())
     monkeypatch.setattr(appmod.runner, "get_state", lambda _task_id: {
@@ -3293,7 +3166,7 @@ def test_assistant_opens_ready_on_the_top_item_or_general_chat():
 
 
 def test_closed_snapshot_keeps_context_fields_and_drops_junk():
-    snap = cmod._closed_snapshot({
+    snap = closed_snapshot({
         "id": "i", "title": "T", "why": "W", "situation": "S", "opening_move": "O",
         "action_type": "review", "action_owner": "user", "action_label": "Review it",
         "links": [{"label": "L", "url": "https://x"}],
@@ -3304,23 +3177,21 @@ def test_closed_snapshot_keeps_context_fields_and_drops_junk():
     assert snap["links"] == [{"label": "L", "url": "https://x"}]
     assert snap["project_ref"] == "projects/magic-mirror"
     assert "id" not in snap and "new" not in snap
-    assert cmod._closed_snapshot(None) is None
-    assert cmod._closed_snapshot({}) is None
+    assert closed_snapshot(None) is None
+    assert closed_snapshot({}) is None
 
 
 def test_mark_handled_stores_snapshot_and_unhandle_returns_it(tmp_path):
-    p = tmp_path / "handled.json"
-    cr = cmod.ChatRouter(session_map=cmod.SessionMap(tmp_path / "s.json"),
-                         vault="/v", handled_path=p)
-    cr.mark_handled("item-1", "Closed by Sam", {"title": "Holdout outcome", "why": "deadline"})
-    record = cr.handled()["item-1"]
+    state = BoardState(tmp_path)
+    state.mark_handled("item-1", "Closed by Sam", {"title": "Holdout outcome", "why": "deadline"})
+    record = state.handled()["item-1"]
     assert record["result"] == "Closed by Sam"
     assert record["item"] == {"title": "Holdout outcome", "why": "deadline"}
 
-    restored = cr.unhandle("item-1")
+    restored = state.unhandle("item-1")
     assert restored == {"title": "Holdout outcome", "why": "deadline"}
-    assert "item-1" not in cr.handled()
-    assert cr.unhandle("item-1") is None
+    assert "item-1" not in state.handled()
+    assert state.unhandle("item-1") is None
 
 
 def test_recently_closed_lists_newest_first_with_titles():
@@ -3342,29 +3213,14 @@ def test_recently_closed_lists_newest_first_with_titles():
     assert rows[1]["title"] == "Alpha" and rows[1]["action_type"] == "review"
 
 
-def test_board_reopen_restores_snapshot_to_rail(monkeypatch):
-    class FakeRouter:
-        def record_merges(self, merges):
-            return {}
-
-        def __init__(self):
-            self.unhandled = None
-
-        def handled(self):
-            return {"item-1": {"result": "Closed", "at": "", "item": {"title": "Holdout"}}}
-
-        def unhandle(self, item_id):
-            self.unhandled = item_id
-            return {"title": "Holdout", "action_type": "review"}
-
-    router = FakeRouter()
-    monkeypatch.setattr(appmod, "chat_router", router)
+def test_board_reopen_restores_snapshot_to_rail(app_board):
+    app_board.mark_handled("item-1", "Closed", {"title": "Holdout", "action_type": "review"})
     board._pushed_notifications.clear()
     try:
         response = asyncio.run(appmod.api_board_reopen({"item_id": "item-1"}))
         assert response.status_code == 200
         assert json.loads(response.body) == {"reopened": True, "restored": True}
-        assert router.unhandled == "item-1"
+        assert "item-1" not in app_board.handled()
         pushed = board._pushed_notifications
         assert pushed and pushed[0]["id"] == "item-1"
         assert pushed[0]["title"] == "Holdout"
@@ -3417,7 +3273,7 @@ def test_assistant_records_coarse_usage_without_item_content():
 
 
 def test_pending_approvals_are_reoffered_by_item(tmp_path):
-    router = cmod.ChatRouter(cmod.SessionMap(tmp_path / "sessions.json"), "/vault")
+    router = cmod.ChatRouter(cmod.SessionMap(tmp_path / "sessions.json"), "/workspace")
     router._paused["run-room"] = {
         "item_id": "chat:0123456789ab",
         "action": {"kind": "action", "verb": "Book room", "summary": "Add the Jedi room"},
@@ -3504,7 +3360,7 @@ refreshDocPane();
 setTimeout(()=>process.stdout.write(JSON.stringify([asked,body.innerHTML,el.scrollTop])),10);
 """
     out = subprocess.run([node, "-e", js], capture_output=True, text=True, check=True).stdout
-    assert json.loads(out) == ["/api/vault-document?path=drafts%2Fa.md", "<p>new</p>", 420]
+    assert json.loads(out) == ["/api/workspace/document?path=drafts%2Fa.md", "<p>new</p>", 420]
 
 
 def test_document_page_rereads_on_return_and_keeps_scroll():
@@ -3519,7 +3375,7 @@ def test_board_health_names_an_expired_github_signin_from_real_run_summaries():
         "No new wins (GitHub unavailable: token invalid).",
         "GitHub auth is invalid (keyring token), so merged PRs were not checked.",
         "GitHub unavailable (gh auth failed for github.example.com); Teams was a thin search.",
-        "Vault gardener: not run. The clone failed because GitHub auth is broken.",
+        "Workspace gardener: not run. The clone failed because GitHub auth is broken.",
         "GitHub was unavailable because the gh token for github.example.com is invalid.",
     ]
     for text in lost:
@@ -3555,28 +3411,22 @@ def test_chats_run_at_the_workspace_root_not_the_state_folder(monkeypatch, tmp_p
     monkeypatch.setattr(appmod, "chat_router", None)
     monkeypatch.setattr(appmod.paths, "WORKSPACE", tmp_path)
     asyncio.run(appmod._start_chat_router())
-    assert appmod.chat_router._vault == str(tmp_path)
+    assert appmod.chat_router._workspace == str(tmp_path)
 
 
-def test_setup_card_survives_setup_writing_the_name(monkeypatch):
+def test_setup_card_survives_setup_writing_the_name(monkeypatch, tmp_path):
     monkeypatch.setattr(appmod.ai_backend, "connection_available", lambda: True)
     monkeypatch.setattr(appmod.ai_connections, "get", lambda: {"provider":"anthropic"})
-    class Router:
-        history = []
-
-        def conversation_history(self, item_id):
-            return self.history if item_id == board.SETUP_ITEM_ID else []
-
-    router = Router()
-    monkeypatch.setattr(appmod, "chat_router", router)
+    history = cmod.ConversationHistoryStore(tmp_path / "history.json")
+    state = BoardState(tmp_path, history)
     named = appmod.profile.Profile(name="Sam Example")
     monkeypatch.setattr(appmod.profile, "load", lambda path=None: named)
-    assert board.setup_item(router) is None                      # set up long ago, never via the card
-    router.history = [{"role": "user", "text": "hi"}]
-    assert board.setup_item(router)["id"] == board.SETUP_ITEM_ID  # mid-setup: keep the card
+    assert board.setup_item(state) is None                      # set up long ago, never via the card
+    history.append(board.SETUP_ITEM_ID, "user", "hi")
+    assert board.setup_item(state)["id"] == board.SETUP_ITEM_ID  # mid-setup: keep the card
     monkeypatch.setattr(appmod.profile, "load", lambda path=None: appmod.profile.Profile())
-    router.history = []
-    assert board.setup_item(router) is not None                  # brand new workspace
+    history.clear(board.SETUP_ITEM_ID)
+    assert board.setup_item(state) is not None                  # brand new workspace
 
 
 def test_new_users_get_example_prompts_that_prefill_but_never_send():
@@ -3912,10 +3762,9 @@ const notice=()=>elements['closed-notices'].children.at(-1);
 
 def test_board_stores_survive_a_failed_save(tmp_path, monkeypatch):
     """A write that dies before the rename must leave every earlier reminder and closed item."""
-    cr = cmod.ChatRouter(cmod.SessionMap(tmp_path / "s.json"), "/v",
-                         handled_path=tmp_path / "handled.json", reminders_path=tmp_path / "reminders.json")
-    kept = cr.add_reminder("Call the dentist")
-    cr.mark_handled("item-1", "Done")
+    state = BoardState(tmp_path)
+    kept = state.add_reminder("Call the dentist")
+    state.mark_handled("item-1", "Done")
 
     def disk_full(*_):
         raise OSError("disk full")
@@ -3923,9 +3772,23 @@ def test_board_stores_survive_a_failed_save(tmp_path, monkeypatch):
     with monkeypatch.context() as patch:
         patch.setattr(Path, "replace", disk_full)
         with pytest.raises(OSError):
-            cr.add_reminder("Book the venue")
+            state.add_reminder("Book the venue")
         with pytest.raises(OSError):
-            cr.mark_handled("item-2", "Done")
-    assert [r["id"] for r in cr.reminders()] == [kept]
-    assert list(cr.handled()) == ["item-1"]
+            state.mark_handled("item-2", "Done")
+    assert [r["id"] for r in state.reminders()] == [kept]
+    assert list(state.handled()) == ["item-1"]
     assert sorted(p.name for p in tmp_path.iterdir()) == ["handled.json", "reminders.json"]
+
+
+def test_closing_and_snoozing_a_card_need_no_ai_connection(monkeypatch, app_board):
+    """The board is not chat state: it works when no chat engine could start."""
+    monkeypatch.setattr(appmod, "chat_router", None)
+    monkeypatch.setattr(appmod, "ensure_chat_router", lambda: pytest.fail("board must not start chats"))
+    monkeypatch.setattr(appmod.runner, "get_state", lambda _task_id: {
+        "last_output": {"details": {"items": [{"id": "item-1", "title": "Review"}, {"id": "item-2"}]}}})
+    monkeypatch.setattr(appmod.runner, "get_states", lambda: [])
+
+    assert asyncio.run(appmod.api_board_close({"item_id": "item-1"})).status_code == 200
+    assert app_board.handled()["item-1"]["item"]["title"] == "Review"
+    assert asyncio.run(appmod.api_board_snooze({"item_id": "item-2", "preset": "one_hour"})).status_code == 200
+    assert "item-2" in app_board.snoozed()

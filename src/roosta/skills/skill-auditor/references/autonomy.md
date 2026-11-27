@@ -6,7 +6,7 @@ You own the skill set outright - you don't need the user's sign-off to create, r
 merge or delete a skill, and git is the safety net if a call is wrong. When you see
 the right change, *make it this pass*. Reserve the ideas doc for the genuinely
 calls only the user can make: their taste, a real trade-off with no clear winner, or something
-outside vault-write scope.
+outside workspace-write scope.
 
 **Anything you could just do, do - don't log it as a suggestion and wait.** A pass
 that only logs ideas when it could have shipped changes has under-reached.

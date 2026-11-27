@@ -4,7 +4,7 @@ A scheduled skill is only finished when it has a task and an Office look. Do all
 
 ## 1. Task
 
-Add an entry to `.roosta/tasks.yaml`: `id` (= skill name), `skill`, a `nickname` (a human first name, unique in the file), a cadence (`run_at: "HH:MM"` or `interval` seconds, plus `weekdays_only` / `days_of_week`), `writer: true` if it commits to the vault, `requires: [<connector>]` for each live tool it needs, and `dir`. Omit `connection` to follow the default; add a connected named connection id only when the user asks to pin this worker to that account. Copy the shape of a neighbouring task. The runner reloads the file itself and runs a new task once straight away.
+Add an entry to `.roosta/tasks.yaml`: `id` (= skill name), `skill`, a `nickname` (a human first name, unique in the file), a cadence (`run_at: "HH:MM"` or `interval` seconds, plus `weekdays_only` / `days_of_week`), `writer: true` if it commits to the workspace, `requires: [<connector>]` for each live tool it needs, and `dir`. Omit `connection` to follow the default; add a connected named connection id only when the user asks to pin this worker to that account. Copy the shape of a neighbouring task. The runner reloads the file itself and runs a new task once straight away.
 
 Only set `unrestricted: true` with the owner's explicit approval. On manual and scheduled runs nothing is off limits: the worker may take any external action its work needs. Still name the actions and targets in its instructions, including the channel and `[AI]` footer for posts. Return blockers as Assistant board items.
 

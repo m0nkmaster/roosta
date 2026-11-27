@@ -11,7 +11,7 @@ from roosta.board import _normalise_project_ref
 from roosta.chat import is_general_chat_id
 from roosta.workspace import markdown_title
 from roosta.task_config import TaskConfig, skill_files
-from roosta.workspace import resolve_vault_markdown
+from roosta.workspace import resolve_workspace_markdown
 
 
 GENERAL_CHAT_ITEM = {
@@ -34,21 +34,21 @@ DOCUMENT_CHAT_PREFIX = "doc:"
 
 
 def document_chat_item(item_id: str, root: Path | None = None) -> dict | None:
-    """Build a persistent chat item for a validated ``doc:<vault path>`` id.
+    """Build a persistent chat item for a validated ``doc:<workspace path>`` id.
 
     Opened from the document viewer. The path goes through the same allowlist
-    as `/api/vault-document`, so an arbitrary id cannot open a conversation.
+    as `/api/workspace/document`, so an arbitrary id cannot open a conversation.
     """
     raw = str(item_id or "")
     if not raw.startswith(DOCUMENT_CHAT_PREFIX):
         return None
-    vault = (root or paths.WORKSPACE).resolve()
+    workspace = (root or paths.WORKSPACE).resolve()
     try:
-        document = resolve_vault_markdown(raw[len(DOCUMENT_CHAT_PREFIX):], vault)
+        document = resolve_workspace_markdown(raw[len(DOCUMENT_CHAT_PREFIX):], workspace)
         content = document.read_text(encoding="utf-8", errors="ignore")
     except (ValueError, OSError):
         return None
-    relative = document.relative_to(vault).as_posix()
+    relative = document.relative_to(workspace).as_posix()
     title = markdown_title(content, document.stem)
     project = re.match(r"(projects/[a-z0-9]+(?:-[a-z0-9]+)*)/", relative)
     return {
@@ -120,13 +120,13 @@ def worker_chat_item(
     task = tasks.get(raw[len(WORKER_CHAT_PREFIX):])
     if task is None:
         return None
-    vault = (root or paths.WORKSPACE).resolve()
+    workspace = (root or paths.WORKSPACE).resolve()
     files = skill_files(task.skill, task.dir)
     skill_path, documents = "not found - ask where it lives", []
     if files:
         resolved = files[0].resolve()
         try:
-            skill_path = resolved.relative_to(vault).as_posix()
+            skill_path = resolved.relative_to(workspace).as_posix()
             documents = [{"label": "Open SKILL.md", "path": skill_path}]
         except ValueError:
             skill_path = str(files[0])

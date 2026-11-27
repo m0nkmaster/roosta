@@ -11,7 +11,7 @@
 <script src="/static/nav-count.js" defer></script>
 <script src="/static/column-resize.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
-    <script src="/static/vault-markdown.js"></script>
+    <script src="/static/safe-markdown.js"></script>
     <style>
         .pulse-main { padding: 1.75rem var(--shell-gutter) 2.5rem; }
         .stats-grid {
@@ -157,7 +157,7 @@
     <header class="workspace-header navbar" aria-label="Workspace"></header>
 
     <main class="container-fluid pulse-main">
-<div class="page-header dashboard-page-header"><div><div class="page-pretitle">Workspace health</div><h1 class="page-title">Pulse</h1><p class="page-subtitle">Activity, attention and the shape of your vault</p></div></div>
+<div class="page-header dashboard-page-header"><div><div class="page-pretitle">Workspace health</div><h1 class="page-title">Pulse</h1><p class="page-subtitle">Activity, attention and the shape of your workspace</p></div></div>
         <section class="card constellation-panel mb-4" id="constellation-panel">
             <div class="card-header panel-head">
                 <h2 class="card-title">Workspace constellation</h2>
@@ -240,7 +240,7 @@
         let hoveredNode = null;
         const FULL = location.pathname === '/constellation';
         document.body.classList.toggle('constellation-full', FULL);
-        const briefs = new Map();          // slug -> briefing from /api/constellation/<slug>
+        const briefs = new Map();          // slug -> briefing from /api/projects/<slug>
         const briefErrors = new Map();
         const expanded = new Set();        // slugs whose Current state is unclamped
         let review = null;                 // { queue: [slug], index, done } while reviewing
@@ -257,22 +257,22 @@
 
         const TRACE_LINES = {
             'workspace-gardener': [
-                'Pruning the vault hedges.',
+                'Pruning the workspace hedges.',
                 'Cross-linking the graph.',
                 'Turning over the compost heap of stale notes.',
             ],
             'workspace-learner': [
                 'Distilling chatter into durable facts.',
-                'Teaching the vault what you already know.',
+                'Teaching the workspace what you already know.',
             ],
             'skill-auditor': ['Auditing skills for sharp edges.', 'Checking the instruction manuals.'],
             'assistant': ['Ranking what genuinely needs you.', 'Sweeping the sensor horizon.'],
             'roosta-engineer': ['Sanding the rough edges off the board.', 'Reading the usage tea leaves.'],
         };
         const QUEUED_LINES = [
-            'Queued behind a writer - the vault is getting a simultaneous edit.',
+            'Queued behind a writer - the workspace is getting a simultaneous edit.',
             'Holding for the writer lock. Patience, padawan.',
-            'Waiting in the hangar for clearance to touch the vault.',
+            'Waiting in the hangar for clearance to touch the workspace.',
         ];
         const CHAT_LINES = ['The Assistant is thinking out loud.', 'A reply is taking shape.'];
 
@@ -313,10 +313,10 @@
 
         function renderStats(data) {
             const cards = [
-                ['Projects', data.vault.projects],
-                ['Markdown files', data.vault.markdown_files],
-                ['Words in vault', data.vault.words],
-                ['Skills', data.vault.skills],
+                ['Projects', data.workspace.projects],
+                ['Markdown files', data.workspace.markdown_files],
+                ['Words in workspace', data.workspace.words],
+                ['Skills', data.workspace.skills],
                 ['AI runs today', data.activity.today_runs],
                 ['Board cleared', data.board.cleared_today],
                 ['On board now', data.board.board_active],
@@ -368,7 +368,7 @@
         }
 
         function itemStatusLabel(status) {
-            return status === 'queued' ? 'Queued for vault access' : 'Tracing live signal';
+            return status === 'queued' ? 'Queued for workspace access' : 'Tracing live signal';
         }
 
         function traceNodeIndex(item) {
@@ -475,7 +475,7 @@
         function renderHotFiles(files) {
             const list = document.getElementById('hot-files');
             if (!files.length) {
-                list.innerHTML = '<li class="empty-hot">Quiet week in the vault.</li>';
+                list.innerHTML = '<li class="empty-hot">Quiet week in the workspace.</li>';
                 return;
             }
             list.innerHTML = files.map(f => {
@@ -969,8 +969,8 @@
         }
 
         function projectSignals(data) {
-            if (data?.vault?.project_signals?.length) return data.vault.project_signals;
-            return (data?.vault?.project_names || []).map(name => ({
+            if (data?.workspace?.project_signals?.length) return data.workspace.project_signals;
+            return (data?.workspace?.project_names || []).map(name => ({
                 name,
                 title: name.replaceAll('-', ' '),
                 status: 'unknown',
@@ -1036,7 +1036,7 @@
             const drifting = nodes.filter(node => node.stale)
                 .sort((a, b) => (b.age_days || 0) - (a.age_days || 0));
             const board = nodes.filter(node => Number(node.active_board_items || 0) > 0).length;
-            const threshold = pulseData?.vault?.stale_after_days || 30;
+            const threshold = pulseData?.workspace?.stale_after_days || 30;
             if (searchTerms.length) {
                 const matches = nodes.filter(matchesSearch)
                     .sort((a, b) => String(a.title || a.name).localeCompare(String(b.title || b.name)));
@@ -1094,7 +1094,7 @@
         async function loadBrief(name, force = false) {
             if (!force && (briefs.has(name) || briefErrors.has(name))) return;
             try {
-                const res = await fetch(`/api/constellation/${encodeURIComponent(name)}`);
+                const res = await fetch(`/api/projects/${encodeURIComponent(name)}`);
                 const data = await res.json();
                 if (!res.ok) throw new Error(data.error || res.statusText);
                 briefs.set(name, data);
@@ -1275,7 +1275,7 @@
             reviewError = '';
             renderDetail();
             try {
-                const res = await fetch(`/api/constellation/${encodeURIComponent(name)}/review`, {
+                const res = await fetch(`/api/projects/${encodeURIComponent(name)}/review`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ action, status }),
@@ -1430,7 +1430,7 @@
                 pulseData = await res.json();
                 renderRunning(pulseData.running || []);
                 renderStats(pulseData);
-                renderHotFiles(pulseData.vault.hot_files || []);
+                renderHotFiles(pulseData.workspace.hot_files || []);
                 resizeCanvas();
                 hoveredNode = null;
                 showProjectTooltip(null, 0, 0);

@@ -12,11 +12,10 @@ from roosta import ai_connections, paths
 
 log = logging.getLogger(__name__)
 
-VAULT_ROOT = paths.WORKSPACE
 SESSION_ID_RE = re.compile(r"^[0-9a-fA-F-]{20,}$")
 
 
-def cursor_transcript_dir(workspace: str | Path = VAULT_ROOT) -> Path:
+def cursor_transcript_dir(workspace: str | Path = paths.WORKSPACE) -> Path:
     """Cursor encodes the workspace path as a project directory name."""
     enc = str(workspace).lstrip("/").replace("/", "-").replace(".", "-")
     return Path.home() / ".cursor" / "projects" / enc / "agent-transcripts"
@@ -26,7 +25,7 @@ def valid_session_id(session_id: str) -> bool:
     return bool(session_id and SESSION_ID_RE.fullmatch(session_id))
 
 
-def cursor_transcript_path(session_id: str, workspace: str | Path = VAULT_ROOT) -> Path | None:
+def cursor_transcript_path(session_id: str, workspace: str | Path = paths.WORKSPACE) -> Path | None:
     if not valid_session_id(session_id):
         return None
     path = cursor_transcript_dir(workspace) / session_id / f"{session_id}.jsonl"
@@ -41,7 +40,7 @@ def _strip_user_query(text: str) -> str:
     return re.sub(r"\s+", " ", cleaned).strip()
 
 
-def read_cursor_transcript(session_id: str, workspace: str | Path = VAULT_ROOT) -> list[dict]:
+def read_cursor_transcript(session_id: str, workspace: str | Path = paths.WORKSPACE) -> list[dict]:
     """Return ordered user/assistant turns from a Cursor agent transcript."""
     path = cursor_transcript_path(session_id, workspace)
     if path is None:
