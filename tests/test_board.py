@@ -2,6 +2,7 @@ import asyncio, json, os, re, shutil, subprocess
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import pytest
+import yaml
 from roosta import scheduler
 from roosta import workspace
 from roosta import chat_items
@@ -214,10 +215,14 @@ def test_session_map_roundtrip(tmp_path):
     m = cmod.SessionMap(p)
     assert m.get("item-a") is None
     session_id = "11111111-1111-4111-8111-111111111111"
+    m.bind("item-a", "a" * 32)
     m.set("item-a", session_id)
     assert m.get("item-a") == session_id
-    assert _json.loads(p.read_text())["item-a"] == session_id
+    assert _json.loads(p.read_text())["item-a"] == {"session_id": session_id, "connection": "a" * 32}
     assert cmod.SessionMap(p).get("item-a") == session_id
+    # A record with no account id, such as a bare session id, starts over like a new chat.
+    p.write_text(_json.dumps({"bare": session_id, "unbound": {"session_id": session_id, "connection": ""}}))
+    assert not cmod.SessionMap(p).has_item("bare") and not cmod.SessionMap(p).has_item("unbound")
 
 
 def test_session_map_tolerates_corrupt(tmp_path):
@@ -1304,6 +1309,31 @@ def test_resolve_vault_markdown_rejects_escape_and_reads_existing_doc(tmp_path):
         workspace.resolve_vault_markdown("drafts/missing.md", tmp_path)
 
 
+def test_resolve_vault_markdown_checks_where_a_symlink_lands(tmp_path):
+    state = tmp_path / ".roosta" / "state"
+    state.mkdir(parents=True)
+    (state / "creds.txt").write_text("token")
+    (state / "notes.md").write_text("# State\n")
+    (tmp_path / "private").mkdir()
+    (tmp_path / "private" / "pay.md").write_text("# Pay\n")
+    notes = tmp_path / "notes"
+    notes.mkdir()
+    (notes / "leak.md").symlink_to(state / "creds.txt")
+    (notes / "state.md").symlink_to(state / "notes.md")
+    (notes / "pay.md").symlink_to(tmp_path / "private" / "pay.md")
+    (tmp_path / "private" / "pay.txt").write_text("salary")
+    (notes / "pay.txt").symlink_to(tmp_path / "private" / "pay.txt")
+
+    for bad in ("notes/leak.md", "notes/state.md", "notes/pay.md", "private/pay.md"):
+        with pytest.raises(ValueError):
+            workspace.resolve_vault_markdown(bad, tmp_path)
+        with pytest.raises(ValueError):
+            workspace.resolve_vault_text(bad, tmp_path)
+    for bad in ("notes/pay.txt", "private/pay.txt"):
+        with pytest.raises(ValueError):
+            workspace.resolve_vault_text(bad, tmp_path)
+
+
 def test_resolve_vault_text_opens_roosta_config_but_not_state_or_dotfiles(tmp_path):
     config = tmp_path / ".roosta"
     (config / "state" / "cache").mkdir(parents=True)
@@ -1439,7 +1469,7 @@ def test_vault_document_endpoint_splits_front_matter_into_properties(monkeypatch
     assert body["title"] == "Team OKRs"
     assert body["content"] == "# Heading\n\nBody"
     assert body["properties"] == [["title", "Team OKRs"], ["status", "active"], ["tags", "okr, planning"]]
-    assert appmod.split_front_matter("---\n: [bad\n---\nBody") == ("---\n: [bad\n---\nBody", [])
+    assert workspace.split_front_matter("---\n: [bad\n---\nBody") == ("---\n: [bad\n---\nBody", [])
 
 
 def test_board_feed_attaches_draft_document_to_matching_conductor_item():
@@ -3207,7 +3237,7 @@ def test_archive_endpoint_accepts_only_chat_ids(monkeypatch, tmp_path):
     appmod.ConversationHistoryStore(history).append("chat:aaaaaaaaaaaa", "user", "hello")
     ok = asyncio.run(appmod.api_chats_archive({"item_id": "chat:aaaaaaaaaaaa"}))
     assert ok.status_code == 200
-    assert "chat:aaaaaaaaaaaa" in appmod.archived_chats()
+    assert "chat:aaaaaaaaaaaa" in chat_items.archived_chats(appmod.ARCHIVED_CHATS_FILE)
     for bad in ("item-1", "__general__", "chat:nothex", ""):
         assert asyncio.run(appmod.api_chats_archive({"item_id": bad})).status_code == 400
 
@@ -3569,9 +3599,9 @@ def test_chats_tab_always_starts_with_new_chat():
 
 def test_chat_ideas_are_validated_and_capped(tmp_path):
     path = tmp_path / "chat-ideas.json"
-    assert appmod.load_chat_ideas(path) == {"ideas": [], "generated": None}   # missing file
+    assert chat_items.load_chat_ideas(path) == {"ideas": [], "generated": None}   # missing file
     path.write_text("{not json")
-    assert appmod.load_chat_ideas(path)["ideas"] == []
+    assert chat_items.load_chat_ideas(path)["ideas"] == []
     ideas = [{"kind": "focus", "label": "This week", "text": "  What matters\n this week?  "},
              "Plain string idea",
              {"kind": "bogus", "text": "Unknown kind keeps the text"},
@@ -3579,9 +3609,9 @@ def test_chat_ideas_are_validated_and_capped(tmp_path):
              {"text": "x" * 241}, {"text": ""}, 42, None]
     ideas += [{"text": f"Idea {n}"} for n in range(20)]
     path.write_text(json.dumps({"generated": "2026-11-14T07:30:00+00:00", "ideas": ideas}))
-    loaded = appmod.load_chat_ideas(path)
+    loaded = chat_items.load_chat_ideas(path)
     assert loaded["generated"] == "2026-11-14T07:30:00+00:00"
-    assert len(loaded["ideas"]) == appmod.CHAT_IDEAS_MAX
+    assert len(loaded["ideas"]) == chat_items.CHAT_IDEAS_MAX
     assert loaded["ideas"][:3] == [
         {"text": "What matters this week?", "label": "This week", "kind": "focus"},
         {"text": "Plain string idea", "label": "", "kind": ""},
@@ -3594,14 +3624,14 @@ def test_chat_ideas_endpoint_reads_the_workspace_file(tmp_path, monkeypatch):
     path = tmp_path / "chat-ideas.json"
     path.write_text(json.dumps({"generated": "2026-11-14T07:30:00+00:00", "ideas": [{"kind": "build", "text": "Build a page"}]}))
     monkeypatch.setattr(appmod, "CHAT_IDEAS_FILE", path)
-    response = TestClient(appmod.app).get("/api/chat-ideas")
+    response = TestClient(appmod.app, base_url="http://localhost").get("/api/chat-ideas")
     assert response.status_code == 200 and response.headers["cache-control"] == "no-store"
     assert response.json()["ideas"] == [{"text": "Build a page", "label": "", "kind": "build"}]
 
 
 def test_settings_page_offers_colour_schemes():
     from fastapi.testclient import TestClient
-    response = TestClient(appmod.app).get("/settings")
+    response = TestClient(appmod.app, base_url="http://localhost").get("/settings")
     assert response.status_code == 200
     assert "no-store" in response.headers["cache-control"]
     assert 'id="color-scheme"' in response.text
@@ -3720,7 +3750,7 @@ def test_remove_task_drops_only_that_block(tmp_path):
     task_config.remove_task(path, "a")
     assert path.read_text() == "# schedule\ntasks:\n  # b runs hourly\n  - id: b\n    skill: b\n  - id: c\n    skill: c\n"
     task_config.remove_task(path, "c")
-    assert [t["id"] for t in appmod.yaml.safe_load(path.read_text())["tasks"]] == ["b"]
+    assert [t["id"] for t in yaml.safe_load(path.read_text())["tasks"]] == ["b"]
     with pytest.raises(ValueError):
         task_config.remove_task(path, "missing")
 
@@ -3734,7 +3764,7 @@ def test_remove_worker_preserves_quoted_id_then_loads_empty_schedule(tmp_path, m
     task_config.remove_task(path, "first")
     assert path.read_text() == "tasks:\n" + other + footer
     task_config.remove_task(path, "second")
-    assert appmod.yaml.safe_load(path.read_text()) == {"tasks": [], "settings": {"keep": True}}
+    assert yaml.safe_load(path.read_text()) == {"tasks": [], "settings": {"keep": True}}
     assert task_config.load_tasks() == []
 
 
@@ -3772,7 +3802,7 @@ def test_chat_retrieval_lifecycle(monkeypatch, tmp_path):
 
     close = appmod.api_chats_archive
     assert json.loads(asyncio.run(close({"item_id": unsent})).body) == {"archived": False}
-    assert unsent not in appmod.archived_chats()
+    assert unsent not in chat_items.archived_chats(appmod.ARCHIVED_CHATS_FILE)
     asyncio.run(close({"item_id": doc, "title": "Quarterly <review>"}))
     rows = recent()
     assert len(rows) == 50
@@ -3787,7 +3817,7 @@ def test_chat_retrieval_lifecycle(monkeypatch, tmp_path):
     assert asyncio.run(restore({"item_id": doc})).status_code == 200
     assert doc not in {r["id"] for r in recent()}
     # Fresh readers, as after a restart. Messages and their timestamps are byte-for-byte intact.
-    assert chat_items.chat_list(histories, appmod.archived_chats())[0]["id"] == doc
+    assert chat_items.chat_list(histories, chat_items.archived_chats(appmod.ARCHIVED_CHATS_FILE))[0]["id"] == doc
     board_response = asyncio.run(appmod.api_board(thread=[doc]))
     assert json.loads(board_response.body)["chat_histories"][doc] == histories[doc]
     assert store.read_bytes() == original
@@ -3878,3 +3908,24 @@ const notice=()=>elements['closed-notices'].children.at(-1);
   ok=false; await loadClosedChats(); assert.match(status.textContent,/Could not load/);
 })().catch(e=>{console.error(e);process.exitCode=1;});
 """], check=True)
+
+
+def test_board_stores_survive_a_failed_save(tmp_path, monkeypatch):
+    """A write that dies before the rename must leave every earlier reminder and closed item."""
+    cr = cmod.ChatRouter(cmod.SessionMap(tmp_path / "s.json"), "/v",
+                         handled_path=tmp_path / "handled.json", reminders_path=tmp_path / "reminders.json")
+    kept = cr.add_reminder("Call the dentist")
+    cr.mark_handled("item-1", "Done")
+
+    def disk_full(*_):
+        raise OSError("disk full")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(Path, "replace", disk_full)
+        with pytest.raises(OSError):
+            cr.add_reminder("Book the venue")
+        with pytest.raises(OSError):
+            cr.mark_handled("item-2", "Done")
+    assert [r["id"] for r in cr.reminders()] == [kept]
+    assert list(cr.handled()) == ["item-1"]
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["handled.json", "reminders.json"]

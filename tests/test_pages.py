@@ -43,13 +43,13 @@ def test_vault_files_returns_frontmatter_without_bodies(tmp_path):
     readme.write_text("---\ntitle: Atlas\nstatus: active\n---\n# Atlas\n\nSecret body.\n")
     (tmp_path / ".roosta").mkdir()
     (tmp_path / ".roosta" / "x.md").write_text("hidden")
-    files = appmod.vault_files("**/*.md", tmp_path)
+    files = pages.vault_files("**/*.md", tmp_path)
     assert [f["path"] for f in files] == ["projects/atlas/README.md"]
     assert files[0]["frontmatter"] == {"title": "Atlas", "status": "active"}
     assert "Secret body" not in json.dumps(files)
     for bad in ("", "/etc/*.md", "../*.md"):
         try:
-            appmod.vault_files(bad, tmp_path)
+            pages.vault_files(bad, tmp_path)
         except ValueError:
             continue
         raise AssertionError(bad)

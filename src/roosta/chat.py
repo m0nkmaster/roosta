@@ -1,7 +1,7 @@
 # roosta/chat.py
 """Per-item AI conversations on an AI connection, with a send-approval backstop."""
 from __future__ import annotations
-import asyncio, hashlib, json, re, tempfile, uuid
+import asyncio, hashlib, json, re, uuid
 from collections import deque
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -16,6 +16,7 @@ _MARKER = re.compile(
 _CURSOR_CHAT_ID = re.compile(
     r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
 )
+_CONNECTION_ID = re.compile(r"[0-9a-f]{32}")
 TOPIC_SESSION_TURNS = 24
 # Each open question is its own chat, id "chat:<12 hex>", minted by the board page.
 _CHAT_ID = re.compile(r"chat:[0-9a-f]{12}")
@@ -240,16 +241,26 @@ def extract_marker(text: str) -> tuple[str, dict | None]:
     return prose, payload
 
 
-def write_chat_json(path: Path, data: dict) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.NamedTemporaryFile(mode="w", dir=path.parent, delete=False) as stream:
-        temporary = Path(stream.name)
+class JsonFile:
+    """One JSON state file. Reads tolerate a missing or damaged file; writes are atomic.
+
+    Without a path it holds nothing and writes nowhere, which tests rely on.
+    """
+
+    def __init__(self, path: Path | None, kind: type) -> None:
+        self.path = Path(path) if path else None
+        self._kind = kind
+
+    def read(self):
         try:
-            json.dump(data, stream, indent=2)
-            stream.close()
-            temporary.replace(path)
-        finally:
-            temporary.unlink(missing_ok=True)
+            data = json.loads(self.path.read_text()) if self.path else None
+        except (OSError, ValueError):
+            data = None
+        return data if isinstance(data, self._kind) else self._kind()
+
+    def write(self, data) -> None:
+        if self.path:
+            paths.write_json(self.path, data)
 
 
 class SessionMap:
@@ -260,22 +271,16 @@ class SessionMap:
         self._map: dict[str, str] = {}
         self._connections: dict[str, str] = {}
         self._models: dict[str, str] = {}
-        try:
-            data = json.loads(self._path.read_text())
-            if isinstance(data, dict):
-                for key, value in data.items():
-                    sid = value.get("session_id", "") if isinstance(value, dict) else value
-                    if _CURSOR_CHAT_ID.fullmatch(str(sid)):
-                        self._map[str(key)] = str(sid)
-                    if isinstance(value, dict) and isinstance(value.get("connection"), str):
-                        self._connections[str(key)] = value["connection"]
-                    if not self._connections.get(key) and key not in self._map:
-                        # An unusable old session is still an existing conversation.
-                        self._connections[key] = "legacy:unknown"
-                    if isinstance(value, dict) and isinstance(value.get("model"), str) and value["model"]:
-                        self._models[str(key)] = value["model"]
-        except (OSError, json.JSONDecodeError):
-            self._map = {}
+        data = JsonFile(self._path, dict).read()
+        for key, value in data.items():
+            # A record without an account id starts over like a new chat; its history stays.
+            if not isinstance(value, dict) or not _CONNECTION_ID.fullmatch(str(value.get("connection"))):
+                continue
+            self._connections[str(key)] = value["connection"]
+            if _CURSOR_CHAT_ID.fullmatch(str(value.get("session_id", ""))):
+                self._map[str(key)] = value["session_id"]
+            if isinstance(value.get("model"), str) and value["model"]:
+                self._models[str(key)] = value["model"]
 
     def get(self, item_id: str) -> str | None:
         return self._map.get(item_id)
@@ -288,24 +293,22 @@ class SessionMap:
         self._save()
 
     def _save(self) -> None:
-        data = {key: {"session_id": self._map.get(key, ""), "connection": self._connections[key],
+        data = {key: {"session_id": self._map.get(key, ""), "connection": self._connections.get(key, ""),
                       **({"model": self._models[key]} if self._models.get(key) else {})}
-                if key in self._connections else self._map[key]
                 for key in self._map.keys() | self._connections.keys()}
-        write_chat_json(self._path, data)
+        paths.write_json(self._path, data)
 
     def selected(self, item_id: str) -> str:
         """Read the stored binding. Only a new chat inherits the default."""
-        current = self._connections.get(item_id)
-        if current and current != "default":
-            return current
-        if self.has_item(item_id):
-            return "legacy:unknown"
-        return ai_backend.default_connection()
+        return self._connections.get(item_id) or ai_backend.default_connection()
 
-    def legacy_items(self) -> list[str]:
-        return sorted(item for item in self._map.keys() | self._connections.keys()
-                      if self.selected(item).startswith("legacy:"))
+    def binding(self, item_id: str) -> str | None:
+        """The stored account id, without falling back to the default."""
+        return self._connections.get(item_id)
+
+    def items_on(self, connection_id: str) -> list[str]:
+        """Chats bound to this account."""
+        return [item for item, selected in self._connections.items() if selected == connection_id]
 
     def connection(self, item_id: str, *, allow_bind: bool = True) -> str:
         """Resolve a turn's account. Only a missing record permits a new binding."""
@@ -374,7 +377,7 @@ class TopicStore:
         self._path = Path(path)
         self._max_session_turns = max_session_turns
 
-    def _read(self, *, strict=False) -> dict:
+    def read(self, *, strict=False) -> dict:
         try:
             data = json.loads(self._path.read_text())
             if not isinstance(data, dict):
@@ -387,15 +390,15 @@ class TopicStore:
                 raise
             return {}
 
-    def _write(self, data: dict) -> None:
-        write_chat_json(self._path, data)
+    def write(self, data: dict) -> None:
+        paths.write_json(self._path, data)
 
     def get(self, item_id: str, *, strict=False) -> dict:
-        record = self._read(strict=strict).get(item_id, {})
+        record = self.read(strict=strict).get(item_id, {})
         return record if isinstance(record, dict) else {}
 
     def begin(self, item_id: str, item: dict, session_id: str) -> dict:
-        data = self._read(strict=True)
+        data = self.read(strict=True)
         record = data.get(item_id, {})
         if not isinstance(record, dict):
             record = {}
@@ -411,11 +414,11 @@ class TopicStore:
         record.pop("needs_session", None)
         record["summary_current"] = False  # Also covers interrupted or failed turns.
         data[item_id] = record
-        self._write(data)
+        self.write(data)
         return record
 
     def finish(self, item_id: str, summary: str | None) -> None:
-        data = self._read(strict=True)
+        data = self.read(strict=True)
         record = data.get(item_id, {})
         if not isinstance(record, dict):
             record = {}
@@ -426,14 +429,14 @@ class TopicStore:
         record["turns"] = max(0, int(record.get("turns", 0) or 0)) + 1
         record["last_active"] = datetime.now(timezone.utc).isoformat()
         data[item_id] = record
-        self._write(data)
+        self.write(data)
 
     def should_rotate(self, item_id: str) -> bool:
         record = self.get(item_id, strict=True)
         return int(record.get("turns", 0) or 0) >= self._max_session_turns
 
     def rotated(self, item_id: str, session_id: str) -> None:
-        data = self._read(strict=True)
+        data = self.read(strict=True)
         record = data.get(item_id, {})
         if not isinstance(record, dict):
             record = {}
@@ -441,14 +444,14 @@ class TopicStore:
         record["refreshed_at"] = datetime.now(timezone.utc).isoformat()
         record["turns"] = 0
         data[item_id] = record
-        self._write(data)
+        self.write(data)
 
     def delete(self, item_id: str) -> None:
-        data = self._read(strict=True)
+        data = self.read(strict=True)
         if item_id not in data:
             return
         del data[item_id]
-        self._write(data)
+        self.write(data)
 
 
 class ConversationHistoryStore:
@@ -541,12 +544,12 @@ class ConversationHistoryStore:
             entry["attachments"] = files
         history.append(entry)
         histories[item_id] = history
-        write_chat_json(self._path, histories)
+        paths.write_json(self._path, histories)
 
     def clear(self, item_id: str) -> None:
         histories = self._read_all(strict=True)
         histories.pop(item_id, None)
-        write_chat_json(self._path, histories)
+        paths.write_json(self._path, histories)
 
 
 SENDER_PROMPT = (
@@ -819,11 +822,11 @@ class ChatRouter:
         self._sessions = session_map
         self._vault = vault
         self._paused: dict[str, dict] = {}   # run_id -> action payload
-        self._handled_path = Path(handled_path) if handled_path else None
-        self._snoozed_path = Path(snoozed_path) if snoozed_path else None
-        self._reminders_path = Path(reminders_path) if reminders_path else None
-        self._raised_path = Path(raised_path) if raised_path else None
-        self._merged_path = Path(merged_path) if merged_path else None
+        self._handled = JsonFile(handled_path, dict)
+        self._snoozed = JsonFile(snoozed_path, dict)
+        self._reminders = JsonFile(reminders_path, list)
+        self._raised = JsonFile(raised_path, dict)
+        self._merged = JsonFile(merged_path, dict)
         self._topics = topic_store
         self._persistent_history = persistent_history
         self._topic_locks: dict[str, asyncio.Lock] = {}
@@ -837,29 +840,18 @@ class ChatRouter:
 
     def handled(self) -> dict:
         """Read the handled map {item_id: {result, at}}; tolerant of corruption."""
-        if not self._handled_path:
-            return {}
-        try:
-            data = json.loads(self._handled_path.read_text())
-            if not isinstance(data, dict):
-                return {}
-            wrapped_items = data.get("items")
-            if isinstance(wrapped_items, list):
-                return {
-                    str(item["id"]): {
-                        "result": str(item.get("result") or "Handled"),
-                        "at": str(item.get("at") or ""),
-                    }
-                    for item in wrapped_items
-                    if isinstance(item, dict) and item.get("id")
-                }
+        data = self._handled.read()
+        wrapped_items = data.get("items")
+        if isinstance(wrapped_items, list):  # a model sometimes writes the board's list shape
             return {
-                str(item_id): value
-                for item_id, value in data.items()
-                if isinstance(value, dict)
+                str(item["id"]): {
+                    "result": str(item.get("result") or "Handled"),
+                    "at": str(item.get("at") or ""),
+                }
+                for item in wrapped_items
+                if isinstance(item, dict) and item.get("id")
             }
-        except (OSError, json.JSONDecodeError):
-            return {}
+        return {str(item_id): value for item_id, value in data.items() if isinstance(value, dict)}
 
     def mark_handled(self, item_id: str, result: str, item: dict | None = None) -> None:
         """Record an item as solved/closed with a one-line outcome.
@@ -869,9 +861,8 @@ class ChatRouter:
         item is resolved the reply must keep its context.
 
         A compact `item` snapshot is stored so a closed item can be reviewed and
-        revived with its original context (`unhandle`). Old records without a
-        snapshot still reopen; they just carry less detail."""
-        if not (self._handled_path and item_id):
+        revived with its original context (`unhandle`)."""
+        if not item_id:
             return
         data = self.handled()
         record = {"result": result or "Done",
@@ -880,8 +871,7 @@ class ChatRouter:
         if snapshot:
             record["item"] = snapshot
         data[item_id] = record
-        self._handled_path.parent.mkdir(parents=True, exist_ok=True)
-        self._handled_path.write_text(json.dumps(data, indent=2))
+        self._handled.write(data)
         self.unsnooze(item_id)
         self.remove_reminder(item_id)
         self.clear_raised(item_id)
@@ -889,14 +879,11 @@ class ChatRouter:
     def unhandle(self, item_id: str) -> dict | None:
         """Reopen a closed item: drop it from the handled store and return its
         stored snapshot (or None). The caller decides how to resurface it."""
-        if not (self._handled_path and item_id):
-            return None
         data = self.handled()
         record = data.pop(item_id, None)
         if record is None:
             return None
-        self._handled_path.parent.mkdir(parents=True, exist_ok=True)
-        self._handled_path.write_text(json.dumps(data, indent=2))
+        self._handled.write(data)
         snapshot = record.get("item") if isinstance(record, dict) else None
         return snapshot if isinstance(snapshot, dict) else None
 
@@ -904,40 +891,23 @@ class ChatRouter:
 
     def raised(self) -> dict:
         """Read {item_id: {at}}; tolerant of missing/corrupt state."""
-        if not self._raised_path:
-            return {}
-        try:
-            data = json.loads(self._raised_path.read_text())
-            return data if isinstance(data, dict) else {}
-        except (OSError, json.JSONDecodeError):
-            return {}
+        return self._raised.read()
 
     def record_raised(self, item_ids: list[str]) -> dict:
         """Persist first-seen timestamps for new ids; return the full map."""
-        if not self._raised_path:
-            return {}
         data = self.raised()
         now = datetime.now(timezone.utc).isoformat()
-        changed = False
-        for item_id in item_ids:
-            if item_id and item_id not in data:
-                data[item_id] = {"at": now}
-                changed = True
-        if changed:
-            self._raised_path.parent.mkdir(parents=True, exist_ok=True)
-            self._raised_path.write_text(json.dumps(data, indent=2))
+        new = {item_id: {"at": now} for item_id in item_ids if item_id and item_id not in data}
+        if new:
+            data.update(new)
+            self._raised.write(data)
         return data
 
     def clear_raised(self, item_id: str) -> None:
         """Drop a raised timestamp when the item is closed."""
-        if not (self._raised_path and item_id):
-            return
         data = self.raised()
-        if item_id not in data:
-            return
-        del data[item_id]
-        self._raised_path.parent.mkdir(parents=True, exist_ok=True)
-        self._raised_path.write_text(json.dumps(data, indent=2))
+        if data.pop(item_id, None) is not None:
+            self._raised.write(data)
 
     # --- merged store: duplicate card ids the conductor folded into another
     #     card. Persisted because the skill that minted the duplicate keeps
@@ -945,13 +915,7 @@ class ChatRouter:
 
     def merged(self) -> dict:
         """Read {duplicate_id: {into, at}}; tolerant of missing/corrupt state."""
-        if not self._merged_path:
-            return {}
-        try:
-            data = json.loads(self._merged_path.read_text())
-            return data if isinstance(data, dict) else {}
-        except (OSError, json.JSONDecodeError):
-            return {}
+        return self._merged.read()
 
     def record_merges(self, merges) -> dict:
         """Persist conductor merges {duplicate_id: kept_id}; return the full map.
@@ -959,7 +923,7 @@ class ChatRouter:
         The card the user has talked on keeps its id so their conversation stays on the
         surviving card. A merge that would loop back on itself is ignored."""
         data = self.merged()
-        if not (self._merged_path and isinstance(merges, dict)):
+        if not isinstance(merges, dict):
             return data
         now = datetime.now(timezone.utc).isoformat()
         changed = False
@@ -974,44 +938,28 @@ class ChatRouter:
             data[dup] = {"into": kept, "at": now}
             changed = True
         if changed:
-            self._merged_path.parent.mkdir(parents=True, exist_ok=True)
-            self._merged_path.write_text(json.dumps(data, indent=2))
+            self._merged.write(data)
         return data
 
     # --- snooze store: deliberate "not now" choices, distinct from done ---
 
     def snoozed(self) -> dict:
         """Read {item_id: {until, at}}; tolerant of missing/corrupt state."""
-        if not self._snoozed_path:
-            return {}
-        try:
-            data = json.loads(self._snoozed_path.read_text())
-            return data if isinstance(data, dict) else {}
-        except (OSError, json.JSONDecodeError):
-            return {}
+        return self._snoozed.read()
 
     def snooze(self, item_id: str, until: str) -> None:
         """Park an item until an ISO-8601 instant."""
-        if not (self._snoozed_path and item_id and until):
+        if not (item_id and until):
             return
         data = self.snoozed()
-        data[item_id] = {
-            "until": until,
-            "at": datetime.now(timezone.utc).isoformat(),
-        }
-        self._snoozed_path.parent.mkdir(parents=True, exist_ok=True)
-        self._snoozed_path.write_text(json.dumps(data, indent=2))
+        data[item_id] = {"until": until, "at": datetime.now(timezone.utc).isoformat()}
+        self._snoozed.write(data)
 
     def unsnooze(self, item_id: str) -> None:
         """Bring an item back now, if it was parked."""
-        if not self._snoozed_path:
-            return
         data = self.snoozed()
-        if item_id not in data:
-            return
-        del data[item_id]
-        self._snoozed_path.parent.mkdir(parents=True, exist_ok=True)
-        self._snoozed_path.write_text(json.dumps(data, indent=2))
+        if data.pop(item_id, None) is not None:
+            self._snoozed.write(data)
 
     # --- reminders store: file-backed board cards the chat authored ("remind
     #     me", "put this on my board"). Unlike snooze (which reschedules a
@@ -1020,17 +968,11 @@ class ChatRouter:
 
     def reminders(self) -> list[dict]:
         """Read the reminder list [{id,title,body,due,created}]; tolerant of corruption."""
-        if not self._reminders_path:
-            return []
-        try:
-            data = json.loads(self._reminders_path.read_text())
-            return data if isinstance(data, list) else []
-        except (OSError, json.JSONDecodeError):
-            return []
+        return self._reminders.read()
 
     def add_reminder(self, title: str, body: str = "", due: str | None = None) -> str | None:
         """Persist a new board card. `due` is a validated ISO instant or None (now)."""
-        if not (self._reminders_path and title):
+        if not (self._reminders.path and title):
             return None
         data = self.reminders()
         reminder_id = f"remind-{uuid.uuid4().hex[:8]}"
@@ -1041,20 +983,15 @@ class ChatRouter:
             "due": due,
             "created": datetime.now(timezone.utc).isoformat(),
         })
-        self._reminders_path.parent.mkdir(parents=True, exist_ok=True)
-        self._reminders_path.write_text(json.dumps(data, indent=2))
+        self._reminders.write(data)
         return reminder_id
 
     def remove_reminder(self, reminder_id: str) -> None:
         """Drop a reminder from the store (e.g. when the user closes its card)."""
-        if not self._reminders_path:
-            return
         data = self.reminders()
-        kept = [r for r in data if r.get("id") != reminder_id]
-        if len(kept) == len(data):
-            return
-        self._reminders_path.parent.mkdir(parents=True, exist_ok=True)
-        self._reminders_path.write_text(json.dumps(kept, indent=2))
+        kept = [r for r in data if not isinstance(r, dict) or r.get("id") != reminder_id]
+        if len(kept) != len(data):
+            self._reminders.write(kept)
 
     def forget(self, item_id: str) -> None:
         """Drop a chat's session, topic and history, e.g. a fired worker's 1:1."""
@@ -1070,9 +1007,22 @@ class ChatRouter:
     def conversation_histories(self) -> dict[str, list[dict[str, str]]]:
         return self._persistent_history.read_all() if self._persistent_history else {}
 
+    @property
+    def sessions(self) -> SessionMap:
+        """Each chat's AI account, session and model."""
+        return self._sessions
+
+    def topic_records(self) -> dict:
+        """Each chat's continuity record, keyed by item id."""
+        return self._topics.read() if self._topics else {}
+
+    def pending_on(self, connection_id: str) -> list[str]:
+        """Run ids of approvals waiting to send through this account."""
+        return [run for run, pause in self._paused.items() if pause.get("connection") == connection_id]
+
     def last_active(self) -> dict[str, str]:
         """Each chat's last activity instant (ISO UTC), from its topic record."""
-        data = self._topics._read() if self._topics else {}
+        data = self.topic_records()
         return {item: str(record.get("last_active") or "") for item, record in data.items() if isinstance(record, dict)}
 
     def known_item(self, item_id: str) -> dict | None:
@@ -1125,7 +1075,7 @@ class ChatRouter:
         if (item_id in self.active_items() or self._message_queues.get(item_id)
                 or (lock and lock.locked()) or self.approval_in_progress(item_id)):
             raise RuntimeError("Finish the turn, queued messages and approvals before refreshing context.")
-        topics = self._topics._read(strict=True)
+        topics = self._topics.read(strict=True)
         record = topics.get(item_id, {})
         if not isinstance(record, dict):
             raise ValueError("Invalid conversation topic")
@@ -1133,7 +1083,7 @@ class ChatRouter:
         if not (record or history or self._sessions.get(item_id)):
             raise LookupError("There is no conversation to refresh yet.")
         snapshot = [item_id, record, history, self._sessions.get(item_id),
-                    self._sessions._connections.get(item_id), self._sessions.model(item_id)]
+                    self._sessions.binding(item_id), self._sessions.model(item_id)]
         current = hashlib.sha256(json.dumps(snapshot, sort_keys=True).encode()).hexdigest()
         boundaries = record.get("boundaries", [])
         if mode == "preview":
@@ -1153,7 +1103,7 @@ class ChatRouter:
                            "summary": handoff if mode == "summary" else "", "turns": 0,
                            "summary_current": mode == "summary", "session_id": "",
                            "needs_session": True, "refreshed_at": ""}
-        self._topics._write(topics)
+        self._topics.write(topics)
         return {"boundaries": topics[item_id]["boundaries"], "history": history}
 
     def active_items(self) -> list[str]:

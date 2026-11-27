@@ -2,6 +2,15 @@
 
 Record each release newest first. Bump minor for features and visible behaviour, patch for fixes and polish.
 
+## 0.22.5 - 2026-11-27
+
+- Roosta refuses requests addressed to any host other than an IP address, localhost or your saved host, so a web page can no longer reach your workspace or start a chat through DNS rebinding.
+- The document viewer and document chats no longer follow a link in your workspace into .roosta/state, a private/ folder or a non-Markdown file.
+- Closed items, snoozes, reminders, worker state and Roosta's own settings save atomically, so a crash or force-quit can no longer leave a half-written file that empties them.
+- Changing a chat's model before AI is connected now explains what to do instead of failing.
+- Retired harness: and claude_model: keys in tasks.yaml are now ignored; set model: instead.
+- Chats from before named AI accounts continue on your default account with a fresh session, keeping their history and summary. Settings no longer shows the Continue older chats card.
+
 ## 0.22.4 - 2026-11-27
 
 - Assistant links to workspace skill files now open in the document viewer and jump to a matching section heading.

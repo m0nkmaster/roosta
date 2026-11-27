@@ -13,7 +13,6 @@ from roosta.pulse import (
     command_mood,
     frontmatter_field,
     frontmatter_text,
-    markdown_title,
     project_brief,
     provenance,
     related_projects,
@@ -21,6 +20,7 @@ from roosta.pulse import (
     running_workloads,
     scan_vault,
 )
+from roosta.workspace import markdown_title
 
 
 @pytest.mark.parametrize(

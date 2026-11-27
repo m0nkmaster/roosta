@@ -151,10 +151,7 @@ def claude_settings(profile: str = "safe", config_dir: Path | None = None) -> Pa
             return path
     except OSError:
         pass
-    temporary = directory / f"settings-{profile}.{os.getpid()}.tmp"
-    temporary.write_text(rendered)
-    temporary.chmod(0o600)
-    temporary.replace(path)
+    paths.write_atomic(path, rendered)
     return path
 
 

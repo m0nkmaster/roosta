@@ -57,7 +57,7 @@ def test_activity_transcript_endpoint_returns_turns(tmp_path, monkeypatch):
         )
 
         transport = ASGITransport(app=appmod.app)
-        async with AsyncClient(transport=transport, base_url="http://test") as client:
+        async with AsyncClient(transport=transport, base_url="http://localhost") as client:
             response = await client.get(f"/api/activity/{eid}/transcript")
             assert response.status_code == 200
             body = response.json()
@@ -107,7 +107,7 @@ def test_claude_activity_transcript_returns_outcome_and_claude_resume(monkeypatc
         )
 
         transport = ASGITransport(app=appmod.app)
-        async with AsyncClient(transport=transport, base_url="http://test") as client:
+        async with AsyncClient(transport=transport, base_url="http://localhost") as client:
             body = (await client.get(f"/api/activity/{eid}/transcript")).json()
         assert body["outcome"] == "4 items raised"
         assert f"claude --resume {session_id}" in body["resume_command"]

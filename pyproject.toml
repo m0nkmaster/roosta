@@ -16,6 +16,7 @@ dependencies = [
     "uvicorn[standard]",
     "pyyaml",
     "keyring>=25",
+    "watchfiles",
 ]
 
 [project.optional-dependencies]

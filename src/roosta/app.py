@@ -19,7 +19,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Annotated
 
-import yaml
 from fastapi import FastAPI, Request, Depends, HTTPException, Query
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -30,15 +29,15 @@ from roosta import connectors as connectors_mod
 from roosta import cli, paths, profile, skills
 from roosta import __version__
 from roosta.chat import (ChatRouter, clip_body, ConversationHistoryStore, SessionMap, TopicStore,
-                  is_general_chat_id, normalise_defer_until, write_chat_json)
+                  is_general_chat_id, normalise_defer_until)
 from roosta import ai_backend
-from roosta import ai_connections, ai_runtime, ai_settings, pages, pi_agent, teletext
+from roosta import ai_connections, ai_runtime, ai_settings, office, pages, pi_agent, teletext
 from roosta.activity_log import ActivityLog
 from roosta.claude_code import (
     read_claude_transcript,
     session_exists as claude_session_exists,
 )
-from roosta.cursor_sessions import read_cursor_transcript, valid_session_id
+from roosta.cursor_sessions import prune_cursor_session_stores, read_cursor_transcript, valid_session_id
 from roosta.board import (
     AI_SETUP_ITEM_ID,
     SETUP_ITEM_ID,
@@ -55,6 +54,9 @@ from roosta.board import (
     snooze_deadline,
 )
 from roosta.chat_items import (
+    archived_chats,
+    load_chat_ideas,
+    save_chat_state,
     DOCUMENT_CHAT_PREFIX,
     GENERAL_CHAT_ITEM,
     HIRE_CHAT_PREFIX,
@@ -74,17 +76,13 @@ from roosta.task_config import (
     load_tasks,
     load_tasks_map,
     skill_files,
-    strip_obsolete_runtime_fields,
     unscheduled_skills,
     workspace_skills,
 )
-from roosta.pulse import build_pulse, markdown_title, project_brief, review_project
+from roosta.pulse import build_pulse, project_brief, review_project
 from roosta.usage import UsageStore
-from roosta.workspace import (VAULT_SOURCE_SUFFIXES, build_catalogue, context_documents,
-                              read_document, resolve_vault_markdown, resolve_vault_text,
-                              source_as_markdown)
-from roosta.workspace import metadata as workspace_metadata
-from roosta.workspace import visible_path as workspace_visible
+from roosta.workspace import (VAULT_SOURCE_SUFFIXES, build_catalogue, context_documents, markdown_title,
+                              read_document, resolve_vault_text, source_as_markdown, split_front_matter)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger(__name__)
@@ -104,6 +102,7 @@ MERGED_FILE = ASSISTANT_DIR / "merged.json"
 REMINDERS_FILE = ASSISTANT_DIR / "reminders.json"
 product_usage = UsageStore(PRODUCT_USAGE_FILE)
 ARCHIVED_CHATS_FILE = ASSISTANT_DIR / "archived-chats.json"
+CHAT_IDEAS_FILE = ASSISTANT_DIR / "chat-ideas.json"
 
 chat_router: ChatRouter | None = None  # set in lifespan once the AI backend is available
 
@@ -154,46 +153,6 @@ async def _start_chat_router() -> None:
         log.warning("%s unavailable: %s (chats disabled)", ai_backend.label(), e)
 
 
-# Prune only Cursor's per-run SQLite stores under each config directory's chats/ tree.
-# The ~/.cursor/projects and ~/.claude/projects transcripts supply the activity drill-down
-# and include the user's own CLI sessions.
-SESSION_STORE_RETENTION_DAYS = 30
-
-
-def prune_cursor_session_stores(
-    retention_days: int = SESSION_STORE_RETENTION_DAYS,
-    referenced: set[str] | None = None,
-) -> int:
-    """Delete Cursor CLI session-store dirs older than the retention window.
-
-    Each store is `<config>/chats/<hash>/<session-uuid>/`. A store is kept when its
-    newest file is within the window or its uuid is still referenced by the activity
-    log (so a resumable chat is never pulled out from under the CLI). Returns the count
-    removed. Never raises: a stale store is cheaper than a crashed startup.
-    """
-    keep = referenced or {e.get("session_id", "") for e in activity._entries.values()}
-    cutoff = time.time() - retention_days * 86400
-    removed = 0
-    for config_dir in ai_connections.CONNECTIONS_DIR.glob("*/cursor"):
-        chats = config_dir / "chats"
-        if not chats.is_dir():
-            continue
-        for store in chats.glob("*/*"):
-            if not store.is_dir() or store.name in keep:
-                continue
-            try:
-                newest = max((p.stat().st_mtime for p in store.rglob("*")), default=store.stat().st_mtime)
-                if newest >= cutoff:
-                    continue
-                shutil.rmtree(store)
-                removed += 1
-            except OSError:
-                continue
-    if removed:
-        log.info("pruned %d stale Cursor session store(s)", removed)
-    return removed
-
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     with skills.ownership_lock(paths.WORKSPACE, "skill-runner", wait=True):
@@ -205,11 +164,8 @@ async def lifespan(app: FastAPI):
 async def running_app(app: FastAPI):
     for move in await asyncio.to_thread(skills.migrate, paths.CORE_SKILLS_DIR, paths.WORKSPACE):
         log.info("Skill migration: %s", move)
-    if paths.TASKS_FILE.is_file():
-        for task_id in await asyncio.to_thread(strip_obsolete_runtime_fields, paths.TASKS_FILE):
-            log.info("Task %s: removed obsolete harness settings from tasks.yaml", task_id)
     activity.compact()  # before runner.start(), so no spawn is appending
-    prune_cursor_session_stores()    # reclaim unread Cursor CLI scratch, same timing
+    prune_cursor_session_stores(referenced=activity.session_ids())  # reclaim unread Cursor CLI scratch
     try:
         await ai_connections.offer_system()
     except (ValueError, OSError):
@@ -231,10 +187,25 @@ async def running_app(app: FastAPI):
 app = FastAPI(title="Skill Runner", lifespan=lifespan)
 
 
+def trusted_host(hostname: str | None) -> bool:
+    """DNS rebinding sends the attacker's domain as Host; an IP literal or localhost cannot be one."""
+    if not hostname:
+        return False
+    if hostname in ("localhost", os.environ.get("ROOSTA_HOST")):
+        return True
+    try:
+        ipaddress.ip_address(hostname)
+        return True
+    except ValueError:
+        return False
+
+
 class NoCacheHtmlMiddleware(BaseHTTPMiddleware):
-    """Keep the desktop shell nav in sync when dashboard HTML changes."""
+    """Refuse requests addressed to a foreign host, and keep the desktop shell nav in sync."""
 
     async def dispatch(self, request, call_next):
+        if not trusted_host(request.url.hostname):
+            return JSONResponse({"error": "Open Roosta at 127.0.0.1 or localhost."}, status_code=403)
         response = await call_next(request)
         path = request.url.path
         if path == "/" or path.startswith(("/runner", "/assistant", "/pulse", "/constellation", "/document", "/workspace", "/office", "/settings", "/changelog", "/pages")):
@@ -293,8 +264,8 @@ def connection_affected(connection_id: str) -> dict:
     default = ai_backend.default_connection()
     workers = [t.id for t in load_tasks() if t.connection == connection_id or
                (not t.connection and default == connection_id)]
-    chats = [item for item, selected in chat_router._sessions._connections.items() if selected == connection_id] if chat_router else []
-    pending = [run for run, pause in chat_router._paused.items() if pause.get("connection") == connection_id] if chat_router else []
+    chats = chat_router.sessions.items_on(connection_id) if chat_router else []
+    pending = chat_router.pending_on(connection_id) if chat_router else []
     chat_count = len(chats)
     if chat_router:
         active = chat_router.last_active()
@@ -428,37 +399,6 @@ async def api_settings_notifications_set(body: dict):
     return ai_settings_result({"enabled": enabled, "managed_by": workspace_managed_by()})
 
 
-@app.post("/api/settings/skills-sync", dependencies=[Depends(local_ai_settings)])
-async def api_settings_skills_sync():
-    return ai_settings_result({"error": "Legacy skills migrate on restart, before workers and chats start."}, 409)
-
-
-def valid_chat_choice(item_id) -> bool:
-    return isinstance(item_id, str) and 1 <= len(item_id) <= 200 and bool(item_id.strip()) and item_id.isprintable()
-
-
-def legacy_chat_choices() -> list[dict]:
-    items = chat_router._sessions.legacy_items() if chat_router else []
-    if not items:
-        return []
-    topics = chat_router._topics._read() if chat_router._topics else {}
-    histories = chat_router.conversation_histories()
-    archived = archived_chats()
-    choices = []
-    for item in items:
-        if not valid_chat_choice(item):
-            continue
-        record = topics.get(item)
-        closed = archived.get(item)
-        title = closed.get("title") if isinstance(closed, dict) else None
-        if not title and isinstance(record, dict):
-            title = record.get("title")
-        if not isinstance(title, str) or title in ("", "Chat", "Conversation", item):
-            title = next((m["text"] for m in histories.get(item, []) if m["role"] == "user" and m["text"]), "")
-        choices.append({"id": item, "title": title[:140] or f"Older chat {len(choices) + 1}"})
-    return choices
-
-
 @app.get("/api/ai/connections", dependencies=[Depends(local_ai_settings)])
 async def api_ai_connections(item_id: str = ""):
     try:
@@ -472,7 +412,7 @@ async def api_ai_connections(item_id: str = ""):
         data = ai_connections.load()
         selected, selected_model = "", ""
         if item_id and chat_router:
-            sessions = chat_router._sessions
+            sessions = chat_router.sessions
             selected = sessions.selected(item_id)
             selected_model = sessions.model(item_id)
         data = {**data, "connections": [{**c, "signed_in": ai_backend.signed_in(c)} for c in data["connections"]]}
@@ -481,7 +421,6 @@ async def api_ai_connections(item_id: str = ""):
         return ai_settings_result({**data, "providers": ai_connections.PROVIDERS, "runtimes": runtimes,
             "engines": engines, "terminal_available": sys.platform == "darwin",
             "workspace_setup_ready": bool(missing), "workspace_setup_missing": missing,
-            "legacy_chats": legacy_chat_choices(),
             "jobs": jobs, "selected": selected, "selected_model": selected_model,
             "affected": {c["id"]: connection_affected(c["id"]) for c in data["connections"]}})
     except ValueError as exc:
@@ -545,28 +484,10 @@ async def api_ai_default(body: dict):
         return ai_settings_result({"error": str(exc)}, 400)
 
 
-@app.post("/api/ai/chat-connection", dependencies=[Depends(local_ai_settings)])
-async def api_ai_chat_connection(body: dict):
-    if not await ensure_chat_router():
-        return chat_unavailable()
-    item_id, connection_id = body.get("item_id"), body.get("connection")
-    if not valid_chat_choice(item_id):
-        return ai_settings_result({"error": "Choose a chat"}, 400)
-    if not isinstance(connection_id, str) or connection_id in ("", "default"):
-        return ai_settings_result({"error": "Choose a named AI account"}, 400)
-    if item_id in chat_router.active_items() or chat_router.approval_in_progress(item_id):
-        return ai_settings_result({"error": "Finish this turn or its pending approval before changing connection"}, 409)
-    try:
-        selected = ai_connections.get(connection_id)
-        chat_router._sessions.bind(item_id, selected["id"])
-        return ai_settings_result({"ok": True, "message": "Connection changed. Visible history and summary are retained; execution starts a new session."})
-    except ValueError as exc:
-        return ai_settings_result({"error": str(exc)}, 400)
-
-
 @app.post("/api/ai/chat-model", dependencies=[Depends(local_ai_settings)])
 async def api_ai_chat_model(body: dict):
-    await ensure_chat_router()
+    if not await ensure_chat_router():
+        return chat_unavailable()
     item_id, model = body.get("item_id"), body.get("model", "")
     if not isinstance(item_id, str) or not 1 <= len(item_id) <= 200 or not isinstance(model, str):
         return ai_settings_result({"error": "Choose a chat and a model"}, 400)
@@ -575,13 +496,13 @@ async def api_ai_chat_model(body: dict):
     model = model.strip()
     try:
         if model:
-            sessions = chat_router._sessions
-            if not sessions.has_item(item_id) and chat_router.known_item(item_id):
-                raise ValueError("Continue this chat or choose its account in Settings before changing the model.")
-            selected = sessions.selected(item_id) if sessions.has_item(item_id) else sessions.connection(item_id)
-            current = chat_router._sessions.model(item_id)
-            await validate_model(ai_connections.get(selected, connected=False)["provider"], model, selected, current)
-        chat_router._sessions.set_model(item_id, model)
+            sessions = chat_router.sessions
+            selected = sessions.selected(item_id)  # the default account for a chat with none yet
+            await validate_model(ai_connections.get(selected, connected=False)["provider"], model, selected,
+                                 sessions.model(item_id))
+            if not sessions.has_item(item_id):
+                sessions.connection(item_id)  # bind it, or the save below drops a model with no account
+        chat_router.sessions.set_model(item_id, model)
         return ai_settings_result({"ok": True, "model": model})
     except ValueError as exc:
         return ai_settings_result({"error": str(exc)}, 400)
@@ -686,8 +607,7 @@ async def api_ai_disconnect(connection_id: str):
     try:
         connection = ai_connections.get(connection_id, connected=False)
         affected = connection_affected(connection_id)
-        if connection["auth"] == "api_key":
-            ai_connections._vault().delete_password("Roosta AI", connection["credential_ref"])
+        ai_connections.forget_credential(connection)
         if connection["auth"] == "cli":
             binary = ai_runtime.find(ai_connections.engine(connection["provider"]))
             if not binary:
@@ -817,7 +737,7 @@ async def api_task_run(task_id: str):
 @app.post("/api/tasks/{task_id}/cancel")
 async def api_task_cancel(task_id: str):
     """Drop a queued manual run before it starts."""
-    if task_id not in runner._states:
+    if runner.get_state(task_id) is None:
         return JSONResponse({"error": "not found"}, status_code=404)
     if not runner.cancel_queued(task_id):
         return JSONResponse({"error": "not queued"}, status_code=409)
@@ -915,32 +835,6 @@ async def index(request: Request):
 # --- Custom pages (see pages.py) ---
 
 
-def vault_files(pattern: str, root: Path | None = None) -> list[dict]:
-    """Workspace Markdown matching a glob, with titles and frontmatter but no bodies."""
-    root = (root or paths.WORKSPACE).resolve()
-    if not pattern or pattern.startswith("/") or ".." in pattern.split("/") or len(pattern) > 200:
-        raise ValueError("invalid pattern")
-    out = []
-    for path in sorted(root.glob(pattern)):
-        try:
-            relative = path.relative_to(root).as_posix()
-            resolved = resolve_vault_markdown(relative, root)
-        except (ValueError, FileNotFoundError):
-            continue
-        if not workspace_visible(Path(relative)):
-            continue
-        text = resolved.read_text(encoding="utf-8", errors="ignore")
-        out.append({
-            "path": relative,
-            "title": markdown_title(text, path.stem),
-            "frontmatter": workspace_metadata(text),
-            "modified": datetime.fromtimestamp(resolved.stat().st_mtime, timezone.utc).isoformat(),
-        })
-        if len(out) >= pages.PAGE_FILES_LIMIT:
-            break
-    return out
-
-
 @app.get("/api/pages")
 async def api_pages():
     return JSONResponse(pages.custom_pages())
@@ -950,7 +844,7 @@ async def api_pages():
 async def api_vault_files(glob: str = "**/*.md"):
     """Read-only: Markdown files matching a glob, with frontmatter, for custom pages."""
     try:
-        files = await asyncio.to_thread(vault_files, glob)
+        files = await asyncio.to_thread(pages.vault_files, glob)
     except ValueError as exc:
         return JSONResponse({"error": str(exc)}, status_code=400)
     return JSONResponse(files, headers={"Cache-Control": "no-store"})
@@ -983,40 +877,9 @@ async def custom_page_root(name: str):
     return RedirectResponse(f"/pages/{name}/")
 
 
-OFFICE_CAST_FILE = paths.ROOSTA_DIR / "office-cast.yaml"
-LPC_DIR = paths.STATIC_DIR / "vendor" / "lpc"
-
-
-def office_cast(path: Path = OFFICE_CAST_FILE, lpc: Path = LPC_DIR) -> dict:
-    """Workspace looks for Office workers, keyed by lower-case nickname or task id.
-
-    Only looks whose every sprite layer is vendored pass, so a typo cannot break the page.
-    """
-    try:
-        raw = yaml.safe_load(path.read_text(encoding="utf-8"))
-    except (OSError, yaml.YAMLError):
-        return {}
-    cast = {}
-    for name, look in (raw.items() if isinstance(raw, dict) else []):
-        if not isinstance(look, dict):
-            continue
-        look = {k: str(v) for k, v in look.items()
-                if k in {"body", "head", "tone", "hair", "beard", "glasses"} and isinstance(v, str)}
-        body, tone = look.get("body"), look.get("tone", "")
-        suffix = "-f" if body == "f" else ""
-        head = {"m": "head", "f": "head-f", "old": "head-old"}.get(look.get("head") or body or "")
-        needed = [f"body{suffix}/{tone}", f"{head}/{tone}", f"hair/{look.get('hair', '')}"]
-        needed += [f"hair/{look['beard']}"] if look.get("beard") else []
-        needed += [f"glasses/{look['glasses']}"] if look.get("glasses") else []
-        safe = all(re.fullmatch(r"[A-Za-z0-9 _/-]+", n) and ".." not in n for n in needed)
-        if body in {"m", "f"} and head and safe and all((lpc / n / "Walk.png").is_file() for n in needed):
-            cast[str(name).strip().lower()] = look
-    return cast
-
-
 @app.get("/api/office/cast")
 async def api_office_cast():
-    return JSONResponse(office_cast())
+    return JSONResponse(office.office_cast())
 
 
 @app.get("/api/profile")
@@ -1025,46 +888,10 @@ async def api_profile():
     return JSONResponse(profile.load().public())
 
 
-CHAT_IDEAS_FILE = ASSISTANT_DIR / "chat-ideas.json"
-CHAT_IDEA_KINDS = {"focus", "project", "tool", "remember", "build", "learn"}
-CHAT_IDEAS_MAX = 8
-
-
-def load_chat_ideas(path: Path | None = None) -> dict:
-    """Starter prompts the `chat-ideas` skill wrote from this workspace, validated.
-
-    The file is model-written, so anything malformed is dropped rather than shown: an idea
-    is a non-empty one-line `text` (at most 240 characters) with an optional short `label`
-    and a `kind` from CHAT_IDEA_KINDS. No usable ideas means the page keeps its built-in ones.
-    """
-    try:
-        raw = json.loads((path or CHAT_IDEAS_FILE).read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return {"ideas": [], "generated": None}
-    entries = raw.get("ideas") if isinstance(raw, dict) else None
-    ideas, seen = [], set()
-    for entry in entries if isinstance(entries, list) else []:
-        if isinstance(entry, str):
-            entry = {"text": entry}
-        if not isinstance(entry, dict):
-            continue
-        text = " ".join(str(entry.get("text") or "").split())
-        if not text or len(text) > 240 or text.lower() in seen:
-            continue
-        seen.add(text.lower())
-        label = " ".join(str(entry.get("label") or "").split())[:40]
-        kind = str(entry.get("kind") or "").strip().lower()
-        ideas.append({"text": text, "label": label, "kind": kind if kind in CHAT_IDEA_KINDS else ""})
-        if len(ideas) == CHAT_IDEAS_MAX:
-            break
-    generated = raw.get("generated") if isinstance(raw, dict) else None
-    return {"ideas": ideas, "generated": generated if isinstance(generated, str) and ideas else None}
-
-
 @app.get("/api/chat-ideas")
 async def api_chat_ideas():
     """Workspace-specific ideas for a new chat; an empty list means use the page's own."""
-    return JSONResponse(load_chat_ideas(), headers={"Cache-Control": "no-store"})
+    return JSONResponse(load_chat_ideas(CHAT_IDEAS_FILE), headers={"Cache-Control": "no-store"})
 
 
 @app.get("/runner")
@@ -1072,18 +899,15 @@ async def runner_page():
     return FileResponse(pages.page_file("index"))
 
 
-def archived_chats(*, strict: bool = False) -> dict:
-    try:
-        data = json.loads(ARCHIVED_CHATS_FILE.read_text())
-        if not isinstance(data, dict):
-            raise ValueError("Invalid chat archive")
-        return data
-    except FileNotFoundError:
-        return {}
-    except (OSError, ValueError):
-        if strict:  # Never replace an unreadable archive with a partial one.
-            raise
-        return {}
+def board_doc() -> dict:
+    """The conductor's last board, normalised."""
+    state = runner.get_state("assistant") or {}
+    return normalise_board_doc(state.get("last_output", {}).get("details", {}))
+
+
+def live_lanes(states: list[dict], handled: dict) -> tuple[list[dict], list[dict]]:
+    """Every source's cards in the active and later lanes, minus closed and snoozed ones."""
+    return board_lanes(board_doc()["items"], states, chat_router, handled)
 
 
 @app.get("/api/board")
@@ -1095,10 +919,10 @@ async def api_board(threads: str = "", thread: Annotated[list[str] | None, Query
     without waiting for the next conductor pass.
     """
     state = runner.get_state("assistant")
-    doc = normalise_board_doc((state or {}).get("last_output", {}).get("details", {}))
+    doc = board_doc()
     states = runner.get_states()
     handled = chat_router.handled() if chat_router else {}
-    doc["items"], doc["later"] = board_lanes(doc["items"], states, chat_router, handled)
+    doc["items"], doc["later"] = live_lanes(states, handled)
     if chat_router:
         track_ids = [
             item["id"] for item in doc["items"] + doc["later"] if item.get("id")
@@ -1115,7 +939,7 @@ async def api_board(threads: str = "", thread: Annotated[list[str] | None, Query
     ] + standing_thread_ids(threads, thread)
     histories = (chat_router.conversation_histories() if chat_router else
                  ConversationHistoryStore(CHAT_HISTORY_FILE).read_all())
-    topics = TopicStore(TOPICS_FILE)._read()
+    topics = TopicStore(TOPICS_FILE).read()
     chat_histories = {
         item_id: history
         for item_id in conversation_ids
@@ -1135,7 +959,7 @@ async def api_board(threads: str = "", thread: Annotated[list[str] | None, Query
             for key in conversation_ids if isinstance(record := topics.get(key), dict)
             and (record.get("boundaries") or record.get("refreshed_at"))
         },
-        "chats": chat_list(histories, archived_chats()),
+        "chats": chat_list(histories, archived_chats(ARCHIVED_CHATS_FILE)),
         "pending_approvals": chat_router.pending_approvals() if chat_router else {},
         "document": doc,
     })
@@ -1143,11 +967,9 @@ async def api_board(threads: str = "", thread: Annotated[list[str] | None, Query
 
 @app.get("/api/board/count")
 async def api_board_count():
-    """Rail item count for the nav badge; mirrors api_board's filtering without its side effects."""
-    state = runner.get_state("assistant")
-    doc = normalise_board_doc((state or {}).get("last_output", {}).get("details", {}))
+    """Rail item count for the nav badge, with the same lanes as api_board."""
     handled = chat_router.handled() if chat_router else {}
-    items, later = board_lanes(doc["items"], runner.get_states(), chat_router, handled)
+    items, later = live_lanes(runner.get_states(), handled)
     today = datetime.now(timezone.utc).date().isoformat()
     # notes/later/done feed the Office whiteboard kanban
     notes = [{"title": i.get("title", ""), "owner": i.get("action_owner", "assistant"),
@@ -1207,11 +1029,9 @@ async def api_notify(body: dict):
 
 
 def _current_board_item(item_id: str) -> dict | None:
-    """Resolve one visible board item across all sources, or None."""
-    state = runner.get_state("assistant")
-    doc = normalise_board_doc((state or {}).get("last_output", {}).get("details", {}))
+    """Resolve one board item across all sources, closed and snoozed included, or None."""
     active, later = collect_board_items(
-        doc["items"], runner.get_states(),
+        board_doc()["items"], runner.get_states(),
         chat_router.reminders() if chat_router else [], chat_router)
     return next((i for i in active + later if i["id"] == item_id), None)
 
@@ -1271,9 +1091,7 @@ async def api_board_snooze(body: dict):
         until = snooze_deadline(preset)
     except ValueError:
         return JSONResponse({"error": "unknown snooze preset"}, status_code=400)
-    state = runner.get_state("assistant")
-    doc = normalise_board_doc((state or {}).get("last_output", {}).get("details", {}))
-    active_items, _ = board_lanes(doc["items"], runner.get_states(), chat_router, chat_router.handled())
+    active_items, _ = live_lanes(runner.get_states(), chat_router.handled())
     if not any(item["id"] == item_id for item in active_items):
         return JSONResponse({"error": "item not found"}, status_code=404)
     chat_router.snooze(item_id, until)
@@ -1303,7 +1121,7 @@ async def api_board_chat(body: dict):
     item_id = str(body["item_id"])
     if item_id == AI_SETUP_ITEM_ID or (
         (setup_item(chat_router) or {}).get("id") == AI_SETUP_ITEM_ID
-        and (item_id == SETUP_ITEM_ID or not chat_router._sessions.has_item(item_id))
+        and (item_id == SETUP_ITEM_ID or not chat_router.sessions.has_item(item_id))
     ):
         return JSONResponse({"error": "Choose a default AI account in Settings and finish its software and model setup.",
                              "settings_url": "/settings#account-setup"}, status_code=503)
@@ -1327,16 +1145,10 @@ async def api_board_chat(body: dict):
         if item is None:
             return JSONResponse({"error": "invalid chat id"}, status_code=404)
     else:
-        state = runner.get_state("assistant")
-        doc = normalise_board_doc((state or {}).get("last_output", {}).get("details", {}))
-        active, later = collect_board_items(
-            doc["items"], runner.get_states(), chat_router.reminders(), chat_router)
-        item = next((i for i in active + later if i["id"] == item_id), None)
-        if item is None:
-            # The conductor drops items it considers resolved, capped out or aged
-            # off, but the user may still be mid-conversation about one. Continue the
-            # existing thread rather than 404ing a live chat off the board.
-            item = chat_router.known_item(item_id)
+        # The conductor drops items it considers resolved, capped out or aged
+        # off, but the user may still be mid-conversation about one. Continue the
+        # existing thread rather than 404ing a live chat off the board.
+        item = _current_board_item(item_id) or chat_router.known_item(item_id)
         if item is None:
             return JSONResponse({"error": "item not found"}, status_code=404)
 
@@ -1450,22 +1262,17 @@ async def api_chats_archive(body: dict):
     if not ConversationHistoryStore(CHAT_HISTORY_FILE).read(item_id):
         return JSONResponse({"archived": False})
     title = body.get("title")
-    save_chat_state(archived_chats(strict=True), item_id, {
+    save_chat_state(ARCHIVED_CHATS_FILE, archived_chats(ARCHIVED_CHATS_FILE, strict=True), item_id, {
         "closed_at": datetime.now(timezone.utc).isoformat(),
         "title": title.strip()[:200] if isinstance(title, str) else "",
     })
     return JSONResponse({"archived": True})
 
 
-def save_chat_state(archived: dict, item_id: str, record: dict) -> None:
-    archived[item_id] = record
-    write_chat_json(ARCHIVED_CHATS_FILE, archived)
-
-
 @app.get("/api/chats/archived")
 async def api_chats_archived():
     histories = ConversationHistoryStore(CHAT_HISTORY_FILE).read_all()
-    return JSONResponse(chat_list(histories, archived_chats(strict=True), limit=50, closed=True),
+    return JSONResponse(chat_list(histories, archived_chats(ARCHIVED_CHATS_FILE, strict=True), limit=50, closed=True),
                         headers={"Cache-Control": "no-store"})
 
 
@@ -1474,10 +1281,10 @@ async def api_chats_restore(body: dict):
     item_id = str(body.get("item_id") or "").strip()
     if not is_chat_id(item_id):
         return JSONResponse({"error": "need a chat id"}, status_code=400)
-    archived = archived_chats(strict=True)
+    archived = archived_chats(ARCHIVED_CHATS_FILE, strict=True)
     if item_id not in archived or not ConversationHistoryStore(CHAT_HISTORY_FILE).read(item_id):
         return JSONResponse({"error": "Chat is unavailable."}, status_code=404)
-    save_chat_state(archived, item_id, {"restored_at": datetime.now(timezone.utc).isoformat()})
+    save_chat_state(ARCHIVED_CHATS_FILE, archived, item_id, {"restored_at": datetime.now(timezone.utc).isoformat()})
     return JSONResponse({"restored": True})
 
 
@@ -1546,31 +1353,6 @@ async def api_vault_document(path: str = "", visible: bool = False):
     return JSONResponse({
         "path": relative, "title": title, "content": body, "properties": properties,
     })
-
-
-def split_front_matter(content: str) -> tuple[str, list[list[str]]]:
-    """Separate YAML front matter from a Markdown body as display-ready pairs.
-
-    Marked would otherwise render the block as a rule plus a setext heading.
-    """
-    match = re.match(r"\A---\s*\n(.*?)\n---[ \t]*(?:\n|\Z)", content, re.DOTALL)
-    if not match:
-        return content, []
-    try:
-        metadata = yaml.safe_load(match.group(1))
-    except yaml.YAMLError:
-        return content, []
-    if not isinstance(metadata, dict):
-        return content, []
-    properties = []
-    for key, value in metadata.items():
-        if isinstance(value, list):
-            value = ", ".join(str(v) for v in value if not isinstance(v, (dict, list)))
-        elif isinstance(value, dict) or value is None:
-            continue
-        if str(value).strip():
-            properties.append([str(key), str(value)])
-    return content[match.end():].lstrip("\n"), properties
 
 
 def changelog_version(text: str) -> str:
@@ -1676,9 +1458,7 @@ async def api_pulse():
     states = runner.get_states()
     health = board_health(states)
     handled = chat_router.handled() if chat_router else {}
-    state = runner.get_state("assistant")
-    doc = normalise_board_doc((state or {}).get("last_output", {}).get("details", {}))
-    active_items, later_items = board_lanes(doc["items"], states, chat_router, handled)
+    active_items, later_items = live_lanes(states, handled)
     chat_items = []
     if chat_router:
         for item_id in chat_router.active_items():

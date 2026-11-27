@@ -322,6 +322,7 @@ def markdown_path(raw) -> str | None:
         or path.suffix.lower() != ".md"
         or ".." in path.parts
         or (path.parts and path.parts[0].lower() == ".roosta")
+        or any(part.lower() == "private" for part in path.parts)
     ):
         return None
     return path.as_posix()
@@ -334,12 +335,15 @@ def resolve_vault_markdown(raw_path: str, root: Path | None = None) -> Path:
         raise ValueError("invalid document path")
     vault = (root or paths.WORKSPACE).resolve()
     # SECURITY-REVIEW: the path comes from a query parameter. It is constrained
-    # to a relative Markdown path, resolved, and checked against the vault root.
+    # to a relative Markdown path, resolved, and the resolved path must pass the
+    # same rule, so a symlink cannot reach `.roosta/state`, `private/` or a non-Markdown file.
     target = (vault / relative).resolve()
     try:
-        target.relative_to(vault)
+        canonical = target.relative_to(vault)
     except ValueError as exc:
         raise ValueError("invalid document path") from exc
+    if markdown_path(canonical.as_posix()) is None:
+        raise ValueError("invalid document path")
     if not target.is_file():
         raise FileNotFoundError("document not found")
     return target
@@ -361,7 +365,7 @@ def is_workspace_config(parts: tuple[str, ...]) -> bool:
 
 
 def _viewable_parts(parts: tuple[str, ...]) -> bool:
-    if any(part == ".." for part in parts):
+    if any(part == ".." or part.lower() == "private" for part in parts):
         return False
     return is_workspace_config(parts) or not any(part.startswith(".") for part in parts)
 
@@ -395,3 +399,28 @@ def source_as_markdown(content: str, suffix: str) -> str:
     longest = max((len(run) for run in re.findall(r"`+", content)), default=0)
     fence = "`" * max(3, longest + 1)
     return f"{fence}{suffix.lstrip('.')}\n{content.rstrip()}\n{fence}"
+
+
+def split_front_matter(content: str) -> tuple[str, list[list[str]]]:
+    """Separate YAML front matter from a Markdown body as display-ready pairs.
+
+    Marked would otherwise render the block as a rule plus a setext heading.
+    """
+    match = re.match(r"\A---\s*\n(.*?)\n---[ \t]*(?:\n|\Z)", content, re.DOTALL)
+    if not match:
+        return content, []
+    try:
+        metadata = yaml.safe_load(match.group(1))
+    except yaml.YAMLError:
+        return content, []
+    if not isinstance(metadata, dict):
+        return content, []
+    properties = []
+    for key, value in metadata.items():
+        if isinstance(value, list):
+            value = ", ".join(str(v) for v in value if not isinstance(v, (dict, list)))
+        elif isinstance(value, dict) or value is None:
+            continue
+        if str(value).strip():
+            properties.append([str(key), str(value)])
+    return content[match.end():].lstrip("\n"), properties
