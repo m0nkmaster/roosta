@@ -20,7 +20,7 @@ import yaml
 from roosta import ai_backend, ai_connections, paths, profile, skills
 from roosta import connectors as connectors_mod
 from roosta.activity_log import ActivityLog
-from roosta.ai_settings import check_task_runtime, runtime_unavailable_message
+from roosta.ai_settings import check_task_runtime, runtime_unavailable_message, validate_model
 from roosta.board import reconcile_board_output
 from roosta.task_config import (
     TASK_SETTING_FLAGS,
@@ -382,17 +382,17 @@ class TaskRunner:
                 shutil.rmtree(paths.STATE_DIR / task_id, ignore_errors=True)
         return True
 
-    def set_settings(self, task_id: str, body: dict) -> dict | None:
+    async def set_settings(self, task_id: str, body: dict) -> dict | None:
         """Persist the Skill runner settings form: name, nickname, description,
-        schedule, connection and model. Raises ValueError for bad
-        input and RuntimeError when the task file cannot take the edit."""
+        schedule, connection and model. A new model must be one the worker's
+        connection offers, including the default a worker without a pin follows.
+        Raises ValueError for bad input and RuntimeError while a connection change
+        would hit a running or queued worker, or the task file cannot take the edit."""
         state = self._states.get(task_id)
         if state is None:
             return None
         values, remove = task_settings_changes(body)
         if "connection" in body:
-            if state.status == "running" or self.is_queued(task_id):
-                raise RuntimeError("AI connection cannot change while the worker is running or queued")
             connection_id = body["connection"]
             if not isinstance(connection_id, str):
                 raise ValueError("Choose an AI connection")
@@ -406,16 +406,19 @@ class TaskRunner:
             if not isinstance(connection_model, str):
                 raise ValueError("Choose a model")
             current = values.get("connection", "" if "connection" in remove else state.connection)
-            if not current:
-                current = "default" if ai_backend.default_connection() else ""
-            if not current:
+            if not (current or ai_backend.default_connection()):
                 raise ValueError("Choose an AI connection before choosing its model")
-            provider = ai_connections.get("" if current == "default" else current, connected=False)["provider"]
+            connection = ai_connections.get(current, connected=False)  # "" is the default
             if connection_model.strip():
-                ai_connections.runtime(provider, connection_model.strip())
+                await validate_model(connection["provider"], connection_model.strip(), connection["id"], state.model)
                 values["model"] = connection_model.strip()
             elif state.model:
                 remove.add("model")
+        # Checked after the model lookup above, which can wait on the harness.
+        if self._states.get(task_id) is not state:
+            return None
+        if "connection" in body and (state.status == "running" or self.is_queued(task_id)):
+            raise RuntimeError("AI connection cannot change while the worker is running or queued")
         if values or remove:
             try:
                 update_task_fields(self._tasks_file, task_id, values, remove)
@@ -430,8 +433,9 @@ class TaskRunner:
                 setattr(state, key, values.get(key, ""))
         if "description" in values or "description" in remove:
             state.custom_description = values.get("description", "")
+            task = self._load_tasks_map().get(task_id)  # current config: a worker hired after start is not in self._tasks
             state.description = state.custom_description or skill_description(
-                state.skill, next((t.dir for t in self._tasks if t.id == task_id), paths.WORKSPACE),
+                state.skill, task.dir if task else paths.WORKSPACE,
             )
         for key in ("interval", "run_at", "weekdays_only", "days_of_week"):
             if key in values:

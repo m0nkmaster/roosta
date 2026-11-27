@@ -2,6 +2,11 @@
 
 Record each release newest first. Bump minor for features and visible behaviour, patch for fixes and polish.
 
+## 0.23.2 - 2026-11-27
+
+- A worker that follows your default AI account now only accepts a model that account offers, as pinned workers already did, instead of saving one it cannot run.
+- Clearing the description of a worker added since Roosta started shows its skill's own description straight away.
+
 ## 0.23.1 - 2026-11-27
 
 - Worker runs on your own Claude Code sign-in show their transcript again when you open them in AI Activity, and Cursor worker runs in another folder find theirs.

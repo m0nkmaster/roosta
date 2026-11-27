@@ -1136,15 +1136,52 @@ def test_worker_settings_write_the_connection_model_field(accounts, tmp_path, mo
     runner._tasks = runner._load_tasks()
     runner._states[task.id] = runner._load_state(task)
     runner._triggers[task.id] = asyncio.Event()
-    runner.set_settings('local', {'connection_model': 'gpt-5-mini'})
+    offered = {'openai': {'gpt-5-mini'}, 'anthropic': {'haiku'}}
+    checked = []
+    async def validate(provider, model, key='', current=''):
+        checked.append((provider, model, key, current))
+        connections.runtime(provider, model)
+        if model != current and model not in offered[provider]:
+            raise ValueError('not offered')
+    monkeypatch.setattr(scheduler, 'validate_model', validate)
+    settings = lambda body: asyncio.run(runner.set_settings('local', body))
+
+    # A worker following the default is checked against the default's own list.
+    with pytest.raises(ValueError):
+        settings({'connection_model': 'gpt-unlisted'})
+    assert checked == [('openai', 'gpt-unlisted', pi['id'], '')]
+    assert 'model:' not in tasks_file.read_text()
+    settings({'connection_model': 'gpt-5-mini'})
     assert '    model: gpt-5-mini' in tasks_file.read_text()
     assert 'connection:' not in tasks_file.read_text()
-    runner.set_settings('local', {'connection': claude['id'], 'connection_model': 'haiku'})
+    with pytest.raises(ValueError):
+        settings({'connection': claude['id'], 'connection_model': 'opus'})
+    assert 'connection:' not in tasks_file.read_text()
+    settings({'connection': claude['id'], 'connection_model': 'haiku'})
+    assert checked[-1] == ('anthropic', 'haiku', claude['id'], 'gpt-5-mini')
     assert '    model: haiku' in tasks_file.read_text()
     with pytest.raises(ValueError):
-        runner.set_settings('local', {'connection_model': 'bad model;'})
-    runner.set_settings('local', {'connection_model': ''})
+        settings({'connection_model': 'bad model;'})
+    settings({'connection_model': ''})
     assert 'model:' not in tasks_file.read_text()
+
+
+def test_worker_connection_change_refused_once_a_run_starts_during_model_check(accounts, tmp_path, monkeypatch):
+    from test_runner import make_runner
+    create, _ = accounts
+    pi = create('openai', tested=False)
+    tasks_file = tmp_path / 'tasks.yaml'
+    tasks_file.write_text('tasks:\n  - id: local\n    skill: skill\n')
+    task = task_config.TaskConfig(id='local', skill='skill')
+    runner = make_runner(tmp_path, [task], lambda _task: None)
+    runner._states[task.id] = runner._load_state(task)
+    runner._triggers[task.id] = asyncio.Event()
+    async def validate(provider, model, key='', current=''):
+        runner._states['local'].status = 'running'  # the worker starts while the harness lists models
+    monkeypatch.setattr(scheduler, 'validate_model', validate)
+    with pytest.raises(RuntimeError):
+        asyncio.run(runner.set_settings('local', {'connection': pi['id'], 'connection_model': 'gpt-5-mini'}))
+    assert tasks_file.read_text() == 'tasks:\n  - id: local\n    skill: skill\n'
 
 
 def test_providers_hardcode_no_models():

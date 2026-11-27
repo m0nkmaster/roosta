@@ -686,14 +686,7 @@ async def api_task_settings(task_id: str, body: dict, request: Request):
     if "connection" in body or "unrestricted" in body:
         local_ai_settings(request)
     try:
-        if isinstance(body.get("connection_model"), str) and body["connection_model"].strip():
-            existing = runner.get_state(task_id)
-            chosen = body["connection"] if isinstance(body.get("connection"), str) else (existing or {}).get("connection", "")
-            if existing and chosen:
-                connection = ai_connections.get("" if chosen == "default" else chosen, connected=False)
-                current = existing.get("model") or ""
-                await validate_model(connection["provider"], body["connection_model"].strip(), connection["id"], current)
-        state = runner.set_settings(task_id, body)
+        state = await runner.set_settings(task_id, body)
     except ValueError as exc:
         return JSONResponse({"error": str(exc)}, status_code=400)
     except RuntimeError as exc:

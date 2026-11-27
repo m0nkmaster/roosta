@@ -886,13 +886,13 @@ def test_settings_edit_identity_and_schedule_in_tasks_yaml(tmp_path, monkeypatch
     runner._states[task.id] = runner._load_state(task)
     runner._triggers[task.id] = asyncio.Event()
 
-    state = runner.set_settings("local", {
+    state = asyncio.run(runner.set_settings("local", {
         "name": "Local helper",
         "nickname": "Dwight",
         "description": "Does a thing: carefully # really",
         "schedule": {"mode": "daily", "run_at": "08:30", "days": "specific",
                      "days_of_week": ["friday", "monday"]},
-    })
+    }))
 
     assert (state["name"], state["nickname"]) == ("Local helper", "Dwight")
     assert state["description"] == state["custom_description"] == "Does a thing: carefully # really"
@@ -911,13 +911,31 @@ def test_settings_edit_identity_and_schedule_in_tasks_yaml(tmp_path, monkeypatch
     assert task_config._yaml_scalar("10:00") == '"10:00"'  # bare 10:00 is YAML base-60 600
     assert loaded["other"].nickname == ""
 
-    runner.set_settings("local", {"nickname": "", "description": "",
-                                  "schedule": {"mode": "interval", "interval": 7200, "days": "every"}})
+    asyncio.run(runner.set_settings("local", {"nickname": "", "description": "",
+                                  "schedule": {"mode": "interval", "interval": 7200, "days": "every"}}))
     updated = tasks_file.read_text()
     assert "nickname" not in updated and "description" not in updated
     assert "run_at" not in updated and "days_of_week" not in updated
     assert "    interval: 7200\n" in updated  # stale "# 1 hour" goes with the old value
     assert runner.get_state("local")["run_at"] == ""
+
+
+def test_settings_clearing_description_uses_the_skill_in_a_later_hired_workers_dir(tmp_path):
+    work = tmp_path / "elsewhere"
+    skill = work / ".agents" / "skills" / "scout-skill" / "SKILL.md"
+    skill.parent.mkdir(parents=True)
+    skill.write_text("---\nname: scout-skill\ndescription: Scouts the elsewhere folder\n---\n")
+    tasks_file = tmp_path / "tasks.yaml"
+    tasks_file.write_text("tasks:\n  - id: scout\n    skill: scout-skill\n    description: Old words\n")
+    task = task_config.TaskConfig(id="scout", skill="scout-skill", dir=str(work), custom_description="Old words")
+    runner = make_runner(tmp_path, [task], lambda _task: None)
+    runner._states[task.id] = runner._load_state(task)  # hired after start: not in runner._tasks
+    runner._triggers[task.id] = asyncio.Event()
+
+    state = asyncio.run(runner.set_settings("scout", {"description": ""}))
+
+    assert state["description"] == "Scouts the elsewhere folder"
+    assert "description" not in tasks_file.read_text()
 
 
 def test_settings_toggle_writer(tmp_path, monkeypatch):
@@ -929,7 +947,7 @@ def test_settings_toggle_writer(tmp_path, monkeypatch):
     runner._triggers[task.id] = asyncio.Event()
     assert runner.get_state("local")["writer"] is True
 
-    state = runner.set_settings("local", {"writer": False})
+    state = asyncio.run(runner.set_settings("local", {"writer": False}))
 
     assert state["writer"] is False
     assert tasks_file.read_text() == "tasks:\n  - id: local\n    skill: skill\n"
@@ -1000,7 +1018,7 @@ def test_settings_reject_bad_input(tmp_path):
         {"writer": "true"},
     ):
         with pytest.raises(ValueError):
-            runner.set_settings("local", body)
+            asyncio.run(runner.set_settings("local", body))
     assert tasks_file.read_text() == "tasks:\n  - id: local\n    skill: skill\n"
 
 
