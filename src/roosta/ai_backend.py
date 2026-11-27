@@ -541,8 +541,10 @@ async def stream(run: ConnectionRun, prompt: str, *, idle: float = 300, maximum:
                              "Endpoint security can kill a process over a word in the message, so try "
                              "rephrasing or removing a link.")
         if proc.returncode or failure:
-            diagnostic = run.redact(failure or b"".join(errors).decode(errors="replace") or stdout)
-            raise ValueError(repair_message(diagnostic))
+            stderr = run.redact(b"".join(errors).decode(errors="replace"))
+            if is_offline_failure(stderr):
+                raise ValueError(OFFLINE_MESSAGE)
+            raise ValueError(repair_message(run.redact(failure or stderr or stdout)))
     finally:
         async def cleanup():
             if run.probe and proc is not None:

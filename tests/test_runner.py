@@ -467,14 +467,15 @@ def test_teams_blocked_manual_trigger_clears_instead_of_spinning(tmp_path):
         raise outcome["error"]
 
 
-def test_unchanged_precheck_skips_agent_and_preserves_board_items(tmp_path):
+def test_unchanged_precheck_after_offline_retry_resumes_interval_and_preserves_items(tmp_path):
     async def scenario():
         cache_dir = tmp_path / "cache"
         cache_dir.mkdir()
         item = {"id": "self-chat-existing", "title": "Existing command"}
         (cache_dir / "self-chat-commands.json").write_text(json.dumps({
-            "status": "success",
-            "last_run": "2020-01-01T00:00:00+00:00",
+            "status": "error",
+            "last_run": datetime.now(timezone.utc).isoformat(),
+            "retry_at": (datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat(),
             "last_duration": 50.0,
             "last_output": {
                 "summary": "Processed 0 new self-chat messages",
@@ -508,7 +509,10 @@ def test_unchanged_precheck_skips_agent_and_preserves_board_items(tmp_path):
             await wait_until(
                 lambda: runner.get_state("self-chat-commands")["run_count"] == 11
             )
+            await asyncio.sleep(3 * runner._poll_interval)
             state = runner.get_state("self-chat-commands")
+            assert state["run_count"] == 11
+            assert state["retry_at"] == ""
             assert state["status"] == "success"
             assert state["last_output"]["summary"] == "Nothing new since the last run"
             assert state["last_output"]["details"]["items"] == [item]
@@ -1048,9 +1052,10 @@ def test_run_task_runs_the_connection_and_parses_task_output(tmp_path, monkeypat
 
 def test_run_task_without_an_ai_connection_says_how_to_add_one(tmp_path, monkeypatch):
     monkeypatch.setattr(scheduler.ai_connections, "load", lambda: {"default": "", "connections": []})
-    status, _, error, _ = asyncio.run(scheduler.run_task(
-        task_config.TaskConfig(id="x", skill="skill", dir=str(tmp_path)), idle_timeout=1))
+    status, _, error, session = asyncio.run(scheduler.run_task(
+        task_config.TaskConfig(id="x", skill="skill", dir=str(tmp_path)), session_id="original", idle_timeout=1))
     assert status == "error" and error == "Choose an AI connection in Settings"
+    assert session == "original"
 
 
 @pytest.mark.parametrize("text", ["I am still checking the workspace.", "<task-output>not json</task-output>"])

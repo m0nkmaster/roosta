@@ -6,6 +6,7 @@ Record each release newest first. Bump minor for features and visible behaviour,
 
 - Worker runs on your own Claude Code sign-in show their transcript again when you open them in AI Activity, and Cursor worker runs in another folder find theirs.
 - Workers that fail because the network dropped or the computer slept retry in 15 minutes again, as the Skill runner's "offline · retrying" label promises. Workers and chats that lose the network now say the AI provider couldn't be reached.
+- An offline retry that finds nothing new returns the worker to its normal schedule. Failed Cursor worker runs keep their session ID for AI Activity.
 
 ## 0.23.0 - 2026-11-27
 

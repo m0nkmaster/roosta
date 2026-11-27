@@ -167,25 +167,23 @@ async def run_task(
     """
     idle = task_idle_timeout(task, idle_timeout)
     maxt = max_timeout if max_timeout is not None else (task.max_timeout or TASK_MAX_TIMEOUT)
-    chat_id = session_id or ""
+    run = None
     prompt = task_prompt(task)
     try:
-        run = ai_backend.prepare(task.connection, task.dir, session_id=chat_id,
+        run = ai_backend.prepare(task.connection, task.dir, session_id=session_id or "",
             model=connection_task_model(task, ai_connections.get(task.connection)),
             profile="unrestricted" if task.unrestricted else "safe", subject="task")
-        chat_id = run.session_id
         if run.backend == ai_backend.CLAUDE:  # let long foreground scripts run, leaving time for the report
             run.env["BASH_MAX_TIMEOUT_MS"] = str(int(max(600, maxt - 120) * 1000))
         stdout = "".join([line async for line in ai_backend.stream(run, prompt, idle=idle, maximum=maxt)])
-        chat_id = run.session_id  # Cursor names its chat only once the turn starts
     except (ValueError, OSError) as exc:
-        return "error", {}, str(exc), chat_id
+        return "error", {}, str(exc), run.session_id if run is not None else (session_id or "")
     text = run.text(stdout)
     output = parse_task_output(text)
     status = TASK_STATUS_ALIASES.get(str(output.get("status", "")).strip().lower(), output.get("status"))
     if "<task-output>" not in text or status not in ("success", "error"):
-        return "error", output, "Harness did not return a valid <task-output> result", chat_id
-    return status, output, "" if status == "success" else str(output.get("summary", ""))[:500], chat_id
+        return "error", output, "Harness did not return a valid <task-output> result", run.session_id
+    return status, output, "" if status == "success" else str(output.get("summary", ""))[:500], run.session_id
 
 
 OFFLINE_RETRY_SECONDS = 900.0
@@ -649,6 +647,7 @@ class TaskRunner:
                     state.last_output = output
                     state.run_count += 1
                     state.last_error = ""
+                    state.retry_at = ""
                     self._save_state(state)
                     log.info("Task %s: pre-check unchanged, skipped agent run", task_id)
                     await self._wait_or_trigger(task_id, self._poll_interval)
