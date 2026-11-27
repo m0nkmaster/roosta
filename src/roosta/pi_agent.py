@@ -16,8 +16,9 @@ def pi_args(binary: str, connection: dict, model: str, directory: Path, session_
             "--no-prompt-templates", "--no-themes", "--no-skills",
             "--tools", "read,bash,edit,write,tool_search,mcp__*",
             "--offline"]
-    # Roosta supplies core and fork paths in the prompt. Native discovery adds custom skills only.
-    seen = set(skills.names(paths.CORE_SKILLS_DIR)) | set(skills.names(skills.local(paths.WORKSPACE, skills.FORKS)))
+    # Roosta supplies core and fork paths in the prompt, which also reports any fork problems.
+    # Native discovery adds custom skills only.
+    seen = set(skills.routed(paths.WORKSPACE, []))
     for root in (Path(workspace) / ".agents/skills", paths.WORKSPACE / ".agents/skills", Path.home() / ".agents/skills"):
         for name in skills.names(root):
             if name not in seen:

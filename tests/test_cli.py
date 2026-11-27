@@ -144,6 +144,39 @@ def test_core_upgrades_and_extensions_follow_installed_files(tmp_path, monkeypat
     assert extension.read_text() == "Use our team’s terms"
 
 
+@pytest.mark.parametrize("linked_forks", [False, True])
+def test_pi_discovers_only_skills_the_prompt_does_not_route(tmp_path, monkeypatch, linked_forks):
+    from roosta import pi_agent
+
+    core = make_core(tmp_path)
+    ws = tmp_path / "ws"
+    monkeypatch.setattr(paths, "CORE_SKILLS_DIR", core)
+    monkeypatch.setattr(paths, "WORKSPACE", ws)
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    forks = tmp_path / "elsewhere" if linked_forks else ws / skills.FORKS
+    (forks / "pinned").mkdir(parents=True)
+    (forks / "pinned/SKILL.md").write_text("fork")
+    (forks / "broken").mkdir()  # incomplete fork: routed as unavailable, never replaced by a copy
+    if linked_forks:
+        (ws / ".roosta").mkdir(parents=True)
+        (ws / skills.FORKS).symlink_to(forks)
+    for name in ("actor", "pinned", "broken", "custom"):
+        (ws / ".agents/skills" / name).mkdir(parents=True)
+        (ws / ".agents/skills" / name / "SKILL.md").write_text("workspace copy")
+
+    problems = []
+    routed = skills.routed(ws, problems)
+    prompt = skills.instructions("actor", ws, ws)
+    args = pi_agent.pi_args("pi", {"provider": "openai"}, "m", tmp_path / "pi", "sid", str(ws))
+    offered = [args[i + 1] for i, arg in enumerate(args) if arg == "--skill"]
+
+    assert routed == (["actor"] if linked_forks else ["actor", "broken", "pinned"])
+    assert bool(problems) is linked_forks and (f"Review {skills.FORKS}:" in prompt) is linked_forks
+    assert all(f"{name}: " in prompt for name in routed)
+    expected = {"custom"} | ({"pinned", "broken"} if linked_forks else set())
+    assert offered == [str(ws / ".agents/skills" / name / "SKILL.md") for name in sorted(expected)]
+
+
 @pytest.mark.parametrize("lock", [None, "[]", "{broken", '{"skills":{"actor":"invalid"}}'])
 def test_unverifiable_legacy_trees_survive_including_claude(tmp_path, lock):
     core = make_core(tmp_path)

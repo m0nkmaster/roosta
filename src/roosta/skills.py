@@ -399,15 +399,27 @@ def extension_file(name: str, workspace: Path, core: Path) -> Path | None:
     return extension if extension.is_file() else None
 
 
+def routed(workspace: Path, problems: list[str]) -> list[str]:
+    """Installed and forked skill names whose exact files Roosta puts in every prompt.
+
+    Harnesses must not discover other copies of these. Incomplete forks stay routed so prompts
+    report them; an unreadable forks folder is appended to `problems` instead of failing a run.
+    """
+    from roosta import paths
+
+    found = set(names(paths.CORE_SKILLS_DIR))
+    found.update(p.name for p in owned_entries(workspace, FORKS, problems) if valid_name(p.name))
+    return sorted(found)
+
+
 def instructions(skill: str, working_dir: str | Path, workspace: Path) -> str:
     """Give each harness identical routing, including secondary skills used during a chat."""
     from roosta import paths
 
     core = paths.CORE_SKILLS_DIR
     routes = []
-    catalog = set(names(core))
-    catalog.update(p.name for p in owned_entries(workspace, FORKS, routes) if valid_name(p.name))
-    for name in sorted(catalog):
+    catalog = routed(workspace, routes)
+    for name in catalog:
         try:
             entry = find_skill_files(name, working_dir, workspace, core)[0]
             extension = extension_file(name, workspace, core)
