@@ -174,27 +174,6 @@ def test_chats_pin_account_across_default_change_and_restart(accounts, tmp_path)
     assert restored.get('chat:111111111111') is None
 
 
-def test_default_change_does_not_adopt_legacy_chats(accounts, tmp_path, monkeypatch):
-    create, _ = accounts
-    old, new = create(), create()
-    connections.set_default(old['id'])
-    path = tmp_path / 'sessions.json'
-    sid = '11111111-1111-4111-8111-111111111111'
-    path.write_text(json.dumps({'bare': sid, 'cursor': {'session_id': sid, 'connection': 'legacy:cursor'},
-                                'named': {'session_id': sid, 'connection': old['id']}}))
-    sessions = chat.SessionMap(path)
-    monkeypatch.setattr(app, 'chat_router', chat.ChatRouter(sessions, str(tmp_path)))
-    original = path.read_bytes()
-    assert sessions.selected('cursor') == 'legacy:cursor'
-    assert asyncio.run(app.api_ai_default({'connection': new['id']})).status_code == 200
-    assert path.read_bytes() == original
-    restored = chat.SessionMap(path)
-    assert restored.legacy_items() == ['bare', 'cursor']
-    assert restored.get('bare') == restored.get('cursor') == sid
-    assert restored.connection('named') == old['id']
-    assert restored.connection('new') == new['id']
-
-
 def test_invalid_metadata_and_symlink_fail_closed(accounts, tmp_path):
     create, _ = accounts
     c = create()
@@ -1445,7 +1424,7 @@ def test_first_run_requires_default_before_workspace_setup(accounts, tmp_path, m
 def test_claude_detection_runs_before_the_board_and_starts_no_model(accounts, monkeypatch):
     events = []
     monkeypatch.setattr(app.activity, 'compact', lambda *a: None)
-    monkeypatch.setattr(app, 'prune_cursor_session_stores', lambda: None)
+    monkeypatch.setattr(app, 'prune_cursor_session_stores', lambda **_: None)
     async def detect(): events.append('detect')
     monkeypatch.setattr(connections, 'offer_system', detect)
     monkeypatch.setattr(app.runner, 'start', lambda: events.append('runner'))
@@ -1618,7 +1597,7 @@ def test_only_tests_can_be_cancelled(setup_jobs, operation):
     assert response.status_code == 409 and ai_settings.jobs['other']['status'] == 'running'
 
 
-def test_account_choice_without_catalogue_and_chat_binding(accounts, tmp_path, monkeypatch):
+def test_account_choice_without_catalogue(accounts, tmp_path, monkeypatch):
     key = accounts[0]('anthropic', auth='system', tested=False)['id']
     sessions = chat.SessionMap(tmp_path / 'sessions.json')
     router = chat.ChatRouter(sessions, str(tmp_path))
@@ -1629,11 +1608,8 @@ def test_account_choice_without_catalogue_and_chat_binding(accounts, tmp_path, m
     monkeypatch.setattr(connections, 'default_model', unavailable)
     monkeypatch.setattr(ai_backend, 'test_connection', unavailable)
     assert asyncio.run(app.api_ai_default({'connection': key})).status_code == 200
-    body = {'connection': key, 'item_id':'test-chat'}
-    assert asyncio.run(app.api_ai_chat_connection(body)).status_code == 200
     assert sessions.connection('test-chat') == key
     connections.update(key, connected=False)
-    assert asyncio.run(app.api_ai_chat_connection(body)).status_code == 400
     assert asyncio.run(app.api_ai_default({'connection': key})).status_code == 400
 
 def test_detecting_claude_during_explicit_default_choice(accounts, monkeypatch):

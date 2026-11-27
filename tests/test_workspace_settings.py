@@ -79,7 +79,6 @@ def test_settings_identifies_forks_separately_from_installed_core(env, client):
 def test_settings_endpoints_are_local_only(env):
     with TestClient(app.app, base_url='http://localhost', client=('192.0.2.10', 1234)) as remote:
         assert remote.get('/api/settings/workspace').status_code == 403
-        assert remote.post('/api/settings/skills-sync', json={}).status_code == 403
     with TestClient(app.app, base_url='http://localhost', client=('127.0.0.1', 1234)) as local:
         assert local.post('/api/settings/address', json={}, headers={'Origin': 'https://attacker.invalid'}).status_code == 403
 
@@ -227,15 +226,6 @@ def test_service_refused_for_desktop_and_unsupported_platforms(env, client, monk
     assert not (env.home / 'Library').exists() and env.calls == []
 
 
-def test_running_workspace_never_moves_a_live_skill_tree(env, client):
-    folder = env.workspace / ".agents/skills/setup"
-    folder.mkdir(parents=True)
-    (folder / "SKILL.md").write_text("custom")
-    result = client.post('/api/settings/skills-sync', json={})
-    assert result.status_code == 409 and "restart" in result.json()["error"]
-    assert folder.is_dir()
-
-
 def test_settings_page_has_the_workspace_card_and_escapes_server_text():
     page = (STATIC / 'settings.html').read_text()
     assert 'aria-labelledby="workspace-title"' in page and 'Workspace and runner' in page
@@ -380,3 +370,28 @@ def test_settings_page_has_the_notifications_switch_and_manual_macos_guidance():
     assert "fetch('/api/settings/notifications'" in page
     assert 'Apple menu → System Settings → Notifications → Roosta' in page
     assert 'Allow notifications' in page and 'Send Test Notification' in page
+
+
+def test_foreign_host_is_refused_everywhere(monkeypatch):
+    """DNS rebinding names the attacker's domain in Host; only IPs, localhost and the saved host pass."""
+    monkeypatch.delenv('ROOSTA_HOST', raising=False)
+    client = TestClient(app.app, base_url='http://localhost', client=('127.0.0.1', 1234))
+    assert client.get('/api/profile', headers={'Host': 'attacker.example:7667'}).status_code == 403
+    assert client.post('/api/board/chat', json={'item_id': 'chat:0123456789ab'},
+                       headers={'Host': 'attacker.example'}).status_code == 403
+    for host in ('localhost:7667', '127.0.0.1:7667', '[::1]:7667', '192.168.1.20:7667'):
+        assert client.get('/api/profile', headers={'Host': host}).status_code == 200, host
+    monkeypatch.setenv('ROOSTA_HOST', 'studio.local')
+    assert client.get('/api/profile', headers={'Host': 'studio.local:7667'}).status_code == 200
+
+
+def test_chat_model_change_without_chats_says_how_to_fix(monkeypatch):
+    async def unavailable():
+        return None
+
+    monkeypatch.setattr(app, 'chat_router', None)
+    monkeypatch.setattr(app, '_start_chat_router', unavailable)
+    client = TestClient(app.app, base_url='http://localhost', client=('127.0.0.1', 1234))
+    response = client.post('/api/ai/chat-model', json={'item_id': 'chat:0123456789ab', 'model': 'x'})
+    assert response.status_code == 503
+    assert 'Settings' in response.json()['error']

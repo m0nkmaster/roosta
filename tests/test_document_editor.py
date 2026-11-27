@@ -76,7 +76,7 @@ def test_local_request_and_input_bounds(doc, client):
     rev = client.get(API, params=params).json()['revision']
     assert put(client, doc.name, rev, Origin='https://other.example').status_code == 403
     assert put(client, doc.name, rev, **{'Sec-Fetch-Site': 'cross-site'}).status_code == 403
-    assert put(TestClient(app.app), doc.name, rev).status_code == 403
+    assert put(TestClient(app.app, base_url='http://localhost'), doc.name, rev).status_code == 403
     for invalid in ('', 'x'*65, rev.upper(), '*'):
         assert put(client, doc.name, invalid).status_code == 400
     assert put(client, doc.name, rev, **{'Content-Type': 'application/json'}).status_code == 415

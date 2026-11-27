@@ -253,13 +253,6 @@ def mcp_config(workspace: str) -> dict:
     return {"mcpServers": servers}
 
 
-def _private_json(path: Path, value: dict) -> None:
-    temporary = path.with_suffix(f".{uuid.uuid4().hex}.tmp")
-    with open(temporary, "x", opener=lambda p, flags: os.open(p, flags, 0o600)) as output:
-        json.dump(value, output)
-    temporary.replace(path)
-
-
 def prepare(connection_id: str, workspace: str, *, model: str = "", session_id: str = "", profile: str = "safe", probe: bool = False, subject: str = "chat") -> ConnectionRun:
     connection = connections.get(connection_id)
     model = model or connections.default_model(connection["provider"])
@@ -296,7 +289,7 @@ def prepare(connection_id: str, workspace: str, *, model: str = "", session_id: 
     cursor_config = None
     if backend == CLAUDE:
         mcp_path = directory / f"mcp-{workspace_key}.json"
-        _private_json(mcp_path, mcp)
+        paths.write_json(mcp_path, mcp)
         projects = (Path.home() / ".claude" / "projects" if connection["auth"] == "system"
                     else directory / "claude" / "projects")
         args = claude_code.claude_args(binary=binary, model=model or None, profile=profile,
@@ -311,7 +304,7 @@ def prepare(connection_id: str, workspace: str, *, model: str = "", session_id: 
             for tool in ("Edit", "Write"):
                 permissions["deny"].append(f"{tool}(/{package}/**)")
         settings_path = directory / f"permissions-{profile}-{workspace_key}.json"
-        _private_json(settings_path, settings)
+        paths.write_json(settings_path, settings)
         args[settings_index] = str(settings_path)
         args.extend(["--setting-sources", "", "--strict-mcp-config", "--mcp-config", str(mcp_path)])
         if probe:
@@ -341,10 +334,10 @@ def prepare(connection_id: str, workspace: str, *, model: str = "", session_id: 
             else:
                 auth.symlink_to(shared_auth)
         env["PI_CODING_AGENT_DIR"] = str(pi_dir)
-        _private_json(pi_dir / "mcp.json", mcp)
-        _private_json(pi_dir / "settings.json", {"retry": {"enabled": False}})
+        paths.write_json(pi_dir / "mcp.json", mcp)
+        paths.write_json(pi_dir / "settings.json", {"retry": {"enabled": False}})
         if connection["provider"] == "ollama":
-            _private_json(pi_dir / "models.json", {"providers": {"ollama": {
+            paths.write_json(pi_dir / "models.json", {"providers": {"ollama": {
                 "baseUrl": "http://127.0.0.1:11434/v1", "api": "openai-completions", "apiKey": "ollama",
                 "models": [{"id": model, "name": model, "reasoning": False,
                             "input": ["text"], "contextWindow": 32768, "maxTokens": 8192,

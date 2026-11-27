@@ -11,7 +11,7 @@ from pathlib import Path
 from threading import Lock
 
 from roosta.task_config import workspace_skills
-from roosta.workspace import (catalogue_files, index_links, index_members, markdown_title, metadata,
+from roosta.workspace import (catalogue_files, index_links, index_members, metadata,
                               read_document, selected_collections)
 
 STALE_AFTER_DAYS = 30

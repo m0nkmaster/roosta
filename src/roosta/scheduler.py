@@ -11,7 +11,7 @@ import shutil
 import time
 from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager, nullcontext
-from dataclasses import asdict, replace
+from dataclasses import asdict, fields, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -143,8 +143,8 @@ def task_idle_timeout(task: TaskConfig, override: float | None = None) -> float:
     return task.idle_timeout or TASK_IDLE_TIMEOUT
 
 
-def task_prompt(task: TaskConfig, *, run_source: str = "scheduled") -> str:
-    """Build the harness prompt, distinguishing manual Run now from the timer."""
+def task_prompt(task: TaskConfig) -> str:
+    """Build the harness prompt from the worker's template and its resolved skill."""
     template = UNRESTRICTED_PROMPT_TEMPLATE if task.unrestricted else PROMPT_TEMPLATE
     return (template.format(skill=task.skill, user=profile.load().user) + "\n"
             + skills.instructions(task.skill, task.dir, paths.WORKSPACE))
@@ -156,7 +156,6 @@ async def run_task(
     session_id: str | None = None,
     idle_timeout: float | None = None,
     max_timeout: float | None = None,
-    run_source: str = "scheduled",
 ) -> tuple[str, dict, str, str]:
     """Run the selected harness. Returns (status, output, error, session_id).
 
@@ -169,7 +168,7 @@ async def run_task(
     idle = task_idle_timeout(task, idle_timeout)
     maxt = max_timeout if max_timeout is not None else (task.max_timeout or TASK_MAX_TIMEOUT)
     chat_id = session_id or ""
-    prompt = task_prompt(task, run_source=run_source)
+    prompt = task_prompt(task)
     try:
         run = ai_backend.prepare(task.connection, task.dir, session_id=chat_id,
             model=connection_task_model(task, ai_connections.get(task.connection)),
@@ -212,6 +211,18 @@ TASK_STATUS_ALIASES = {
 
 
 # --- Runner loop ---
+
+
+# Settings a task's state mirrors from tasks.yaml, and what a run records in its cache file.
+CONFIG_FIELDS = tuple(f.name for f in fields(TaskState) if f.name in {c.name for c in fields(TaskConfig)})
+RUN_FIELDS = ("status", "last_run", "last_duration", "last_output", "run_count", "last_error", "retry_at")
+
+
+def apply_config(state: TaskState, task: TaskConfig) -> None:
+    """Copy every mirrored setting, so an edit to tasks.yaml shows on the next cycle."""
+    for name in CONFIG_FIELDS:
+        value = getattr(task, name)
+        setattr(state, name, list(value) if isinstance(value, list) else value)
 
 
 async def precheck_unchanged(task: TaskConfig) -> bool:
@@ -309,11 +320,9 @@ class TaskRunner:
         checker = self._auth_checker or check_task_runtime
         return await checker(task)
 
-    async def _run_task(
-        self, task: TaskConfig, *, run_source: str = "scheduled",
-    ) -> tuple[str, dict, str, str]:
+    async def _run_task(self, task: TaskConfig) -> tuple[str, dict, str, str]:
         executor = self._task_executor or run_task
-        return await executor(task, run_source=run_source)
+        return await executor(task)
 
     def _activity(self):
         return self._activity_log
@@ -532,64 +541,21 @@ class TaskRunner:
             self._writer_waiting.discard(task_id)
 
     def _load_state(self, task: TaskConfig) -> TaskState:
-        cache_file = self._cache_dir / f"{task.id}.json"
-        if cache_file.is_file():
-            try:
-                data = json.loads(cache_file.read_text())
-                state = TaskState(
-                    id=task.id,
-                    skill=task.skill,
-                    interval=task.interval,
-                    description=task.description,
-                    name=task.name,
-                    nickname=task.nickname,
-                    custom_description=task.custom_description,
-                    connection=task.connection,
-                    model=task.model,
-                    run_at=task.run_at,
-                    weekdays_only=task.weekdays_only,
-                    days_of_week=task.days_of_week,
-                    writer=task.writer,
-                    unrestricted=task.unrestricted,
-                    sensor=task.sensor,
-                    requires=list(task.requires),
-                    status=data.get("status", "idle"),
-                    last_run=data.get("last_run", ""),
-                    last_duration=data.get("last_duration", 0.0),
-                    last_output=data.get("last_output", {}),
-                    run_count=data.get("run_count", 0),
-                    last_error=data.get("last_error", ""),
-                    retry_at=data.get("retry_at", ""),
-                )
-                # Don't restore "running" status
-                if state.status == "running":
-                    state.status = "idle"
-                return state
-            except Exception:
-                pass
-        return TaskState(
-            id=task.id,
-            skill=task.skill,
-            interval=task.interval,
-            description=task.description,
-            name=task.name,
-            nickname=task.nickname,
-            custom_description=task.custom_description,
-            connection=task.connection,
-            model=task.model,
-            run_at=task.run_at,
-            weekdays_only=task.weekdays_only,
-            days_of_week=task.days_of_week,
-            writer=task.writer,
-            unrestricted=task.unrestricted,
-            sensor=task.sensor,
-            requires=list(task.requires),
-        )
+        state = TaskState(id=task.id, skill=task.skill, interval=task.interval)
+        apply_config(state, task)
+        try:
+            data = json.loads((self._cache_dir / f"{task.id}.json").read_text())
+        except (OSError, ValueError):
+            data = {}
+        for key in RUN_FIELDS if isinstance(data, dict) else ():
+            if key in data:
+                setattr(state, key, data[key])
+        if state.status == "running":  # a restart ended that run
+            state.status = "idle"
+        return state
 
     def _save_state(self, state: TaskState) -> None:
-        self._cache_dir.mkdir(parents=True, exist_ok=True)
-        cache_file = self._cache_dir / f"{state.id}.json"
-        cache_file.write_text(json.dumps(asdict(state), indent=2))
+        paths.write_json(self._cache_dir / f"{state.id}.json", asdict(state))
 
     async def _poll_loop(self, task_id: str) -> None:
         # Stagger start by a few seconds per task
@@ -603,21 +569,7 @@ class TaskRunner:
                 self._states.pop(task_id, None)
                 return
             state = self._states[task_id]
-            state.interval = task.interval
-            state.connection = task.connection
-            state.model = task.model
-            state.run_at = task.run_at
-            state.weekdays_only = task.weekdays_only
-            state.days_of_week = task.days_of_week
-            state.unrestricted = task.unrestricted
-            state.writer = task.writer
-            state.sensor = task.sensor
-            state.requires = list(task.requires)
-            state.skill = task.skill
-            state.description = task.description
-            state.name = task.name
-            state.nickname = task.nickname
-            state.custom_description = task.custom_description
+            apply_config(state, task)
 
             triggered = self._triggers[task_id].is_set()
 
@@ -752,9 +704,7 @@ class TaskRunner:
                     )
 
                     start = time.monotonic()
-                    status, output, error, session_id = await self._run_task(
-                        task, run_source=source,
-                    )
+                    status, output, error, session_id = await self._run_task(task)
                     duration = time.monotonic() - start
                     if session_id:
                         self._activity().set_session(act_id, session_id)

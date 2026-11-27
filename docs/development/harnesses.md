@@ -115,7 +115,8 @@ These shell reads accept literal arguments only. Redirection and chained command
 A product engineering worker can use the ordinary profile with a separate Git worktree
 and launch from the workspace to discover its custom skill. Ordinary Claude runs use `dontAsk`.
 
-`SessionMap` reads old string values and writes `{session_id, connection}` records. New chats bind the connected default once.
+`SessionMap` stores `{session_id, connection, model?}` records and drops any record without an account id
+(such as a bare session id) on load, so that chat starts over like a new one. New chats bind the connected default once.
 An actor turn holding the item lock also binds that default when the chat has no named account
 or its account was deleted. It discards the old provider session and unverified model pick, keeps
 the visible transcript, and passes the topic summary into the fresh session. With an incomplete

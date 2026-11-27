@@ -12,7 +12,7 @@ from fastapi.testclient import TestClient
 
 from roosta import scheduler
 from roosta import ai_settings
-from roosta import task_config
+from roosta import cursor_sessions, task_config
 from roosta import app as appmod
 from roosta.activity_log import ActivityLog
 
@@ -639,7 +639,7 @@ def test_http_manual_run_endpoint_starts_task(tmp_path, monkeypatch):
         runner.start()
         try:
             transport = ASGITransport(app=appmod.app)
-            async with AsyncClient(transport=transport, base_url="http://test") as client:
+            async with AsyncClient(transport=transport, base_url="http://localhost") as client:
                 response = await client.post("/api/tasks/manual/run")
                 assert response.status_code == 200
                 assert response.json() == {"triggered": True}
@@ -662,8 +662,7 @@ def test_load_tasks_reads_model_and_ignores_retired_fields(tmp_path, monkeypatch
         "    skill: first\n"
         "  - id: old\n"
         "    skill: second\n"
-        "    harness: claude\n"
-        "    claude_model: sonnet\n"
+        "    model: sonnet\n"
         "    allow_git_push: true\n"
         "    requires: [jira]\n"
         "    precheck: check-inbox --quiet\n"
@@ -673,124 +672,6 @@ def test_load_tasks_reads_model_and_ignores_retired_fields(tmp_path, monkeypatch
     assert (plain.model, old.model) == ("", "sonnet")
     assert not old.unrestricted  # a retired privilege flag never grants anything
     assert old.requires == ["jira"] and old.precheck == "check-inbox --quiet"
-
-
-def test_startup_strips_retired_runtime_fields_and_keeps_comments(tmp_path, monkeypatch):
-    monkeypatch.setenv("AI_BACKEND", "cursor")
-    tasks_file = tmp_path / "tasks.yaml"
-    tasks_file.write_text(
-        "# my workers\n"
-        "tasks:\n"
-        "  - id: a\n"
-        "    skill: a\n"
-        "    harness: claude\n"
-        "    claude_model: sonnet  # light pass\n"
-        "    interval: 900  # 15 minutes\n"
-        "  - id: b\n"
-        "    skill: b\n"
-        "    model: gpt-6\n"
-        "    claude_model: opus\n"
-        "  - id: c\n"
-        "    skill: c\n"
-    )
-    original = tasks_file.read_bytes()
-    assert task_config.strip_obsolete_runtime_fields(tasks_file) == ["a", "b"]
-    assert tasks_file.with_suffix(".yaml.pre-0.21.0").read_bytes() == original
-    assert tasks_file.read_text() == (
-        "# my workers\n"
-        "tasks:\n"
-        "  - id: a\n"
-        "    skill: a\n"
-        "    model: sonnet  # light pass\n"
-        "    interval: 900  # 15 minutes\n"
-        "  - id: b\n"
-        "    skill: b\n"
-        "    model: gpt-6\n"
-        "  - id: c\n"
-        "    skill: c\n"
-    )
-    assert task_config.strip_obsolete_runtime_fields(tasks_file) == []
-
-
-@pytest.mark.parametrize(("default", "pin", "harness", "expected"), [
-    ("anthropic", "", "cursor", "opus"),
-    ("openai", "default", "claude", "sonnet"),
-    ("openai", "anthropic", "cursor", "opus"),
-    ("anthropic", "openai", "claude", "sonnet"),
-    ("", "", "claude", "opus"),
-    ("", "", "cursor", "sonnet"),
-    ("", "", "", "sonnet"),  # no pin, default or harness: saved CLI picker
-])
-def test_legacy_model_matches_dispatch_before_and_after_upgrade(
-        tmp_path, monkeypatch, default, pin, harness, expected):
-    accounts = task_config.ai_connections
-    ids = {"anthropic": "a" * 32, "openai": "b" * 32}
-    store = tmp_path / "accounts.json"
-    store.write_text(json.dumps({"default": ids.get(default, ""), "connections": [
-        {"id": key, "provider": provider} for provider, key in ids.items()]}))
-    account_bytes = store.read_bytes()
-    monkeypatch.setattr(accounts, "CONNECTIONS_FILE", store)
-    monkeypatch.setattr(task_config.paths, "CACHE_DIR", tmp_path)
-    (tmp_path / "ai-backend.json").write_text('{"backend":"cursor"}')
-    path = tmp_path / "tasks.yaml"
-    monkeypatch.setattr(task_config.paths, "TASKS_FILE", path)
-    connection = ids.get(pin, pin)
-    source = (f"tasks:\n  - id: worker\n    skill: actor\n    connection: '{connection}'\n"
-              f"    harness: '{harness}'\n    claude_model: opus\n    model: sonnet\n    allow_git_push: true\n")
-    path.write_bytes(source.replace("\n", "\r\n").encode())
-    original = path.read_bytes()
-    for changed in (["worker"], []):
-        worker, = task_config.load_tasks()
-        assert worker.model == expected and not worker.unrestricted
-        assert worker.connection == (connection if pin != "default" else "")
-        assert task_config.strip_obsolete_runtime_fields(path) == changed
-    assert path.with_suffix(".yaml.pre-0.21.0").read_bytes() == original
-    assert store.read_bytes() == account_bytes
-    assert b"\r\n" in path.read_bytes()
-
-
-@pytest.mark.parametrize("source", [
-    "tasks: [{id: worker, skill: actor, harness: claude, claude_model: opus}]\n",
-    "tasks:\n  - skill: actor\n    id: worker\n    harness: claude\n    claude_model: opus\n    model: sonnet\n",
-])
-def test_custom_yaml_survives_repeated_startup(tmp_path, monkeypatch, caplog, source):
-    path = tmp_path / "tasks.yaml"
-    path.write_text(source)
-    monkeypatch.setattr(task_config.paths, "TASKS_FILE", path)
-    for _ in range(2):
-        assert task_config.strip_obsolete_runtime_fields(path) == []
-        worker, = task_config.load_tasks()
-        assert worker.model == "opus"
-        assert path.read_bytes() == source.encode()
-    assert "Skipped legacy task migration" in caplog.text
-
-
-@pytest.mark.parametrize("tail", ["  - broken: [", "  - broken", "  - id: a\n    skill: b\n",
-                                  "  - id: b\n    skill: b\n    model: []\n    harness: claude\n"])
-def test_malformed_task_file_has_no_partial_migration(tmp_path, caplog, tail):
-    path = tmp_path / "tasks.yaml"
-    source = "tasks:\n  - id: a\n    skill: actor\n    harness: claude\n    claude_model: opus\n" + tail
-    path.write_text(source)
-    assert task_config.strip_obsolete_runtime_fields(path) == []
-    assert path.read_bytes() == source.encode()
-    assert "Skipped legacy task migration" in caplog.text
-
-
-def test_migration_keeps_existing_backup_and_unresolved_pin(tmp_path, monkeypatch):
-    path = tmp_path / "tasks.yaml"
-    source = ("tasks:\n  - id: worker\n    skill: actor\n    harness: claude\n"
-              "    claude_model: opus\n    connection: missing\n")
-    path.write_text(source)
-    monkeypatch.setattr(task_config.ai_connections, "CONNECTIONS_FILE", tmp_path / "absent")
-    assert task_config.strip_obsolete_runtime_fields(path) == []
-    assert path.read_text() == source
-    backup = path.with_suffix(".yaml.pre-0.21.0")
-    assert not backup.exists()
-    backup.write_text("earlier original")
-    source = source.replace("    connection: missing\n", "")
-    path.write_text(source)
-    assert task_config.strip_obsolete_runtime_fields(path) == []
-    assert path.read_text() == source and backup.read_text() == "earlier original"
 
 
 def test_runner_starts_with_invalid_yaml_then_loads_repaired_tasks(tmp_path, monkeypatch):
@@ -1317,7 +1198,7 @@ def test_http_cancel_endpoint_drops_queued_run(tmp_path, monkeypatch):
             assert runner.trigger("writer-a") is True
             await wait_until(first_started.is_set)
             transport = ASGITransport(app=appmod.app)
-            async with AsyncClient(transport=transport, base_url="http://test") as client:
+            async with AsyncClient(transport=transport, base_url="http://localhost") as client:
                 assert (await client.post("/api/tasks/manual/run")).json() == {"triggered": True}
                 await wait_until(lambda: runner.get_state("manual")["queued"] is True)
                 response = await client.post("/api/tasks/manual/cancel")
@@ -1475,7 +1356,7 @@ def test_prune_removes_only_old_unreferenced_cursor_session_stores(tmp_path, mon
     referenced = _make_store(safe, "keepme-0000", age_days=90)
     stale_push = _make_store(gitpush, "stale-push0", age_days=90)
 
-    removed = appmod.prune_cursor_session_stores(referenced={"keepme-0000"})
+    removed = cursor_sessions.prune_cursor_session_stores(referenced={"keepme-0000"})
 
     assert removed == 2
     assert not stale.exists()
@@ -1621,3 +1502,21 @@ def test_firing_a_worker_removes_it_and_its_rubbish(tmp_path, monkeypatch):
     assert not (tmp_path / "state" / "local.json").exists()
     assert not (tmp_path / "state" / "local").exists()
     assert runner.remove("local") is False
+
+
+def test_every_task_state_field_is_loaded_from_config_or_cache():
+    """A new TaskState field must come from tasks.yaml or the run cache, or it silently resets."""
+    from dataclasses import fields
+    names = {f.name for f in fields(task_config.TaskState)}
+    assert names == set(scheduler.CONFIG_FIELDS) | set(scheduler.RUN_FIELDS)
+
+
+def test_load_state_restores_run_fields_and_ends_a_running_run(tmp_path):
+    task = task_config.TaskConfig(id="t", skill="s", interval=60, nickname="Tess", days_of_week=["monday"])
+    (tmp_path / "t.json").write_text(json.dumps({"status": "running", "run_count": 4, "last_run": "x",
+                                                 "nickname": "stale"}))
+    state = scheduler.TaskRunner(cache_dir=tmp_path, watch_config=False)._load_state(task)
+    assert (state.status, state.run_count, state.last_run, state.nickname) == ("idle", 4, "x", "Tess")
+    assert state.days_of_week == ["monday"] and state.days_of_week is not task.days_of_week
+    (tmp_path / "t.json").write_text("[1, 2")
+    assert scheduler.TaskRunner(cache_dir=tmp_path, watch_config=False)._load_state(task).run_count == 0

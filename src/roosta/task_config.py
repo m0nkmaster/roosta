@@ -4,9 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import re
-import tempfile
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -18,8 +16,7 @@ from roosta import ai_connections, ai_runtime, paths
 log = logging.getLogger(__name__)
 
 
-# Keys older task files carry. Startup strips the runtime ones; privilege ones are ignored with a warning.
-OBSOLETE_RUNTIME_FIELDS = ("harness", "claude_model")
+# Retired privilege keys: ignored with a warning, so an old file never grants anything.
 OBSOLETE_PRIVILEGE_FIELDS = ("allow_git_push", "push_on_schedule")
 _WARNED: set[tuple] = set()
 
@@ -245,9 +242,7 @@ def remove_task(path: Path, task_id: str) -> None:
     updated = "".join(lines)
     if yaml.safe_load(updated) != expected:
         raise ValueError("updated tasks.yaml did not validate")
-    temporary = destination.with_suffix(f".{os.getpid()}.tmp")
-    temporary.write_text(updated)
-    temporary.replace(destination)
+    paths.write_atomic(destination, updated)
 
 
 def update_task_fields(
@@ -259,7 +254,7 @@ def update_task_fields(
     edited `interval: 3600  # 1 hour` does not keep a now-wrong note.
     """
     remove = set(remove) - set(values)
-    unknown = (set(values) - EDITABLE_TASK_FIELDS) | (remove - EDITABLE_TASK_FIELDS - set(OBSOLETE_RUNTIME_FIELDS))
+    unknown = (set(values) - EDITABLE_TASK_FIELDS) | (remove - EDITABLE_TASK_FIELDS)
     if unknown:
         raise ValueError(f"field not editable: {', '.join(sorted(unknown))}")
     destination = Path(path)
@@ -318,9 +313,7 @@ def update_task_fields(
         or any(key in task for key in remove)
     ):
         raise ValueError("updated tasks.yaml did not validate")
-    temporary = destination.with_suffix(f".{os.getpid()}.tmp")
-    temporary.write_text(updated)
-    temporary.replace(destination)
+    paths.write_atomic(destination, updated)
 
 
 def _one_line(value, limit: int, label: str) -> str:
@@ -408,38 +401,6 @@ def _task_flag(task: dict, key: str) -> bool:
     return False
 
 
-def _legacy_model_field(task: dict) -> str:
-    """Use the same account, then CLI picker precedence as the retired dispatcher."""
-    connection = task.get("connection")
-    if connection in (None, "", "default"):
-        connection = ai_connections.load().get("default")
-    if connection:
-        provider = ai_connections.get(connection, connected=False)["provider"]
-        return "claude_model" if provider == "anthropic" else "model"
-    harness = str(task.get("harness") or "").strip()
-    if not harness:
-        from roosta import cursor_agent
-        picker = paths.CACHE_DIR / "ai-backend.json"
-        saved = json.loads(picker.read_text()).get("backend") if picker.exists() else None
-        if saved not in ("claude", "cursor"):
-            saved = (os.environ.get("AI_BACKEND") or
-                     cursor_agent._dotenv_value(cursor_agent.CURSOR_ENV_FILE, "AI_BACKEND")).strip().lower()
-        harness = "cursor" if saved == "cursor" else "claude"
-    if harness not in ("claude", "cursor", "opencode-ollama"):
-        raise ValueError("unknown legacy runtime")
-    return "claude_model" if harness == "claude" else "model"
-
-
-def _loaded_model(task: dict) -> str:
-    field = "model"
-    if any(key in task for key in OBSOLETE_RUNTIME_FIELDS):
-        try:
-            field = _legacy_model_field(task)
-        except (OSError, ValueError, KeyError, AttributeError, TypeError):
-            return ""  # Unresolved account or picker. Keep the file for recovery.
-    return str(task.get(field) or "")
-
-
 def load_tasks() -> list[TaskConfig]:
     if not paths.TASKS_FILE.is_file():
         log.warning("No tasks.yaml found at %s", paths.TASKS_FILE)
@@ -471,7 +432,7 @@ def load_tasks() -> list[TaskConfig]:
             interval=t.get("interval", 1800),
             dir=working_dir,
             connection=connection,
-            model=_loaded_model(t),
+            model=str(t.get("model") or ""),
             run_at=t.get("run_at", ""),
             weekdays_only=_task_flag(t, "weekdays_only"),
             days_of_week=[str(day).lower() for day in t.get("days_of_week", [])],
@@ -484,81 +445,6 @@ def load_tasks() -> list[TaskConfig]:
             max_timeout=float(t.get("max_timeout", 0) or 0),
         ))
     return tasks
-
-
-def strip_obsolete_runtime_fields(path: Path) -> list[str]:
-    """Migrate simple task blocks as a unit. Leave custom YAML for the compatibility reader."""
-    try:
-        original = path.read_bytes()
-        source = original.decode("utf-8")
-        data = yaml.safe_load(source)
-        if data is None:
-            return []
-        tasks = data.get("tasks", [])
-        if not isinstance(tasks, list) or not all(isinstance(t, dict) for t in tasks):
-            raise ValueError("invalid task list")
-        if not any(set(t).intersection(OBSOLETE_RUNTIME_FIELDS) for t in tasks):
-            return []
-        if path.is_symlink() or path.parent.is_symlink():
-            raise ValueError("linked task file")
-        if any(isinstance(tok, (yaml.AnchorToken, yaml.AliasToken)) for tok in yaml.scan(source)):
-            raise ValueError("linked configuration")
-        # Parser marks identify the exact field lines, even beside nested custom settings.
-        nodes = [v for k, v in yaml.compose(source).value if k.value == "tasks"]
-        if len(nodes) != 1 or not isinstance(nodes[0], yaml.SequenceNode) or nodes[0].flow_style:
-            raise ValueError("unsupported task layout")
-        lines = source.splitlines(keepends=True)
-        changed = []
-        ids = set()
-        for task, node in zip(tasks, nodes[0].value, strict=True):
-            if not isinstance(task.get("id"), str) or task["id"] in ids or not task.get("skill"):
-                raise ValueError("missing or duplicate worker identity")
-            ids.add(task["id"])
-            if not set(task).intersection(OBSOLETE_RUNTIME_FIELDS):
-                continue
-            if node.flow_style or node.value[0][0].value != "id" or len(node.value) != len(task):
-                raise ValueError("unsupported task layout")
-            field = _legacy_model_field(task)
-            for key, value in node.value:
-                name = key.value
-                if name not in (*OBSOLETE_RUNTIME_FIELDS, "model"):
-                    continue
-                if task[name] is not None and not isinstance(task[name], str):
-                    raise ValueError("invalid runtime field")
-                line = key.start_mark.line
-                if (not isinstance(value, yaml.ScalarNode) or value.end_mark.line != line
-                        or not lines[line].lstrip().startswith(name + ":")):
-                    raise ValueError("unsupported runtime field layout")
-                if name != field:
-                    lines[line] = ""
-                    task.pop(name)
-                elif name == "claude_model":
-                    lines[line] = lines[line].replace("claude_model:", "model:", 1)
-            if field == "claude_model" and field in task:
-                task["model"] = task.pop(field)
-            changed.append(task["id"])
-        updated = "".join(lines)
-        if yaml.safe_load(updated) != data:
-            raise ValueError("edited task configuration did not validate")
-        backup = path.with_suffix(".yaml.pre-0.21.0")
-        try:
-            with open(backup, "xb", opener=lambda p, flags: os.open(p, flags, 0o600)) as out:
-                out.write(original)
-        except FileExistsError:
-            if backup.is_symlink() or not backup.is_file() or backup.read_bytes() != original:
-                raise ValueError("existing migration backup differs")
-        with tempfile.TemporaryDirectory(dir=path.parent) as staging:
-            staged = Path(staging) / path.name
-            staged.write_bytes(updated.encode("utf-8"))
-            staged.chmod(path.stat().st_mode & 0o777)
-            if path.read_bytes() != original:
-                raise ValueError("tasks.yaml changed during migration")
-            staged.replace(path)
-        return changed
-    except (ValueError, OSError, TypeError, KeyError, AttributeError, yaml.YAMLError):
-        log.warning("Skipped legacy task migration for %s. Check the YAML layout, account settings "
-                    "and migration backup before editing manually.", path)
-        return []
 
 
 def _task_requires(t: dict) -> list[str]:

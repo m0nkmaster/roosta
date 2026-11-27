@@ -154,7 +154,7 @@ def test_notice_is_public_but_settings_are_local(monkeypatch):
     checks.result = {"latest": "1.10.0", "notes": "notes", "guidance": "private path"}
     monkeypatch.setattr(app.app.state, "release_checks", checks, raising=False)
     for method in ("get", "post"):
-        remote = TestClient(app.app, client=("192.0.2.1", 123))
+        remote = TestClient(app.app, base_url="http://localhost", client=("192.0.2.1", 123))
         assert getattr(remote, method)("/api/settings/updates").status_code == 403
         local = TestClient(app.app, base_url="http://localhost", client=("127.0.0.1", 123))
         assert getattr(local, method)("/api/settings/updates", headers={"Origin": "https://invalid"}).status_code == 403

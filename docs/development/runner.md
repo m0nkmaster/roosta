@@ -86,10 +86,17 @@ files without replacing existing configuration.
   `SKILL.md` frontmatter, using the same resolved file as the actual prompt, and shows it as
   one truncated line with the full text on hover.
 
+## Host check
+
+Every request must name an IP literal, `localhost` or the saved `ROOSTA_HOST` in its `Host`
+header (`trusted_host` in `app.py`). This blocks DNS rebinding, where a web page points its own
+domain at 127.0.0.1 and then calls the API as if it were same-origin. A machine name such as
+`studio.local` works only when it is the saved host.
+
 ## Settings endpoints for the CLI
 
 `/api/settings/workspace` (GET, POST select/create/adopt), `/api/settings/address`,
-`/api/settings/service` reuse `cli.py`. The old skills-sync POST returns 409 with restart guidance. They are
+`/api/settings/service` reuse `cli.py`. They are
 local-only and same-origin like `/api/ai/*` (`local_ai_settings`), return `Cache-Control: no-store`,
 and never restart or switch workspace in-process: they record `workspace`, `host` and `port` in
 `~/.config/roosta/config.json` for the next `roosta start`, which uses flags first, then config,
@@ -155,12 +162,8 @@ Add to the workspace's `.roosta/tasks.yaml`:
 Use `interval` for polling tasks (teams-actions-watch, assistant). Use `run_at` for
 once-daily tasks at a specific time (standup briefs, daily reports). `run_at` and `interval`
 are mutually exclusive - when `run_at` is set, interval is ignored. Flags accept only
-real YAML booleans; anything else fails closed with a warning. Startup migrates simple legacy task blocks together and saves the original bytes
-to `.roosta/tasks.yaml.pre-0.21.0` before replacing the file. The explicit account takes precedence
-over the default account. With neither, the old harness or CLI picker determines the model field.
-Anthropic and Claude used `claude_model`; other providers used `model`. The migration writes the
-active field as `model` and drops `harness`. Custom layouts such as flow YAML or a task with
-`skill` before `id` stay untouched with a warning. The loader applies the same lookup in memory.
+real YAML booleans; anything else fails closed with a warning. Retired `harness:` and
+`claude_model:` keys are ignored; only `model:` sets a worker's model.
 `last_run` is stamped when a run **finishes**, so an interval counts from the end of the last run
 (drifting by run time) and a Run now resets it; a Run now after today's `run_at` counts as today's run.
 `tasks.yaml` is the only home for a task's schedule: never state a run time or frequency in a skill, because the user changes them here.

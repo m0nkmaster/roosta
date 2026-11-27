@@ -843,7 +843,7 @@ def test_employee_of_the_week_ranks_clean_records_folds_polls_and_crowns_on_frid
 
 
 def test_workspace_cast_accepts_only_vendored_looks(tmp_path):
-    from roosta import app as appmod
+    from roosta import office
 
     lpc = PAGE.parent / "vendor" / "lpc"
     cast = tmp_path / "office-cast.yaml"
@@ -852,10 +852,10 @@ def test_workspace_cast_accepts_only_vendored_looks(tmp_path):
         "Typo: {body: m, tone: Honey, hair: nonsense/Blue}\n"
         "Escape: {body: m, tone: ../../x, hair: curly/Red}\n"
         "junk: 3\n")
-    out = appmod.office_cast(cast, lpc)
+    out = office.office_cast(cast, lpc)
     assert list(out) == ["ada"]
     assert out["ada"] == {"body": "f", "tone": "Honey", "hair": "curly/Red"}
-    assert appmod.office_cast(tmp_path / "missing.yaml", lpc) == {}
+    assert office.office_cast(tmp_path / "missing.yaml", lpc) == {}
 
 
 def test_due_at_mirrors_the_scheduler_gates():

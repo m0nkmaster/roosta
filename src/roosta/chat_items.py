@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 
 from roosta import paths, profile
 from roosta.board import _normalise_project_ref
 from roosta.chat import is_general_chat_id
-from roosta.pulse import markdown_title
+from roosta.workspace import markdown_title
 from roosta.task_config import TaskConfig, skill_files
 from roosta.workspace import resolve_vault_markdown
 
@@ -291,3 +292,58 @@ def chat_list(histories: dict, archived: dict, limit: int = 100, *, closed: bool
                          "preview": preview, "turns": len(history)})
     rows.sort(key=lambda r: r["at"], reverse=True)
     return rows[:limit]
+
+
+CHAT_IDEA_KINDS = {"focus", "project", "tool", "remember", "build", "learn"}
+CHAT_IDEAS_MAX = 8
+
+
+def load_chat_ideas(path: Path) -> dict:
+    """Starter prompts the `chat-ideas` skill wrote from this workspace, validated.
+
+    The file is model-written, so anything malformed is dropped rather than shown: an idea
+    is a non-empty one-line `text` (at most 240 characters) with an optional short `label`
+    and a `kind` from CHAT_IDEA_KINDS. No usable ideas means the page keeps its built-in ones.
+    """
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {"ideas": [], "generated": None}
+    entries = raw.get("ideas") if isinstance(raw, dict) else None
+    ideas, seen = [], set()
+    for entry in entries if isinstance(entries, list) else []:
+        if isinstance(entry, str):
+            entry = {"text": entry}
+        if not isinstance(entry, dict):
+            continue
+        text = " ".join(str(entry.get("text") or "").split())
+        if not text or len(text) > 240 or text.lower() in seen:
+            continue
+        seen.add(text.lower())
+        label = " ".join(str(entry.get("label") or "").split())[:40]
+        kind = str(entry.get("kind") or "").strip().lower()
+        ideas.append({"text": text, "label": label, "kind": kind if kind in CHAT_IDEA_KINDS else ""})
+        if len(ideas) == CHAT_IDEAS_MAX:
+            break
+    generated = raw.get("generated") if isinstance(raw, dict) else None
+    return {"ideas": ideas, "generated": generated if isinstance(generated, str) and ideas else None}
+
+
+def archived_chats(path: Path, *, strict: bool = False) -> dict:
+    """Chats hidden from the Chats tab: {item_id: {closed_at, title} | {restored_at}}."""
+    try:
+        data = json.loads(path.read_text())
+        if not isinstance(data, dict):
+            raise ValueError("Invalid chat archive")
+        return data
+    except FileNotFoundError:
+        return {}
+    except (OSError, ValueError):
+        if strict:  # Never replace an unreadable archive with a partial one.
+            raise
+        return {}
+
+
+def save_chat_state(path: Path, archived: dict, item_id: str, record: dict) -> None:
+    archived[item_id] = record
+    paths.write_json(path, archived)

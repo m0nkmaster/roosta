@@ -7,9 +7,11 @@ Pages read the generic read-only APIs plus JSON that scheduled skills write to
 from __future__ import annotations
 
 import re
+from datetime import datetime, timezone
 from pathlib import Path
 
 from roosta import paths
+from roosta.workspace import markdown_title, metadata, resolve_vault_markdown, visible_path
 
 PAGE_NAME = re.compile(r"[a-z0-9][a-z0-9-]{0,40}")
 PAGE_ASSET = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,80}(?:/[A-Za-z0-9][A-Za-z0-9._-]{0,80}){0,3}")
@@ -54,3 +56,29 @@ def custom_pages(pages_dir: Path | None = None) -> list[dict]:
         title = re.sub(r"\s+", " ", match.group(1)).strip() if match else folder.name.replace("-", " ").title()
         pages.append({"name": folder.name, "title": title[:40], "url": f"/pages/{folder.name}/"})
     return pages
+
+
+def vault_files(pattern: str, root: Path | None = None) -> list[dict]:
+    """Workspace Markdown matching a glob, with titles and frontmatter but no bodies."""
+    root = (root or paths.WORKSPACE).resolve()
+    if not pattern or pattern.startswith("/") or ".." in pattern.split("/") or len(pattern) > 200:
+        raise ValueError("invalid pattern")
+    out = []
+    for path in sorted(root.glob(pattern)):
+        try:
+            relative = path.relative_to(root).as_posix()
+            resolved = resolve_vault_markdown(relative, root)
+        except (ValueError, FileNotFoundError):
+            continue
+        if not visible_path(Path(relative)):
+            continue
+        text = resolved.read_text(encoding="utf-8", errors="ignore")
+        out.append({
+            "path": relative,
+            "title": markdown_title(text, path.stem),
+            "frontmatter": metadata(text),
+            "modified": datetime.fromtimestamp(resolved.stat().st_mtime, timezone.utc).isoformat(),
+        })
+        if len(out) >= PAGE_FILES_LIMIT:
+            break
+    return out

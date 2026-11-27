@@ -140,6 +140,10 @@ class ActivityLog:
         entry["duration"] = round(time.monotonic() - entry.pop("_t0", time.monotonic()), 1)
         self._record(entry)
 
+    def session_ids(self) -> set[str]:
+        """AI sessions the feed still links to, so their stores are kept."""
+        return {e["session_id"] for e in self._entries.values() if e.get("session_id")}
+
     def get(self, eid: str) -> dict | None:
         entry = self._entries.get(eid)
         return self._public(entry) if entry else None

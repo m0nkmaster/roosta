@@ -2,10 +2,15 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
+import shutil
+import time
 from pathlib import Path
 
-from roosta import paths
+from roosta import ai_connections, paths
+
+log = logging.getLogger(__name__)
 
 VAULT_ROOT = paths.WORKSPACE
 SESSION_ID_RE = re.compile(r"^[0-9a-fA-F-]{20,}$")
@@ -68,3 +73,43 @@ def read_cursor_transcript(session_id: str, workspace: str | Path = VAULT_ROOT) 
     except OSError:
         return []
     return turns
+
+
+# Prune only Cursor's per-run SQLite stores under each config directory's chats/ tree.
+# The ~/.cursor/projects and ~/.claude/projects transcripts supply the activity drill-down
+# and include the user's own CLI sessions.
+SESSION_STORE_RETENTION_DAYS = 30
+
+
+def prune_cursor_session_stores(
+    retention_days: int = SESSION_STORE_RETENTION_DAYS,
+    referenced: set[str] | None = None,
+) -> int:
+    """Delete Cursor CLI session-store dirs older than the retention window.
+
+    Each store is `<config>/chats/<hash>/<session-uuid>/`. A store is kept when its
+    newest file is within the window or its uuid is still referenced by the activity
+    log (so a resumable chat is never pulled out from under the CLI). Returns the count
+    removed. Never raises: a stale store is cheaper than a crashed startup.
+    """
+    keep = referenced or set()
+    cutoff = time.time() - retention_days * 86400
+    removed = 0
+    for config_dir in ai_connections.CONNECTIONS_DIR.glob("*/cursor"):
+        chats = config_dir / "chats"
+        if not chats.is_dir():
+            continue
+        for store in chats.glob("*/*"):
+            if not store.is_dir() or store.name in keep:
+                continue
+            try:
+                newest = max((p.stat().st_mtime for p in store.rglob("*")), default=store.stat().st_mtime)
+                if newest >= cutoff:
+                    continue
+                shutil.rmtree(store)
+                removed += 1
+            except OSError:
+                continue
+    if removed:
+        log.info("pruned %d stale Cursor session store(s)", removed)
+    return removed

@@ -79,11 +79,8 @@ def write_config(directory: Path, permissions: dict, mcp: dict) -> Path:
         config.pop(key, None)
     template = json.loads(SAFE_CONFIG_TEMPLATE.read_text())
     config.update(version=template["version"], editor=template["editor"], permissions=permissions)
-    for name, value in (("cli-config.json", config), ("mcp.json", mcp)):
-        temporary = directory / f"{name}.{os.getpid()}.tmp"
-        temporary.write_text(json.dumps(value, indent=2))
-        temporary.chmod(0o600)
-        temporary.replace(directory / name)
+    paths.write_json(directory / "cli-config.json", config)
+    paths.write_json(directory / "mcp.json", mcp)
     return directory
 
 

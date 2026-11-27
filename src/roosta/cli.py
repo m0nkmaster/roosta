@@ -99,8 +99,9 @@ def read_config(config: Path | None = None) -> dict:
 def write_config(updates: dict, config: Path | None = None) -> None:
     config = config or CONFIG_FILE
     data = {**read_config(config), **updates}
-    config.parent.mkdir(parents=True, exist_ok=True)
-    config.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    from roosta import paths  # imported late: paths reads ROOSTA_WORKSPACE once, at import
+
+    paths.write_atomic(config, json.dumps(data, indent=2) + "\n")
 
 
 def remember_workspace(target: Path, config: Path | None = None) -> None:

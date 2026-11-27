@@ -132,6 +132,8 @@ or invoking a harness. Existing conversations keep their history.
   `SessionMap` (`assistant/sessions.json`), `TopicStore` (`assistant/topics.json`) and
   `ConversationHistoryStore` (`assistant/chat-history.json`) are keyed only by stable item id.
   History mutations require a readable store and atomically replace the file after writing.
+  The handled, snoozed, reminders, raised and merged stores are `JsonFile`s, written through
+  `paths.write_json` like every other state file, so a crash never leaves half a file.
   Non-UUID session ids are discarded. The history store
   preserves the visible transcript when the user switches tabs or reloads the app; the topic store
   keeps a compact rolling summary and verified `project_ref`, then rotates the raw model session
@@ -184,7 +186,8 @@ or invoking a harness. Existing conversations keep their history.
 `GET /document?path=<relative-md>` + `GET /api/vault-document?path=<relative-md>` (read-only,
 in-app vault Markdown; a chat-reply link to a vault `.html/.txt/.json/.yaml/.csv` file outside
 dot-folders opens there too, shown as fenced read-only source with no doc chat; `.roosta/` config
-is the one dot-folder exception (`is_workspace_config`), never `.roosta/state/`, even via a symlink),
+is the one dot-folder exception (`is_workspace_config`), never `.roosta/state/`, even via a symlink;
+a Markdown path must still be a visible Markdown path, outside `private/`, after symlinks resolve),
 `POST /api/board/chat {item_id, message, context_paths?, uploads?}` (starts a detached turn and streams its queued events;
 returns `202 {queued, position}` when a turn for that item is already running), `POST /api/chats/archive {item_id}`,
 `POST /api/board/chat/upload?item_id=&name=` (raw file body) and `GET /api/board/chat/upload/{id}?item_id=`,

@@ -116,7 +116,7 @@ def test_remove_deletes_only_that_conversation(tmp_path):
 @pytest.fixture
 def client(tmp_path, monkeypatch):
     monkeypatch.setattr(appmod, "UPLOADS_DIR", tmp_path / "uploads")
-    return TestClient(appmod.app)
+    return TestClient(appmod.app, base_url="http://localhost")
 
 
 def upload(client, name="shot.png", data=PNG, item_id="chat:0123456789ab", headers=None):
@@ -144,7 +144,7 @@ def test_upload_endpoint_rejects_oversize_and_bad_requests(client, monkeypatch):
 def test_upload_endpoint_refuses_other_sites(client):
     assert upload(client, headers={"origin": "https://evil.example"}).status_code == 403
     assert upload(client, headers={"sec-fetch-site": "cross-site"}).status_code == 403
-    assert upload(client, headers={"origin": "http://testserver"}).status_code == 200
+    assert upload(client, headers={"origin": "http://localhost"}).status_code == 200
 
 
 def test_download_serves_images_inline_and_everything_else_as_attachment(client):

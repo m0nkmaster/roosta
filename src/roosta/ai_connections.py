@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
 import re
 import uuid
 from pathlib import Path
@@ -70,10 +69,7 @@ def load() -> dict:
 
 def save(data: dict) -> None:
     CONNECTIONS_FILE.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-    temporary = CONNECTIONS_FILE.with_suffix(f".{uuid.uuid4().hex}.tmp")
-    with open(temporary, "x", opener=lambda p, flags: os.open(p, flags, 0o600)) as output:
-        json.dump(data, output, indent=2)
-    temporary.replace(CONNECTIONS_FILE)
+    paths.write_json(CONNECTIONS_FILE, data)
 
 
 def directory(connection_id: str) -> Path:
@@ -144,6 +140,12 @@ def credential(connection: dict) -> str:
     if not secret:
         raise ValueError(f"{connection['label']} needs its API key; reconnect it in Settings")
     return secret
+
+
+def forget_credential(connection: dict) -> None:
+    """Remove an API-key account's secret from the OS credential store."""
+    if connection["auth"] == "api_key":
+        _vault().delete_password("Roosta AI", connection["credential_ref"])
 
 
 def create(body: dict) -> dict:

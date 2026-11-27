@@ -229,41 +229,6 @@
   }
   $('settings-model').addEventListener('change', () => saveModel());
   $('settings-effort').addEventListener('change', () => saveModel($('settings-effort').value));
-  const legacyForm = $('legacy-form'), legacyChat = $('legacy-chat'), legacyAccount = $('legacy-account');
-  function updateLegacyButton() {
-    legacyForm.querySelector('button').disabled = !legacyChat.value || !legacyAccount.value || legacyForm.dataset.saving === 'true';
-  }
-  function showLegacyChats() {
-    const chats = state.legacy_chats || [];
-    $('legacy-chats').hidden = !chats.length;
-    if (!chats.length) return;
-    const accounts = state.connections.filter(c => c.connected);
-    const chat = legacyChat.value, account = legacyAccount.value;
-    legacyChat.replaceChildren(new Option('Choose a chat', ''), ...chats.map(c => new Option(c.title, c.id)));
-    legacyAccount.replaceChildren(new Option(accounts.length ? 'Choose an account' : 'Add or reconnect an account below', ''),
-      ...accounts.map(c => new Option(c.label, c.id)));
-    legacyChat.value = chats.some(c => c.id === chat) ? chat : chats.length === 1 ? chats[0].id : '';
-    legacyAccount.value = legacyChat.value === chat && accounts.some(c => c.id === account) ? account : '';
-    legacyAccount.disabled = !accounts.length;
-    updateLegacyButton();
-  }
-  legacyForm.addEventListener('change', event => {
-    if (event.target === legacyChat) legacyAccount.value = '';
-    $('legacy-message').textContent = '';
-    updateLegacyButton();
-  });
-  legacyForm.addEventListener('submit', async event => {
-    event.preventDefault();
-    legacyForm.dataset.saving = 'true';
-    updateLegacyButton();
-    try {
-      await request('/api/ai/chat-connection', {item_id:legacyChat.value, connection:legacyAccount.value});
-      legacyAccount.value = '';
-      $('legacy-message').textContent = 'Account saved.';
-      await load();
-    } catch (e) { $('legacy-message').textContent = e.message; }
-    finally { delete legacyForm.dataset.saving; updateLegacyButton(); }
-  });
   async function load() {
     const version = ++loadVersion;
     const next = await request('/api/ai/connections');
@@ -277,7 +242,6 @@
       providerChanged();
     }
     $('ai-current').innerHTML = currentAI();
-    showLegacyChats();
     $('setup-notice').hidden = !state.workspace_setup_ready;
     $('setup-missing').textContent = 'Still missing: ' + (state.workspace_setup_missing || []).join(', ') + '.';
     const engines = [{id:'claude', name:'Claude Code', for:'Anthropic models'}, {id:'pi', name:'Pi', for:'OpenAI, OpenRouter and local models'},

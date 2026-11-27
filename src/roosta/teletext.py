@@ -145,7 +145,6 @@ def daily_quiz(day: str, cache_file: Path = BAMBOOZLE_FILE, fetch=fetch_quiz_que
     got = fetch()
     if got:
         quiz = build_quiz(day, *got)
-        cache_file.parent.mkdir(parents=True, exist_ok=True)
-        cache_file.write_text(json.dumps(quiz))
+        paths.write_json(cache_file, quiz)
         return quiz
     return {**cached, "stale": True} if cached else None
