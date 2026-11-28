@@ -1483,6 +1483,8 @@ async def api_project_review(slug: str, body: dict):
             str(body.get("action", "")), str(body.get("status", "")),
             reviewer=profile.load().reviewer,
         )
+    except document_editor.EditError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=exc.status)
     except ValueError as exc:
         return JSONResponse({"error": str(exc)}, status_code=400)
     except FileNotFoundError:

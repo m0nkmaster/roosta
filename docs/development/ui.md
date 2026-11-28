@@ -170,7 +170,9 @@ Pulse counts the same installed and workspace skill names as Workers, once per n
   signals. A board item can flag a selected source through its document links or its existing project reference.
   Review prioritises board attention, drift and verification. Confirmation records
   the profile reviewer and renews the verification window. Status changes date the update.
-  The drawer, `?focus=` and the detail/review API all use the same star id.
+  The drawer, `?focus=` and the detail/review API all use the same star id. A review reads and
+  saves through `document_editor.edit_document`, so it applies only to the revision it read and has
+  the same [manual editing](#workspace-and-documents) save guarantees and refusals.
 
 - **Ring radii scale with occupancy, and labels are rationed.** A busy "today" would otherwise
   collapse into a few pixels at the centre, so band edges are part evenly spaced and part
