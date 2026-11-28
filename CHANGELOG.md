@@ -2,6 +2,10 @@
 
 Record each release newest first. Bump minor for features and visible behaviour, patch for fixes and polish.
 
+## 0.23.3 - 2026-11-28
+
+- Weekly review decisions in Pulse now save pages the way the document editor does. A crash or force-quit can no longer leave a page empty or half-written, and the page keeps its owner, permissions and extended attributes. If the page changes elsewhere during a review, Pulse leaves it alone and asks you to reload. Read-only and hard-linked pages are refused instead of replaced.
+
 ## 0.23.1 - 2026-11-27
 
 - Worker runs on your own Claude Code sign-in show their transcript again when you open them in AI Activity, and Cursor worker runs in another folder find theirs.

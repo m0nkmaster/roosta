@@ -5,14 +5,14 @@ from __future__ import annotations
 import base64
 import os
 import re
-import tempfile
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from threading import Lock
 
+from roosta.document_editor import EditError, edit_document
 from roosta.task_config import workspace_skills
 from roosta.workspace import (catalogue_files, index_links, index_members, metadata,
-                              read_document, selected_collections)
+                              selected_collections)
 
 STALE_AFTER_DAYS = 30
 LIVE_STATUSES = {"active", "blocked"}
@@ -245,10 +245,9 @@ def _review_page(root: Path, slug: str, action: str, status: str,
     today = now.date().isoformat()
     page, _, _ = selected_page(root, slug)
     path = page["path"]
-    canonical, original, _ = read_document(root, path)
-    if canonical.as_posix() != path:
-        raise ValueError("Page path changed")
-    readme = root.resolve() / canonical
+    # Read and save through the document editor, so the save applies only to these exact bytes.
+    snapshot = edit_document(root.resolve(), path)
+    original = snapshot["content"]
     newline = "\r\n" if original.startswith("---\r\n") else "\n"
     header = re.match(r"\A---[ \t]*\r?\n(.*?)^---[ \t]*(?=\r?$)", original, re.M | re.S)
     if not header and re.match(r"\A---[ \t]*(?:\r?\n|$)", original):
@@ -315,20 +314,12 @@ def _review_page(root: Path, slug: str, action: str, status: str,
     if updated != original:
         if metadata(updated) != expected:
             raise ValueError("Page has incompatible frontmatter")
-        with tempfile.NamedTemporaryFile(dir=readme.parent, delete=False) as stream:
-            temp = Path(stream.name)
-            try:
-                stream.write(updated.encode())
-                temp.chmod(readme.stat().st_mode & 0o777)
-            except OSError:
-                temp.unlink(missing_ok=True)
-                raise
         try:
-            if readme.resolve() != readme or readme.read_bytes() != original.encode():
-                raise ValueError("Page changed during review")
-            temp.replace(readme)
-        finally:
-            temp.unlink(missing_ok=True)
+            edit_document(root.resolve(), path, snapshot["revision"], updated.encode())
+        except EditError as exc:
+            if exc.status == 409:  # The editor's wording asks for a draft copy; a review has none.
+                raise EditError(409, "The page changed during the review. Reload it and decide again.") from exc
+            raise
     return project_brief(root, slug, now)
 
 

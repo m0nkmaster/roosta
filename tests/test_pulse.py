@@ -1,9 +1,13 @@
+import asyncio
+import json
 import os
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
 
+from roosta import app, pulse
+from roosta.document_editor import EditError
 
 from roosta.pulse import (
     activity_stats,
@@ -369,6 +373,44 @@ def test_review_confirm_creates_block_and_reviews_plain_markdown(tmp_path):
     assert review_project(tmp_path, "bare", "confirm", now=NOW)["provenance"]["state"] == "human"
     with pytest.raises(ValueError):
         review_project(tmp_path, "demo", "delete", now=NOW)
+
+
+def test_review_saves_like_the_document_editor(tmp_path, monkeypatch):
+    readme = _readme(tmp_path, "demo", "---\ntitle: Demo\nstatus: active\n---\n")
+    readme.chmod(0o640)
+    review_project(tmp_path, "demo", "confirm", now=NOW)
+    before = readme.read_text()
+    assert "verified:" in before and readme.stat().st_mode & 0o777 == 0o640
+    # A hard-linked or read-only page is refused untouched, never replaced behind the other name.
+    twin = tmp_path / "twin.md"
+    os.link(readme, twin)
+    with pytest.raises(EditError) as refused:
+        review_project(tmp_path, "demo", "status", "paused", now=NOW)
+    assert refused.value.status == 403 and readme.read_text() == twin.read_text() == before
+    twin.unlink()
+    readme.chmod(0o440)
+    monkeypatch.setattr(app.paths, "WORKSPACE", tmp_path)
+    monkeypatch.setattr(app.profile, "load", lambda: type("Profile", (), {"reviewer": "human:owner"})())
+    response = asyncio.run(app.api_project_review("demo", {"action": "status", "status": "paused"}))
+    assert response.status_code == 403 and "write permissions" in json.loads(response.body)["error"]
+    assert readme.read_text() == before
+
+
+def test_review_never_overwrites_a_page_changed_mid_review(tmp_path, monkeypatch):
+    readme = _readme(tmp_path, "demo", "---\ntitle: Demo\nstatus: active\n---\n")
+    edit = pulse.edit_document
+
+    def edited_elsewhere(root, path, *save):
+        result = edit(root, path, *save)
+        if not save:
+            readme.write_text("---\ntitle: Demo\nstatus: blocked\n---\n")
+        return result
+
+    monkeypatch.setattr(pulse, "edit_document", edited_elsewhere)
+    with pytest.raises(EditError) as conflict:
+        review_project(tmp_path, "demo", "status", "paused", now=NOW)
+    assert conflict.value.status == 409 and "Reload it" in str(conflict.value)
+    assert readme.read_text() == "---\ntitle: Demo\nstatus: blocked\n---\n"
 
 
 def test_build_pulse_lists_board_items_per_project(tmp_path):
